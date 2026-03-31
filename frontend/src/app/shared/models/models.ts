@@ -127,11 +127,15 @@ export interface Tenant {
   tenantId: string;
   companyName: string;
   companyNameAr?: string;
+  companyNameEn?: string;
   planTier: string;
+  subscriptionStatus?: string;
+  subscriptionTierId?: string;
   active: boolean;
   suspended: boolean;
   createdAt: string;
   adminEmail?: string;
+  contactEmail?: string;
   contactPhone?: string;
 }
 

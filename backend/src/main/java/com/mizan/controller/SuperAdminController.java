@@ -125,6 +125,48 @@ public class SuperAdminController {
         return ResponseEntity.ok(Map.of("success",true));
     }
 
+    @PutMapping("/tenants/{tenantId}")
+    public ResponseEntity<?> updateTenant(@AuthenticationPrincipal MizanUserDetails p,
+            @PathVariable String tenantId, @RequestBody Map<String,Object> body) {
+        requireSuperAdmin(p);
+        return tenantRepo.findById(tenantId).map(t -> {
+            if (body.containsKey("companyNameAr"))    t.setCompanyNameAr((String) body.get("companyNameAr"));
+            if (body.containsKey("companyNameEn"))    t.setCompanyNameEn((String) body.get("companyNameEn"));
+            if (body.containsKey("contactEmail"))     t.setContactEmail((String) body.get("contactEmail"));
+            if (body.containsKey("contactPhone"))     t.setContactPhone((String) body.get("contactPhone"));
+            if (body.containsKey("subscriptionTierId")) t.setSubscriptionTierId((String) body.get("subscriptionTierId"));
+            tenantRepo.save(t);
+            audit(p, "UPDATE_TENANT", "Updated tenant: " + tenantId, tenantId);
+            return ResponseEntity.ok(Map.of("success", true, "data", t));
+        }).orElse(ResponseEntity.status(404).body(Map.of("success", false)));
+    }
+
+    @PostMapping("/tenants/{tenantId}/add-admin")
+    public ResponseEntity<?> addAdmin(@AuthenticationPrincipal MizanUserDetails p,
+            @PathVariable String tenantId, @RequestBody Map<String,String> body) {
+        requireSuperAdmin(p);
+        Tenant tenant = tenantRepo.findById(tenantId)
+            .orElseThrow(() -> new IllegalArgumentException("Tenant not found"));
+        String email = body.get("email");
+        String password = body.get("password");
+        if (email == null || password == null) throw new IllegalArgumentException("email and password required");
+        User admin = new User();
+        admin.setUserId(UUID.randomUUID().toString());
+        admin.setTenantId(tenantId);
+        admin.setEmail(email);
+        admin.setPasswordHash(encoder.encode(password));
+        admin.setFullNameAr(body.getOrDefault("fullNameAr", "مدير الشركة"));
+        admin.setFullNameEn(body.getOrDefault("fullNameEn", "Company Admin"));
+        admin.setRole("COMPANY_ADMIN");
+        admin.setActive(true);
+        admin.setMustChangePassword(false);
+        admin.setCreatedBy(p.getUserId());
+        userRepo.save(admin);
+        audit(p, "ADD_ADMIN", "Added admin to tenant: " + tenantId, tenantId);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Admin created",
+            "data", Map.of("email", email, "tenantId", tenantId)));
+    }
+
     @PostMapping("/impersonate")
     public ResponseEntity<?> impersonate(@AuthenticationPrincipal MizanUserDetails p,
             @RequestBody Map<String,String> body) {

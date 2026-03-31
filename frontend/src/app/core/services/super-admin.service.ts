@@ -21,6 +21,14 @@ export class SuperAdminService {
     return this.http.post<ApiResponse<Tenant>>(`${environment.apiUrl}/super-admin/tenants`, data);
   }
 
+  updateTenant(tenantId: string, data: any): Observable<ApiResponse<any>> {
+    return this.http.put<ApiResponse<any>>(`${environment.apiUrl}/super-admin/tenants/${tenantId}`, data);
+  }
+
+  addAdmin(tenantId: string, data: { email: string; password: string; fullNameAr?: string }): Observable<ApiResponse<any>> {
+    return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/super-admin/tenants/${tenantId}/add-admin`, data);
+  }
+
   suspendTenant(tenantId: string): Observable<ApiResponse<any>> {
     return this.http.patch<ApiResponse<any>>(`${environment.apiUrl}/super-admin/tenants/${tenantId}/suspend`, null);
   }

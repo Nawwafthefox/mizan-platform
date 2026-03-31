@@ -36,8 +36,10 @@ import { Tenant } from '../../shared/models/models';
                 <td dir="ltr">{{ t.createdAt | date:'mediumDate' }}</td>
                 <td>
                   <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+                    <button class="btn btn--outline btn--sm" (click)="openEdit(t)">تعديل</button>
+                    <button class="btn btn--ghost btn--sm" (click)="openAddAdmin(t)">+ مدير</button>
                     <button class="btn btn--outline btn--sm" (click)="impersonate(t)">انتحال</button>
-                    @if (t.suspended) {
+                    @if (t.subscriptionStatus === 'SUSPENDED') {
                       <button class="btn btn--primary btn--sm" (click)="activate(t)">تفعيل</button>
                     } @else {
                       <button class="btn btn--danger btn--sm" (click)="suspend(t)">إيقاف</button>
@@ -54,6 +56,7 @@ import { Tenant } from '../../shared/models/models';
     }
 
     @if (error()) { <div class="alert alert--error mt-3">{{ error() }}</div> }
+    @if (success()) { <div class="alert alert--success mt-3">{{ success() }}</div> }
 
     <!-- Create Modal -->
     @if (showModal()) {
@@ -99,6 +102,83 @@ import { Tenant } from '../../shared/models/models';
         </div>
       </div>
     }
+
+    <!-- Edit Modal -->
+    @if (showEditModal()) {
+      <div class="modal-overlay" (click)="closeEditModal()">
+        <div class="modal" (click)="$event.stopPropagation()">
+          <div class="modal__header">
+            <h3>تعديل بيانات الشركة</h3>
+            <button class="close-btn" (click)="closeEditModal()">×</button>
+          </div>
+          <div class="modal__body">
+            <div class="form-group">
+              <label>اسم الشركة (عربي)</label>
+              <input class="form-control" [(ngModel)]="editForm.companyNameAr">
+            </div>
+            <div class="form-group">
+              <label>اسم الشركة (إنجليزي)</label>
+              <input class="form-control" [(ngModel)]="editForm.companyNameEn" dir="ltr">
+            </div>
+            <div class="form-group">
+              <label>بريد التواصل</label>
+              <input class="form-control" type="email" [(ngModel)]="editForm.contactEmail" dir="ltr">
+            </div>
+            <div class="form-group">
+              <label>هاتف التواصل</label>
+              <input class="form-control" type="tel" [(ngModel)]="editForm.contactPhone" dir="ltr">
+            </div>
+            <div class="form-group">
+              <label>خطة الاشتراك</label>
+              <select class="form-control" [(ngModel)]="editForm.subscriptionTierId">
+                <option value="starter">Starter</option>
+                <option value="business">Business</option>
+                <option value="enterprise">Enterprise</option>
+                <option value="white_label">White Label</option>
+              </select>
+            </div>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--ghost" (click)="closeEditModal()">إلغاء</button>
+            <button class="btn btn--primary" (click)="saveEdit()" [disabled]="saving()">
+              @if (saving()) { <span class="spinner"></span> } حفظ
+            </button>
+          </div>
+        </div>
+      </div>
+    }
+
+    <!-- Add Admin Modal -->
+    @if (showAdminModal()) {
+      <div class="modal-overlay" (click)="closeAdminModal()">
+        <div class="modal" (click)="$event.stopPropagation()">
+          <div class="modal__header">
+            <h3>إضافة مدير للشركة</h3>
+            <button class="close-btn" (click)="closeAdminModal()">×</button>
+          </div>
+          <div class="modal__body">
+            <div class="form-group">
+              <label>البريد الإلكتروني</label>
+              <input class="form-control" type="email" [(ngModel)]="adminForm.email" dir="ltr">
+            </div>
+            <div class="form-group">
+              <label>كلمة المرور</label>
+              <input class="form-control" type="password" [(ngModel)]="adminForm.password" dir="ltr">
+            </div>
+            <div class="form-group">
+              <label>الاسم بالعربي</label>
+              <input class="form-control" [(ngModel)]="adminForm.fullNameAr">
+            </div>
+          </div>
+          <div class="modal__footer">
+            <button class="btn btn--ghost" (click)="closeAdminModal()">إلغاء</button>
+            <button class="btn btn--primary" (click)="saveAdmin()" [disabled]="saving()">
+              @if (saving()) { <span class="spinner"></span> } إضافة
+            </button>
+          </div>
+        </div>
+      </div>
+    }
   `
 })
 export class TenantsComponent implements OnInit {
@@ -109,9 +189,15 @@ export class TenantsComponent implements OnInit {
   loading = signal(false);
   saving = signal(false);
   error = signal('');
+  success = signal('');
   showModal = signal(false);
+  showEditModal = signal(false);
+  showAdminModal = signal(false);
+  selectedTenant = signal<Tenant | null>(null);
 
   form = { companyNameAr: '', companyNameEn: '', initialAdminEmail: '', initialAdminPassword: '', subscriptionTierId: 'starter' };
+  editForm = { companyNameAr: '', companyNameEn: '', contactEmail: '', contactPhone: '', subscriptionTierId: 'starter' };
+  adminForm = { email: '', password: '', fullNameAr: '' };
 
   ngOnInit() { this.load(); }
 
@@ -123,7 +209,13 @@ export class TenantsComponent implements OnInit {
     });
   }
 
-  openCreate(): void { this.form = { companyNameAr:'', companyNameEn:'', initialAdminEmail:'', initialAdminPassword:'', subscriptionTierId:'starter' }; this.showModal.set(true); }
+  private clearMessages(): void { this.error.set(''); this.success.set(''); }
+
+  openCreate(): void {
+    this.clearMessages();
+    this.form = { companyNameAr:'', companyNameEn:'', initialAdminEmail:'', initialAdminPassword:'', subscriptionTierId:'starter' };
+    this.showModal.set(true);
+  }
   closeModal(): void { this.showModal.set(false); }
 
   createTenant(): void {
@@ -131,6 +223,48 @@ export class TenantsComponent implements OnInit {
     this.svc.createTenant(this.form).subscribe({
       next: () => { this.saving.set(false); this.closeModal(); this.load(); },
       error: err => { this.saving.set(false); this.error.set(err?.error?.message || 'فشل الإنشاء'); }
+    });
+  }
+
+  openEdit(t: Tenant): void {
+    this.clearMessages();
+    this.selectedTenant.set(t);
+    this.editForm = {
+      companyNameAr: (t as any).companyNameAr ?? t.companyName ?? '',
+      companyNameEn: (t as any).companyNameEn ?? '',
+      contactEmail: (t as any).contactEmail ?? '',
+      contactPhone: (t as any).contactPhone ?? '',
+      subscriptionTierId: (t as any).subscriptionTierId ?? t.planTier ?? 'starter'
+    };
+    this.showEditModal.set(true);
+  }
+  closeEditModal(): void { this.showEditModal.set(false); this.selectedTenant.set(null); }
+
+  saveEdit(): void {
+    const t = this.selectedTenant();
+    if (!t) return;
+    this.saving.set(true);
+    this.svc.updateTenant(t.tenantId, this.editForm).subscribe({
+      next: () => { this.saving.set(false); this.closeEditModal(); this.success.set('تم تحديث بيانات الشركة'); this.load(); },
+      error: err => { this.saving.set(false); this.error.set(err?.error?.message || 'فشل التحديث'); }
+    });
+  }
+
+  openAddAdmin(t: Tenant): void {
+    this.clearMessages();
+    this.selectedTenant.set(t);
+    this.adminForm = { email: '', password: '', fullNameAr: '' };
+    this.showAdminModal.set(true);
+  }
+  closeAdminModal(): void { this.showAdminModal.set(false); this.selectedTenant.set(null); }
+
+  saveAdmin(): void {
+    const t = this.selectedTenant();
+    if (!t) return;
+    this.saving.set(true);
+    this.svc.addAdmin(t.tenantId, this.adminForm).subscribe({
+      next: () => { this.saving.set(false); this.closeAdminModal(); this.success.set('تم إضافة المدير بنجاح'); },
+      error: err => { this.saving.set(false); this.error.set(err?.error?.message || 'فشل إضافة المدير'); }
     });
   }
 
