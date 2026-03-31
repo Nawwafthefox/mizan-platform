@@ -12,6 +12,7 @@ public class UploadLog {
     private String fileName;
     private String fileType;
     private int recordsSaved;
+    private int recordsSkipped;
     private String status;
     private String errorMessage;
     private String uploadedBy;

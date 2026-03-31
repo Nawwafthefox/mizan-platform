@@ -11,5 +11,6 @@ public interface BranchPurchaseRepository extends MongoRepository<BranchPurchase
     @Query("{'tenantId':?0,'purchaseDate':{$gte:?1,$lte:?2},'branchCode':{$in:?3}}")
     List<BranchPurchase> findByTenantAndRangeAndBranches(String tenantId, LocalDate from, LocalDate to, List<String> codes);
     boolean existsByTenantIdAndPurchaseDateAndBranchCodeAndSourceFileName(String t, LocalDate d, String b, String f);
+    List<SourceFileProjection> findByTenantId(String tenantId);
     void deleteByTenantId(String tenantId);
 }

@@ -13,5 +13,6 @@ public interface EmployeeSaleRepository extends MongoRepository<EmployeeSale, St
     @Query("{'tenantId':?0,'saleDate':{$gte:?1,$lte:?2},'employeeId':?3}")
     List<EmployeeSale> findByTenantAndRangeAndEmployee(String tenantId, LocalDate from, LocalDate to, String empId);
     boolean existsByTenantIdAndSaleDateAndEmployeeIdAndSourceFileName(String t, LocalDate d, String e, String f);
+    List<SourceFileProjection> findByTenantId(String tenantId);
     void deleteByTenantId(String tenantId);
 }

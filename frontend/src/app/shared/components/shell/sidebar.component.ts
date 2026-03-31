@@ -2,6 +2,7 @@ import { Component, computed, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../../core/services/auth.service';
+import { I18nService } from '../../../core/services/i18n.service';
 
 interface NavItem {
   label: string;
@@ -56,7 +57,13 @@ interface NavSection {
             <div class="user-role">{{ roleLabel() }}</div>
           </div>
         </div>
-        <button class="logout-btn" (click)="auth.logout()" title="تسجيل الخروج">⬡</button>
+        <div class="footer-actions">
+          <div class="lang-toggle lang-toggle--light" (click)="i18n.toggle()" title="Switch Language">
+            <span [class.active]="i18n.isAr()">AR</span>
+            <span [class.active]="!i18n.isAr()">EN</span>
+          </div>
+          <button class="logout-btn" (click)="auth.logout()" [title]="i18n.isAr() ? 'تسجيل الخروج' : 'Sign Out'">⬡</button>
+        </div>
       </div>
     </aside>
   `,
@@ -150,6 +157,10 @@ interface NavSection {
       display: flex;
       align-items: center;
       gap: .75rem;
+      flex-wrap: wrap;
+    }
+    .footer-actions {
+      display: flex; align-items: center; gap: .5rem;
     }
     .user-info { flex: 1; display: flex; align-items: center; gap: .6rem; overflow: hidden; }
     .user-avatar {
@@ -175,6 +186,7 @@ interface NavSection {
 })
 export class SidebarComponent {
   auth = inject(AuthService);
+  i18n = inject(I18nService);
 
   private navSections: NavSection[] = [
     {

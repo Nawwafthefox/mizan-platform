@@ -9,5 +9,6 @@ public interface MothanTransactionRepository extends MongoRepository<MothanTrans
     @Query("{'tenantId':?0,'transactionDate':{$gte:?1,$lte:?2}}")
     List<MothanTransaction> findByTenantAndRange(String tenantId, LocalDate from, LocalDate to);
     boolean existsByTenantIdAndTransactionDateAndBranchCodeAndDocReference(String t, LocalDate d, String b, String r);
+    List<SourceFileProjection> findByTenantId(String tenantId);
     void deleteByTenantId(String tenantId);
 }

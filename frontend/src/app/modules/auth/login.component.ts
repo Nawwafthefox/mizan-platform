@@ -3,20 +3,25 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
+import { I18nService } from '../../core/services/i18n.service';
 
 @Component({
   selector: 'app-login',
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <div class="login-wrap">
+    <div class="login-wrap" [attr.dir]="i18n.lang()">
       <div class="login-card">
         <div class="login-header">
           <div class="login-logo">
             <span class="logo-en">MIZAN</span>
             <span class="logo-ar">ميزان</span>
+            <div class="lang-toggle login-lang" (click)="i18n.toggle()">
+              <span [class.active]="i18n.isAr()">AR</span>
+              <span [class.active]="!i18n.isAr()">EN</span>
+            </div>
           </div>
-          <p>منصة تحليلات الذهب</p>
+          <p>{{ i18n.isAr() ? 'منصة تحليلات الذهب' : 'Gold Analytics Platform' }}</p>
         </div>
 
         @if (error()) {
@@ -25,13 +30,13 @@ import { AuthService } from '../../core/services/auth.service';
 
         <form (ngSubmit)="login()" #f="ngForm" class="login-form">
           <div class="form-group">
-            <label>البريد الإلكتروني / اسم المستخدم</label>
+            <label>{{ i18n.isAr() ? 'البريد الإلكتروني / اسم المستخدم' : 'Email / Username' }}</label>
             <input class="form-control" type="text"
               [(ngModel)]="creds.usernameOrEmail" name="user"
               placeholder="admin@example.com" required autocomplete="username" dir="ltr">
           </div>
           <div class="form-group">
-            <label>كلمة المرور</label>
+            <label>{{ i18n.isAr() ? 'كلمة المرور' : 'Password' }}</label>
             <div class="pw-wrap">
               <input class="form-control" [type]="showPw() ? 'text' : 'password'"
                 [(ngModel)]="creds.password" name="pw"
@@ -44,7 +49,7 @@ import { AuthService } from '../../core/services/auth.service';
           <button type="submit" class="btn btn--primary btn--lg w-full"
             [disabled]="loading() || !f.valid">
             @if (loading()) { <span class="spinner"></span> }
-            دخول
+            {{ i18n.isAr() ? 'دخول' : 'Sign In' }}
           </button>
         </form>
 
@@ -68,7 +73,8 @@ import { AuthService } from '../../core/services/auth.service';
       display: flex; flex-direction: column; gap: 1.5rem;
     }
     .login-header { text-align: center; }
-    .login-logo { display: flex; align-items: baseline; justify-content: center; gap: .5rem; margin-bottom: .5rem; }
+    .login-logo { display: flex; align-items: center; justify-content: center; gap: .5rem; margin-bottom: .5rem; flex-wrap: wrap; }
+    .login-lang { margin-inline-start: .5rem; }
     .logo-en { font-size: 2rem; font-weight: 800; color: var(--mizan-green-dark); letter-spacing: .12em; }
     .logo-ar { font-size: 1rem; color: var(--mizan-text-muted); }
     .login-header p { font-size: .85rem; color: var(--mizan-text-muted); }
@@ -86,6 +92,7 @@ import { AuthService } from '../../core/services/auth.service';
 export class LoginComponent {
   private auth = inject(AuthService);
   private router = inject(Router);
+  i18n = inject(I18nService);
 
   creds = { usernameOrEmail: '', password: '' };
   loading = signal(false);

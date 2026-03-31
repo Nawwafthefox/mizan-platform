@@ -1,20 +1,30 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { AuthService } from '../../../core/services/auth.service';
+import { I18nService } from '../../../core/services/i18n.service';
 
 @Component({
   selector: 'app-topbar',
   standalone: true,
   imports: [CommonModule],
   template: `
-    <header class="topbar">
+    <header class="topbar" [attr.dir]="i18n.lang()">
       <div class="topbar__title">
         <h1>MIZAN</h1>
-        <span>منصة تحليلات الذهب</span>
+        <span>{{ i18n.isAr() ? 'منصة تحليلات الذهب' : 'Gold Analytics Platform' }}</span>
       </div>
       <div class="topbar__actions">
-        <span class="welcome">مرحباً، {{ auth.currentUser?.fullName }}</span>
-        <button class="logout-btn btn btn--ghost btn--sm" (click)="auth.logout()">تسجيل الخروج</button>
+        <div class="lang-toggle" (click)="i18n.toggle()" title="Switch Language">
+          <span [class.active]="i18n.isAr()">AR</span>
+          <span [class.active]="!i18n.isAr()">EN</span>
+        </div>
+        <span class="welcome">
+          {{ i18n.isAr() ? 'مرحباً،' : 'Welcome,' }}
+          {{ auth.currentUser?.fullName }}
+        </span>
+        <button class="logout-btn btn btn--ghost btn--sm" (click)="auth.logout()">
+          {{ i18n.isAr() ? 'تسجيل الخروج' : 'Sign Out' }}
+        </button>
       </div>
     </header>
   `,
@@ -39,4 +49,5 @@ import { AuthService } from '../../../core/services/auth.service';
 })
 export class TopbarComponent {
   auth = inject(AuthService);
+  i18n = inject(I18nService);
 }

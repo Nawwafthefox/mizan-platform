@@ -6,11 +6,15 @@ spring:
       auto-index-creation: true
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 200MB
+      max-file-size: 100MB
+      max-request-size: 400MB
+      file-size-threshold: 10MB   # keep files ≤10MB in memory, skip temp-disk write
 
 server:
   port: 8080
+  tomcat:
+    connection-timeout: 120000
+    max-swallow-size: -1
 
 mizan:
   jwt:

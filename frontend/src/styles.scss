@@ -26,11 +26,40 @@
 
 html, body {
   height: 100%;
-  font-family: 'Segoe UI', 'Tahoma', system-ui, -apple-system, sans-serif;
-  font-size: 15px;
+  font-family: var(--font-primary, 'IBM Plex Sans Arabic', 'Segoe UI', system-ui, sans-serif);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.6;
   color: var(--mizan-text);
   background: var(--mizan-bg);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1 { font-size: 20px; font-weight: 800; color: var(--mizan-text); letter-spacing: -0.3px; margin: 0; }
+h2 { font-size: 16px; font-weight: 700; color: var(--mizan-text); margin: 0; }
+h3 { font-size: 14px; font-weight: 700; color: var(--mizan-text); margin: 0; }
+
+.pos { font-weight: 800; font-size: 13px; }
+.neg { font-weight: 800; font-size: 13px; }
+
+.kpi-value, .num, .sar-val {
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+}
+.kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mizan-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.kpi-sub {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mizan-text-muted);
+  margin-top: 6px;
 }
 
 a { color: inherit; text-decoration: none; }
@@ -79,7 +108,7 @@ button { cursor: pointer; font-family: inherit; }
 .btn {
   display: inline-flex; align-items: center; gap: .4rem;
   padding: .55rem 1.25rem; border-radius: 8px;
-  font-size: .875rem; font-weight: 500; border: none; transition: all .2s; white-space: nowrap;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.2px; border: none; transition: all .2s; white-space: nowrap;
 
   &--primary { background: var(--mizan-green); color: #fff; &:hover { background: var(--mizan-green-dark); } }
   &--gold    { background: var(--mizan-gold); color: var(--mizan-green-dark); &:hover { background: var(--mizan-gold-dark); color: #fff; } }
@@ -94,7 +123,7 @@ button { cursor: pointer; font-family: inherit; }
 // ─── Form ─────────────────────────────────────────────────────
 .form-group {
   display: flex; flex-direction: column; gap: .35rem;
-  label { font-size: .8rem; font-weight: 500; color: var(--mizan-text-muted); text-transform: uppercase; letter-spacing: .04em; }
+  label { font-size: 12px; font-weight: 700; color: var(--mizan-text); text-transform: uppercase; letter-spacing: .04em; }
 }
 
 .form-control {
@@ -113,18 +142,18 @@ table {
   width: 100%; border-collapse: collapse; background: var(--mizan-surface);
   thead tr {
     background: var(--mizan-green-dark);
-    th { padding: .7rem 1rem; font-size: .78rem; font-weight: 600; color: var(--mizan-gold); text-align: start; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+    th { padding: 12px 16px; font-size: 12px; font-weight: 800; color: var(--mizan-gold); text-align: start; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; background: rgba(255,255,255,0.06); }
   }
   tbody tr {
     border-bottom: 1px solid var(--mizan-border); transition: background .15s;
     &:hover { background: rgba(45,106,79,.04); } &:last-child { border-bottom: none; }
-    td { padding: .7rem 1rem; font-size: .88rem; color: var(--mizan-text); white-space: nowrap; }
+    td { padding: 10px 16px; font-size: 13px; font-weight: 500; color: var(--mizan-text); white-space: nowrap; }
   }
 }
 
 // ─── Badge ────────────────────────────────────────────────────
 .badge {
-  display: inline-flex; align-items: center; padding: .2rem .6rem; border-radius: 20px; font-size: .72rem; font-weight: 600;
+  display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 700;
   &--success { background: rgba(40,167,69,.12); color: var(--mizan-success); }
   &--danger  { background: rgba(220,53,69,.12); color: var(--mizan-danger); }
   &--warning { background: rgba(255,193,7,.15); color: #856404; }
@@ -150,9 +179,9 @@ table {
 .stat-card {
   background: var(--mizan-surface); border-radius: var(--radius); padding: 1.25rem;
   border: 1px solid var(--mizan-border); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: .4rem;
-  &__label { font-size: .78rem; font-weight: 500; color: var(--mizan-text-muted); text-transform: uppercase; letter-spacing: .05em; }
-  &__value { font-size: 1.65rem; font-weight: 700; color: var(--mizan-green-dark); line-height: 1.2; }
-  &__sub   { font-size: .78rem; color: var(--mizan-text-muted); }
+  &__label { font-size: 11px; font-weight: 700; color: var(--mizan-text-muted); text-transform: uppercase; letter-spacing: .8px; }
+  &__value { font-size: 24px; font-weight: 800; color: var(--mizan-green-dark); line-height: 1.2; letter-spacing: -0.5px; }
+  &__sub   { font-size: 11px; font-weight: 500; color: var(--mizan-text-muted); margin-top: 6px; }
   &--gold &__value { color: var(--mizan-gold-dark); }
 }
 
@@ -204,6 +233,37 @@ table {
   text-align: center; padding: 3rem 1rem; color: var(--mizan-text-muted);
   .empty-icon { font-size: 2.5rem; margin-bottom: .75rem; opacity: .4; }
   p { font-size: .9rem; }
+}
+
+// ─── Lang toggle pill ─────────────────────────────────────────
+.lang-toggle {
+  display: inline-flex;
+  background: rgba(0,0,0,.08);
+  border: 1px solid rgba(0,0,0,.12);
+  border-radius: 20px;
+  overflow: hidden;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  font-family: 'IBM Plex Sans', sans-serif;
+  user-select: none;
+  flex-shrink: 0;
+  span {
+    padding: 5px 10px;
+    color: rgba(0,0,0,.4);
+    transition: all 200ms;
+    line-height: 1;
+    &.active {
+      background: var(--mizan-gold);
+      color: var(--mizan-green-dark);
+    }
+  }
+  &--light {
+    background: rgba(255,255,255,.1);
+    border-color: rgba(255,255,255,.15);
+    span { color: rgba(255,255,255,.45); }
+    span.active { background: var(--mizan-gold); color: var(--mizan-green-dark); }
+  }
 }
 
 // ─── Pagination ──────────────────────────────────────────────

@@ -11,6 +11,7 @@ public interface BranchSaleRepository extends MongoRepository<BranchSale, String
     @Query("{'tenantId':?0,'saleDate':{$gte:?1,$lte:?2},'branchCode':{$in:?3}}")
     List<BranchSale> findByTenantAndRangeAndBranches(String tenantId, LocalDate from, LocalDate to, List<String> codes);
     boolean existsByTenantIdAndSaleDateAndBranchCodeAndSourceFileName(String t, LocalDate d, String b, String f);
+    List<SourceFileProjection> findByTenantId(String tenantId);
     void deleteByTenantId(String tenantId);
     long countByTenantId(String tenantId);
 }
