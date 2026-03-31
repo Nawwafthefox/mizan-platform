@@ -3,8 +3,6 @@ spring:
     name: mizan-platform
   data:
     mongodb:
-      uri: ${MONGODB_URI:mongodb://localhost:27017/mizan}
-      database: ${MONGODB_DATABASE:mizan}
       auto-index-creation: true
   servlet:
     multipart:
