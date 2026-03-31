@@ -22,9 +22,9 @@ export class DashboardService {
     return this.http.get<ApiResponse<BranchSummary[]>>(`${environment.apiUrl}/dashboard/branches`, { params });
   }
 
-  getRegions(from: string, to: string): Observable<ApiResponse<RegionSummary[]>> {
+  getRegions(from: string, to: string): Observable<ApiResponse<any[]>> {
     const params = new HttpParams().set('from', from).set('to', to);
-    return this.http.get<ApiResponse<RegionSummary[]>>(`${environment.apiUrl}/dashboard/regions`, { params });
+    return this.http.get<ApiResponse<any[]>>(`${environment.apiUrl}/dashboard/regions`, { params });
   }
 
   getEmployees(from: string, to: string, branchCode?: string, region?: string): Observable<ApiResponse<EmployeeSummary[]>> {
@@ -42,6 +42,16 @@ export class DashboardService {
   getMothan(from: string, to: string): Observable<ApiResponse<MothanSummary>> {
     const params = new HttpParams().set('from', from).set('to', to);
     return this.http.get<ApiResponse<MothanSummary>>(`${environment.apiUrl}/dashboard/mothan`, { params });
+  }
+
+  getAlerts(from: string, to: string): Observable<ApiResponse<any[]>> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    return this.http.get<ApiResponse<any[]>>(`${environment.apiUrl}/dashboard/alerts`, { params });
+  }
+
+  getComparison(d1: string, d2: string): Observable<ApiResponse<any>> {
+    const params = new HttpParams().set('d1', d1).set('d2', d2);
+    return this.http.get<ApiResponse<any>>(`${environment.apiUrl}/dashboard/comparison`, { params });
   }
 
   getPurchaseRates(): Observable<ApiResponse<BranchPurchaseRate[]>> {

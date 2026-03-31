@@ -11,6 +11,11 @@ interface NavItem {
   roles?: string[];
 }
 
+interface NavSection {
+  sectionLabel?: string;
+  items: NavItem[];
+}
+
 @Component({
   selector: 'app-sidebar',
   standalone: true,
@@ -30,12 +35,16 @@ interface NavItem {
       }
 
       <nav class="sidebar__nav">
-        @for (item of visibleItems(); track item.route) {
-          <a [routerLink]="item.route" routerLinkActive="active"
-             class="nav-item" [title]="item.labelAr">
-            <span class="nav-icon">{{ item.icon }}</span>
-            <span class="nav-label">{{ item.labelAr }}</span>
-          </a>
+        @for (section of visibleSections(); track section.sectionLabel ?? 'main') {
+          @if (section.sectionLabel) {
+            <div class="nav-section-label">{{ section.sectionLabel }}</div>
+          }
+          @for (item of section.items; track item.route) {
+            <a [routerLink]="item.route" routerLinkActive="active"
+               class="nav-item" [title]="item.labelAr">
+              <span class="nav-label">{{ item.labelAr }}</span>
+            </a>
+          }
         }
       </nav>
 
@@ -96,14 +105,23 @@ interface NavItem {
       background: none; border: 1px solid var(--mizan-gold);
       color: var(--mizan-gold); border-radius: 4px;
       padding: .15rem .5rem; font-size: .72rem; cursor: pointer;
-      &:hover { background: var(--mizan-gold); color: var(--mizan-green-dark); }
     }
+    .exit-imp:hover { background: var(--mizan-gold); color: var(--mizan-green-dark); }
 
     .sidebar__nav {
       flex: 1;
       padding: .75rem 0;
       display: flex;
       flex-direction: column;
+    }
+
+    .nav-section-label {
+      font-size: .68rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      color: rgba(255,255,255,.3);
+      padding: .9rem 1.5rem .3rem;
+      text-transform: uppercase;
     }
 
     .nav-item {
@@ -115,16 +133,15 @@ interface NavItem {
       transition: all .2s;
       font-size: .9rem;
       border-inline-start: 3px solid transparent;
-
-      &:hover { background: rgba(255,255,255,.07); color: #fff; }
-      &.active {
-        background: rgba(201,168,76,.15);
-        color: var(--mizan-gold);
-        border-inline-start-color: var(--mizan-gold);
-      }
+      text-decoration: none;
+    }
+    .nav-item:hover { background: rgba(255,255,255,.07); color: #fff; }
+    .nav-item.active {
+      background: rgba(201,168,76,.15);
+      color: var(--mizan-gold);
+      border-inline-start-color: var(--mizan-gold);
     }
 
-    .nav-icon { font-size: 1rem; width: 20px; text-align: center; }
     .nav-label { flex: 1; }
 
     .sidebar__footer {
@@ -151,37 +168,63 @@ interface NavItem {
       color: rgba(255,255,255,.45); font-size: 1.1rem;
       padding: .35rem;
       border-radius: 6px;
-      &:hover { color: var(--mizan-danger); background: rgba(220,53,69,.1); }
+      cursor: pointer;
     }
+    .logout-btn:hover { color: var(--mizan-danger); background: rgba(220,53,69,.1); }
   `]
 })
 export class SidebarComponent {
   auth = inject(AuthService);
 
-  private allItems: NavItem[] = [
-    { label: 'Dashboard', labelAr: 'لوحة التحكم', icon: '◈', route: '/dashboard', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER','BRANCH_EMPLOYEE','DATA_ENTRY'] },
-    { label: 'Branches',  labelAr: 'الفروع',      icon: '⊞', route: '/dashboard/branches', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER'] },
-    { label: 'Employees', labelAr: 'الموظفون',    icon: '◎', route: '/dashboard/employees', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
-    { label: 'Karat',     labelAr: 'عيارات الذهب', icon: '◇', route: '/dashboard/karat' },
-    { label: 'Mothan',    labelAr: 'المثان',       icon: '◈', route: '/dashboard/mothan' },
-    { label: 'Upload',    labelAr: 'رفع الملفات',  icon: '⊕', route: '/upload', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','DATA_ENTRY'] },
-    { label: 'Users',     labelAr: 'المستخدمون',  icon: '◉', route: '/users', roles: ['COMPANY_ADMIN'] },
-    { label: 'Rates',     labelAr: 'أسعار الشراء', icon: '◑', route: '/dashboard/rates', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+  private navSections: NavSection[] = [
+    {
+      items: [
+        { label: 'Overview', labelAr: 'نظرة عامة', icon: '◈', route: '/dashboard/overview', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER','BRANCH_EMPLOYEE','DATA_ENTRY'] },
+      ]
+    },
+    {
+      sectionLabel: 'التحليلات',
+      items: [
+        { label: 'Branches',   labelAr: 'الفروع',             icon: '', route: '/dashboard/branches',   roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
+        { label: 'Regions',    labelAr: 'المناطق',            icon: '', route: '/dashboard/regions',    roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER'] },
+        { label: 'Employees',  labelAr: 'الموظفون',           icon: '', route: '/dashboard/employees',  roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
+        { label: 'Karat',      labelAr: 'عيارات الذهب',       icon: '', route: '/dashboard/karat',      roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
+        { label: 'Mothan',     labelAr: 'موطن الذهب',         icon: '', route: '/dashboard/mothan',     roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+        { label: 'Heatmap',    labelAr: 'الخارطة الحرارية',   icon: '', route: '/dashboard/heatmap',    roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+        { label: 'Comparison', labelAr: 'مقارنة الأيام',      icon: '', route: '/dashboard/comparison', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+      ]
+    },
+    {
+      sectionLabel: 'الإدارة',
+      items: [
+        { label: 'Upload', labelAr: 'رفع الملفات',  icon: '', route: '/upload',          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','DATA_ENTRY'] },
+        { label: 'Users',  labelAr: 'المستخدمون',   icon: '', route: '/users',           roles: ['COMPANY_ADMIN'] },
+        { label: 'Rates',  labelAr: 'أسعار الشراء', icon: '', route: '/dashboard/rates', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+      ]
+    },
+    {
+      sectionLabel: 'أدائي',
+      items: [
+        { label: 'My Performance', labelAr: 'أدائي', icon: '', route: '/dashboard/my-performance', roles: ['BRANCH_EMPLOYEE'] },
+      ]
+    },
   ];
 
-  visibleItems = computed(() => {
+  visibleSections = computed(() => {
     const role = this.auth.currentUser?.role;
     if (!role) return [];
-    return this.allItems.filter(item => !item.roles || item.roles.includes(role));
+    return this.navSections
+      .map(s => ({ ...s, items: s.items.filter(i => !i.roles || i.roles.includes(role)) }))
+      .filter(s => s.items.length > 0);
   });
 
   initials = computed(() => {
     const name = this.auth.currentUser?.fullName || '';
-    return name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+    return name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase();
   });
 
   roleLabel(): string {
-    const map: Record<string,string> = {
+    const map: Record<string, string> = {
       SUPER_ADMIN: 'مدير النظام',
       COMPANY_ADMIN: 'مدير الشركة',
       CEO: 'الرئيس التنفيذي',
