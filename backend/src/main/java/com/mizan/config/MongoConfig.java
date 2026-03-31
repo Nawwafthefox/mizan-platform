@@ -9,6 +9,7 @@ import org.springframework.data.mongodb.repository.config.EnableMongoRepositorie
 
 @Configuration
 @EnableMongoRepositories(basePackages = "com.mizan.repository")
+// Mongo auto-config excluded in MizanApplication — this class owns all MongoDB beans
 public class MongoConfig extends AbstractMongoClientConfiguration {
 
     @Value("${MONGODB_URI:mongodb://localhost:27017}")

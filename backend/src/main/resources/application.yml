@@ -1,11 +1,9 @@
 spring:
   application:
     name: mizan-platform
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.mongo.MongoRepositoriesAutoConfiguration
+  data:
+    mongodb:
+      auto-index-creation: true
   servlet:
     multipart:
       max-file-size: 50MB
