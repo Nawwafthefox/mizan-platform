@@ -1,0 +1,12 @@
+<div class="s-chart-card">
+  <div class="s-chart-header">
+    <div>
+      <div class="s-chart-title">{{ titleKey ? (titleKey | mizan) : title }}</div>
+      <div class="s-chart-sub" *ngIf="subtitle">{{ subtitle }}</div>
+    </div>
+    <span class="s-chart-badge" *ngIf="badge">{{ badge }}</span>
+  </div>
+  <div class="s-chart-body" [style.height.px]="height">
+    <ng-content></ng-content>
+  </div>
+</div>

@@ -1,0 +1,428 @@
+<div class="studio-root">
+
+  <!-- ── HEADER ─────────────────────────────────────────────────── -->
+  <div class="studio-header">
+    <div class="studio-header-brand">
+      <span class="studio-header-logo">✦</span>
+      <div>
+        <h1 class="studio-title">{{ 'analyticsStudio' | mizan }}</h1>
+        <p class="studio-subtitle">{{ 'analyticsStudioSub' | mizan }}</p>
+      </div>
+    </div>
+    <div class="studio-header-controls">
+      <div class="studio-date-range">
+        <div class="studio-date-field">
+          <label>{{ 'from' | mizan }}</label>
+          <input type="date" [(ngModel)]="dateFrom" class="studio-date-input">
+        </div>
+        <div class="studio-date-field">
+          <label>{{ 'to' | mizan }}</label>
+          <input type="date" [(ngModel)]="dateTo" class="studio-date-input">
+        </div>
+        <button class="studio-btn" (click)="onDateChange()">
+          <span *ngIf="isLoading" class="studio-spinner"></span>
+          <span *ngIf="!isLoading">⟳</span>
+          {{ 'refresh' | mizan }}
+        </button>
+      </div>
+      <div class="studio-period-badge">{{ periodLabel }}</div>
+    </div>
+  </div>
+
+  <!-- ── LOADING OVERLAY ────────────────────────────────────────── -->
+  <div class="studio-loading" *ngIf="isLoading">
+    <span class="studio-spinner studio-spinner--lg"></span>
+    <p>{{ 'loading' | mizan }}</p>
+  </div>
+
+  <div *ngIf="!isLoading && !summary" class="studio-empty">
+    <div class="studio-empty-icon">◈</div>
+    <p>{{ 'noData' | mizan }}</p>
+  </div>
+
+  <ng-container *ngIf="!isLoading && summary">
+
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- SECTION 1: FINANCIAL OVERVIEW                               -->
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <div class="studio-section">
+      <div class="studio-section-header">
+        <span class="studio-section-icon">◈</span>
+        <h2>{{ 'financialOverview' | mizan }}</h2>
+      </div>
+      <div class="studio-kpi-grid">
+        <app-studio-kpi-card
+          icon="💰"
+          labelKey="totalSales"
+          [value]="kpiTotalSales"
+          tooltipKey="totalSalesDesc"
+          [tooltipValue]="kpiTotalSales">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="🏪"
+          labelKey="totalPurchases"
+          [value]="kpiTotalPurch"
+          tooltipKey="totalPurchDesc"
+          [tooltipValue]="kpiTotalPurch">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="📊"
+          labelKey="rateDiff"
+          [value]="kpiNet"
+          [valueClass]="kpiNetClass"
+          tooltipKey="netDesc"
+          [tooltipValue]="kpiNet">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="📈"
+          labelKey="saleRate"
+          [value]="kpiSaleRate"
+          [sub]="isAr ? 'ر.س/جم' : 'SAR/g'"
+          tooltipKey="rateDiffDesc"
+          [tooltipValue]="kpiSaleRate">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="📉"
+          labelKey="purchaseRate"
+          [value]="kpiPurchRate"
+          [sub]="isAr ? 'ر.س/جم' : 'SAR/g'"
+          tooltipKey="rateDiffDesc"
+          [tooltipValue]="kpiPurchRate">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="⚡"
+          labelKey="rateDiff"
+          [value]="kpiDiffRate"
+          [valueClass]="kpiDiffClass"
+          [sub]="isAr ? 'ر.س/جم' : 'SAR/g'"
+          tooltipKey="rateDiffDesc"
+          [tooltipValue]="kpiDiffRate"
+          accentColor="var(--studio-green-pop)">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="🧾"
+          labelKey="invoices"
+          [value]="kpiInvoices"
+          tooltipKey="avgInvoiceDesc"
+          [tooltipValue]="kpiAvgInvoice">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="💸"
+          [labelKey]="'avgInvoiceDesc'"
+          [value]="kpiAvgInvoice"
+          tooltipKey="avgInvoiceDesc"
+          [tooltipValue]="kpiAvgInvoice">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="⚠️"
+          [labelKey]="'negBranchDesc'"
+          [value]="kpiNegBranches"
+          [valueClass]="kpiNegBranches !== '0' ? 'neg' : ''"
+          tooltipKey="negBranchDesc"
+          [tooltipValue]="kpiNegBranches"
+          accentColor="var(--studio-red-pop)">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="🏆"
+          [labelKey]="'topBranchDesc'"
+          [value]="kpiTopBranch"
+          tooltipKey="topBranchDesc"
+          [tooltipValue]="kpiTopBranch"
+          accentColor="var(--studio-gold-2)">
+        </app-studio-kpi-card>
+
+        <app-studio-kpi-card
+          icon="↩️"
+          [labelKey]="'returnsDesc'"
+          [value]="kpiReturnsPct"
+          [valueClass]="kpiReturnsClass"
+          tooltipKey="returnsDesc"
+          [tooltipValue]="kpiReturnsPct"
+          accentColor="var(--studio-amber-pop)">
+        </app-studio-kpi-card>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- SECTION 2: BRANCH PERFORMANCE                               -->
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <div class="studio-section">
+      <div class="studio-section-header">
+        <span class="studio-section-icon">🏪</span>
+        <h2>{{ 'branchPerformance' | mizan }}</h2>
+      </div>
+
+      <!-- Charts Row -->
+      <div class="studio-charts-grid studio-charts-grid--2-1">
+        <app-studio-chart-card titleKey="salesAndPurch" [height]="280">
+          <canvas #cvMainBar></canvas>
+        </app-studio-chart-card>
+        <app-studio-chart-card titleKey="salesByRegion" [height]="280">
+          <canvas #cvRegionDoughnut></canvas>
+        </app-studio-chart-card>
+      </div>
+
+      <!-- Rate Diff Chart -->
+      <app-studio-chart-card titleKey="branchRanking" [height]="260"
+        [badge]="isAr ? branches.length + ' فرع' : branches.length + ' branches'">
+        <canvas #cvRateDiff></canvas>
+      </app-studio-chart-card>
+
+      <!-- Top / Bottom tables -->
+      <div class="studio-tables-row">
+        <div class="studio-table-card">
+          <div class="studio-table-header">
+            <span class="studio-table-title">{{ 'top10branches' | mizan }}</span>
+            <span class="studio-badge">TOP 5</span>
+          </div>
+          <div class="studio-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>{{ isAr ? 'الفرع' : 'Branch' }}</th>
+                  <th>{{ isAr ? 'المبيعات' : 'Sales' }}</th>
+                  <th>{{ isAr ? 'الفرق' : 'Diff' }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let b of summary.topFiveBranches; let i = index">
+                  <td><span class="rank-badge">{{ i+1 }}</span></td>
+                  <td class="branch-name">{{ b.branchName }}</td>
+                  <td class="mono">{{ fmtSAR(b.totalSarAmount) }}</td>
+                  <td class="mono" [ngClass]="b.diffRate >= 0 ? 'pos-val' : 'neg-val'">
+                    {{ b.diffRate.toFixed(2) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="studio-table-card">
+          <div class="studio-table-header">
+            <span class="studio-table-title">{{ isAr ? 'أدنى الفروع' : 'Bottom Branches' }}</span>
+            <span class="studio-badge studio-badge--red">LOW</span>
+          </div>
+          <div class="studio-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>{{ isAr ? 'الفرع' : 'Branch' }}</th>
+                  <th>{{ isAr ? 'المبيعات' : 'Sales' }}</th>
+                  <th>{{ isAr ? 'الفرق' : 'Diff' }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let b of summary.bottomFiveBranches">
+                  <td class="branch-name">{{ b.branchName }}</td>
+                  <td class="mono">{{ fmtSAR(b.totalSarAmount) }}</td>
+                  <td class="mono" [ngClass]="b.diffRate >= 0 ? 'pos-val' : 'neg-val'">
+                    {{ b.diffRate.toFixed(2) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- SECTION 3: REGION ANALYSIS                                  -->
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <div class="studio-section">
+      <div class="studio-section-header">
+        <span class="studio-section-icon">🗺</span>
+        <h2>{{ 'regionAnalysis' | mizan }}</h2>
+      </div>
+
+      <!-- Region Cards -->
+      <div class="studio-region-cards">
+        <div class="studio-region-card" *ngFor="let r of regionsSorted">
+          <div class="studio-region-dot"
+               [style.background]="REGION_COLORS[r.regionName] ?? '#c9a84c'"></div>
+          <div class="studio-region-name">{{ r.regionName }}</div>
+          <div class="studio-region-sar">{{ fmtSAR(r.totalSar) }}</div>
+          <div class="studio-region-meta">
+            {{ r.branchCount }} {{ isAr ? 'فرع' : 'br' }} ·
+            {{ r.saleRate.toFixed(1) }} {{ isAr ? 'ر.س/جم' : 'SAR/g' }}
+          </div>
+          <div class="studio-region-bar">
+            <div class="studio-region-bar-fill"
+                 [style.width.%]="summary.totalSalesAmount > 0 ? (r.totalSar / summary.totalSalesAmount * 100) : 0"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Region Bar Chart -->
+      <app-studio-chart-card titleKey="salesAndPurch" [height]="240">
+        <canvas #cvRegionBar></canvas>
+      </app-studio-chart-card>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- SECTION 4: EMPLOYEE DETAILS                                 -->
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <div class="studio-section" *ngIf="employees.length > 0">
+      <div class="studio-section-header">
+        <span class="studio-section-icon">👤</span>
+        <h2>{{ 'empDetails' | mizan }}</h2>
+        <span class="studio-badge">{{ employees.length }}</span>
+      </div>
+
+      <div class="studio-charts-grid studio-charts-grid--3">
+        <app-studio-chart-card titleKey="top10sales" [height]="280">
+          <canvas #cvEmpTop></canvas>
+        </app-studio-chart-card>
+        <app-studio-chart-card titleKey="top10diff" [height]="280">
+          <canvas #cvEmpDiff></canvas>
+        </app-studio-chart-card>
+        <app-studio-chart-card titleKey="top10profit" [height]="280">
+          <canvas #cvEmpProfit></canvas>
+        </app-studio-chart-card>
+      </div>
+
+      <!-- Classification Grid -->
+      <div class="studio-class-grid">
+        <div class="studio-class-card studio-class-card--excellent">
+          <div class="studio-class-icon">⭐</div>
+          <div class="studio-class-count">{{ empCountByClass('excellent') }}</div>
+          <div class="studio-class-label">{{ isAr ? 'ممتاز' : 'Excellent' }}</div>
+          <div class="studio-class-desc">{{ isAr ? '700+ ر.س/جم' : '700+ SAR/g' }}</div>
+        </div>
+        <div class="studio-class-card studio-class-card--good">
+          <div class="studio-class-icon">✅</div>
+          <div class="studio-class-count">{{ empCountByClass('good') }}</div>
+          <div class="studio-class-label">{{ isAr ? 'جيد' : 'Good' }}</div>
+          <div class="studio-class-desc">{{ isAr ? '600–700 ر.س/جم' : '600–700 SAR/g' }}</div>
+        </div>
+        <div class="studio-class-card studio-class-card--average">
+          <div class="studio-class-icon">⚠️</div>
+          <div class="studio-class-count">{{ empCountByClass('average') }}</div>
+          <div class="studio-class-label">{{ isAr ? 'متوسط' : 'Average' }}</div>
+          <div class="studio-class-desc">{{ isAr ? '500–600 ر.س/جم' : '500–600 SAR/g' }}</div>
+        </div>
+        <div class="studio-class-card studio-class-card--weak">
+          <div class="studio-class-icon">❌</div>
+          <div class="studio-class-count">{{ empCountByClass('weak') }}</div>
+          <div class="studio-class-label">{{ isAr ? 'ضعيف' : 'Weak' }}</div>
+          <div class="studio-class-desc">{{ isAr ? 'أقل من 500' : 'Below 500' }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- SECTION 5: KARAT ANALYSIS                                   -->
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <div class="studio-section">
+      <div class="studio-section-header">
+        <span class="studio-section-icon">💎</span>
+        <h2>{{ 'salesByKarat' | mizan }}</h2>
+      </div>
+      <div class="studio-charts-grid studio-charts-grid--2-1">
+        <app-studio-chart-card titleKey="karatByBranch" [height]="280">
+          <canvas #cvKaratBar></canvas>
+        </app-studio-chart-card>
+        <app-studio-chart-card titleKey="salesByKarat" [height]="280">
+          <canvas #cvKaratDoughnut></canvas>
+        </app-studio-chart-card>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- SECTION 6: HEATMAP                                          -->
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <div class="studio-section">
+      <div class="studio-section-header">
+        <span class="studio-section-icon">🔥</span>
+        <h2>{{ 'heatmap' | mizan }}</h2>
+      </div>
+      <app-studio-chart-card titleKey="branchRanking" [height]="400"
+        [badge]="isAr ? 'كل الفروع' : 'All Branches'">
+        <canvas #cvHeatmap></canvas>
+      </app-studio-chart-card>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- SECTION 7: MOTHAN & GOLD EXPOSURE                           -->
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <div class="studio-section">
+      <div class="studio-section-header">
+        <span class="studio-section-icon">🌐</span>
+        <h2>{{ 'mothan' | mizan }}</h2>
+      </div>
+
+      <!-- Mothan KPI Cards -->
+      <div class="studio-kpi-grid studio-kpi-grid--3">
+        <app-studio-kpi-card
+          icon="🪙"
+          labelKey="mothanTotal"
+          [value]="kpiMothanTotal"
+          tooltipKey="mothanTotal"
+          [tooltipValue]="kpiMothanTotal"
+          accentColor="var(--studio-teal-pop)">
+        </app-studio-kpi-card>
+        <app-studio-kpi-card
+          icon="⚖️"
+          labelKey="weightReceived"
+          [value]="kpiMothanWeight"
+          tooltipKey="weightReceived"
+          [tooltipValue]="kpiMothanWeight"
+          accentColor="var(--studio-teal-pop)">
+        </app-studio-kpi-card>
+        <app-studio-kpi-card
+          icon="📐"
+          labelKey="avgRate"
+          [value]="kpiMothanAvgRate"
+          [sub]="isAr ? 'ر.س/جم' : 'SAR/g'"
+          tooltipKey="avgRate"
+          [tooltipValue]="kpiMothanAvgRate"
+          accentColor="var(--studio-teal-pop)">
+        </app-studio-kpi-card>
+      </div>
+
+      <!-- Mothan & Exposure Charts -->
+      <div class="studio-charts-grid studio-charts-grid--2">
+        <app-studio-chart-card titleKey="moTransactions" [height]="280">
+          <canvas #cvMothan></canvas>
+        </app-studio-chart-card>
+        <app-studio-chart-card
+          [title]="isAr ? 'تغطية الذهب بالفروع' : 'Gold Coverage by Branch'"
+          [height]="280">
+          <canvas #cvExposure></canvas>
+        </app-studio-chart-card>
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <!-- SECTION 8: SMART ALERTS                                     -->
+    <!-- ════════════════════════════════════════════════════════════ -->
+    <div class="studio-section">
+      <div class="studio-section-header">
+        <span class="studio-section-icon">🔔</span>
+        <h2>{{ 'smartAlerts' | mizan }}</h2>
+        <span class="studio-badge" [class.studio-badge--red]="studioAlerts[0]?.severity !== 'green'">
+          {{ studioAlerts.length }}
+        </span>
+      </div>
+      <div class="studio-alerts-list">
+        <app-studio-alert-row
+          *ngFor="let a of studioAlerts"
+          [icon]="a.icon"
+          [message]="a.message"
+          [severity]="a.severity">
+        </app-studio-alert-row>
+      </div>
+    </div>
+
+  </ng-container>
+</div>

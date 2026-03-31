@@ -1,0 +1,12 @@
+<div class="s-kpi" [style.--accent]="accentColor"
+     (mouseenter)="hovered=true" (mouseleave)="hovered=false">
+  <div class="s-kpi-rank" *ngIf="rank">{{ rank }}</div>
+  <div class="s-kpi-icon">{{ icon }}</div>
+  <div class="s-kpi-label">{{ labelKey | mizan }}</div>
+  <div class="s-kpi-value" [ngClass]="valueClass">{{ value }}</div>
+  <div class="s-kpi-sub">{{ sub }}</div>
+  <div class="s-kpi-tip" [class.visible]="hovered">
+    <div class="s-kpi-tip-desc">{{ tooltipKey | mizan }}</div>
+    <div class="s-kpi-tip-val">{{ tooltipValue }}</div>
+  </div>
+</div>

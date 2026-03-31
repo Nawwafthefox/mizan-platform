@@ -19,6 +19,7 @@ export const DASHBOARD_ROUTES: Routes = [
       { path: 'comparison',    loadComponent: () => import('./pages/comparison.component').then(m => m.ComparisonComponent) },
       { path: 'my-performance',loadComponent: () => import('./pages/my-performance.component').then(m => m.MyPerformanceComponent) },
       { path: 'rates',         loadComponent: () => import('./pages/rates.component').then(m => m.RatesComponent) },
+      { path: 'analytics-studio', loadComponent: () => import('../../features/analytics-studio/analytics-studio.component').then(m => m.AnalyticsStudioComponent) },
     ]
   }
 ];

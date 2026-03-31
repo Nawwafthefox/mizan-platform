@@ -42,8 +42,12 @@ interface NavSection {
           }
           @for (item of section.items; track item.route) {
             <a [routerLink]="item.route" routerLinkActive="active"
-               class="nav-item" [title]="item.labelAr">
+               class="nav-item" [class.studio-nav-link]="item.route === '/dashboard/analytics-studio'"
+               [title]="item.labelAr">
               <span class="nav-label">{{ item.labelAr }}</span>
+              @if (item.route === '/dashboard/analytics-studio') {
+                <span class="studio-2-badge">2.0</span>
+              }
             </a>
           }
         }
@@ -204,6 +208,7 @@ export class SidebarComponent {
         { label: 'Mothan',     labelAr: 'موطن الذهب',         icon: '', route: '/dashboard/mothan',     roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
         { label: 'Heatmap',    labelAr: 'الخارطة الحرارية',   icon: '', route: '/dashboard/heatmap',    roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
         { label: 'Comparison', labelAr: 'مقارنة الأيام',      icon: '', route: '/dashboard/comparison', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+        { label: 'Analytics Studio', labelAr: 'استوديو التحليلات', icon: '✦', route: '/dashboard/analytics-studio', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
       ]
     },
     {

@@ -1,5 +1,29 @@
 // ─── MIZAN Design System ───────────────────────────────────────
 :root {
+  // ── Analytics Studio tokens ─────────────────────────────────
+  --studio-void:       #040d08;
+  --studio-surface:    #071510;
+  --studio-layer:      #0b1e14;
+  --studio-layer-2:    #0f2819;
+  --studio-edge:       #14321f;
+  --studio-border:     rgba(201,168,76,0.13);
+  --studio-border-h:   rgba(201,168,76,0.38);
+  --studio-gold:       #c9a84c;
+  --studio-gold-2:     #e3c76a;
+  --studio-gold-3:     #f5e199;
+  --studio-gold-dark:  #8a6e28;
+  --studio-gold-glow:  rgba(201,168,76,0.20);
+  --studio-gold-grid:  rgba(201,168,76,0.06);
+  --studio-green-pop:  #34d399;
+  --studio-red-pop:    #f87171;
+  --studio-amber-pop:  #fbbf24;
+  --studio-teal-pop:   #2dd4bf;
+  --studio-text:       #f2ede4;
+  --studio-text-2:     rgba(242,237,228,0.62);
+  --studio-text-3:     rgba(242,237,228,0.33);
+  --studio-mono:       'IBM Plex Mono', 'Courier New', monospace;
+  --studio-sans:       'IBM Plex Sans Arabic', 'IBM Plex Sans', system-ui;
+  --studio-ease:       cubic-bezier(0.22, 1, 0.36, 1);
   --mizan-green-dark:  #1a3a2a;
   --mizan-green:       #2d6a4f;
   --mizan-green-light: #40916c;
@@ -264,6 +288,16 @@ table {
     span { color: rgba(255,255,255,.45); }
     span.active { background: var(--mizan-gold); color: var(--mizan-green-dark); }
   }
+}
+
+// ─── Analytics Studio nav badge ──────────────────────────────
+.studio-nav-link .studio-2-badge {
+  font-size: 9px; font-weight: 900;
+  background: var(--studio-gold, #c9a84c);
+  color: #040d08;
+  padding: 2px 7px; border-radius: 20px;
+  margin-inline-start: auto; line-height: 1.5;
+  letter-spacing: 0.3px;
 }
 
 // ─── Pagination ──────────────────────────────────────────────

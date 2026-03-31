@@ -1,0 +1,46 @@
+.s-chart-card {
+  background: var(--studio-layer);
+  border: 1px solid var(--studio-border);
+  border-radius: 20px;
+  padding: 20px 20px 16px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 280ms;
+}
+.s-chart-card::before {
+  content: '';
+  position: absolute;
+  inset-block-start: 0; inset-inline: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(201,168,76,0.3) 40%, rgba(201,168,76,0.3) 60%, transparent);
+  opacity: 0;
+  transition: opacity 280ms;
+}
+.s-chart-card:hover { border-color: rgba(201,168,76,0.26); }
+.s-chart-card:hover::before { opacity: 1; }
+
+.s-chart-header {
+  display: flex; justify-content: space-between;
+  align-items: flex-start; gap: 12px; margin-bottom: 16px;
+}
+.s-chart-title {
+  font-size: 14px; font-weight: 700;
+  color: var(--studio-text);
+  font-family: var(--studio-sans);
+}
+.s-chart-sub {
+  font-size: 10px; color: var(--studio-text-3);
+  margin-top: 3px; font-weight: 500;
+}
+.s-chart-badge {
+  background: rgba(201,168,76,0.09);
+  border: 1px solid var(--studio-border);
+  color: var(--studio-gold);
+  font-size: 10px; font-weight: 700;
+  padding: 4px 12px; border-radius: 20px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.s-chart-body {
+  position: relative; width: 100%;
+  canvas { position: absolute; inset: 0; width: 100% !important; height: 100% !important; }
+}
