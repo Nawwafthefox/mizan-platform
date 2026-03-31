@@ -27,20 +27,20 @@ import { SubscriptionTier } from '../../shared/models/models';
             </div>
             <div class="tier-info">
               <div class="tier-row">
-                <span>السعر الشهري</span>
-                <strong>{{ t.monthlyPrice }} $</strong>
+                <span>الرسوم الشهرية</span>
+                <strong>{{ t.pricing?.baseFeeMonthly ?? 0 }} ر.س</strong>
               </div>
               <div class="tier-row">
-                <span>السعر السنوي</span>
-                <strong>{{ t.annualPrice }} $</strong>
+                <span>رسوم الفرع/شهر</span>
+                <strong>{{ t.pricing?.perBranchFeeMonthly ?? 0 }} ر.س</strong>
               </div>
               <div class="tier-row">
                 <span>الحد الأقصى للفروع</span>
-                <strong>{{ t.maxBranches }}</strong>
+                <strong>{{ t.limits?.maxBranches ?? '∞' }}</strong>
               </div>
               <div class="tier-row">
                 <span>الحد الأقصى للمستخدمين</span>
-                <strong>{{ t.maxUsers }}</strong>
+                <strong>{{ t.limits?.maxUsers ?? '∞' }}</strong>
               </div>
             </div>
             <button class="btn btn--outline btn--sm mt-3 w-full" (click)="openEdit(t)">تعديل</button>
@@ -95,7 +95,7 @@ import { SubscriptionTier } from '../../shared/models/models';
 })
 export class TiersComponent implements OnInit {
   private svc = inject(SuperAdminService);
-  tiers = signal<SubscriptionTier[]>([]);
+  tiers = signal<any[]>([]);
   loading = signal(false);
   saving = signal(false);
   showModal = signal(false);
@@ -113,19 +113,25 @@ export class TiersComponent implements OnInit {
     });
   }
 
-  openEdit(t: SubscriptionTier): void {
+  openEdit(t: any): void {
     this.editTier.set(t);
-    this.form = { displayName: t.displayName, monthlyPrice: t.monthlyPrice, annualPrice: t.annualPrice, maxBranches: t.maxBranches, maxUsers: t.maxUsers };
+    this.form = {
+      displayName: t.tierNameEn ?? t.displayName,
+      monthlyPrice: t.pricing?.baseFeeMonthly ?? t.monthlyPrice ?? 0,
+      annualPrice: t.pricing?.baseFeeMonthly ?? t.annualPrice ?? 0,
+      maxBranches: t.limits?.maxBranches ?? t.maxBranches ?? 5,
+      maxUsers: t.limits?.maxUsers ?? t.maxUsers ?? 10
+    };
     this.showModal.set(true);
   }
 
   closeModal(): void { this.showModal.set(false); this.editTier.set(null); }
 
   save(): void {
-    const et = this.editTier();
+    const et = this.editTier() as any;
     if (!et) return;
     this.saving.set(true);
-    this.svc.updateTier(et.id, this.form).subscribe({
+    this.svc.updateTier(et.tierId ?? et.id, this.form).subscribe({
       next: () => { this.saving.set(false); this.closeModal(); this.load(); },
       error: () => this.saving.set(false)
     });
