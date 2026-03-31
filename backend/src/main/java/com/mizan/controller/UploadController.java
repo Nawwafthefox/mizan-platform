@@ -28,7 +28,8 @@ public class UploadController {
     @PostMapping("/request-token")
     public ResponseEntity<?> requestToken(@AuthenticationPrincipal MizanUserDetails principal) {
         var pair = progressSvc.createToken();
-        return ResponseEntity.ok(Map.of("success",true,"uploadId",pair.uploadId(),"sseToken",pair.sseToken()));
+        return ResponseEntity.ok(Map.of("success",true,"data",
+            Map.of("uploadId",pair.uploadId(),"token",pair.sseToken())));
     }
 
     @GetMapping(value="/progress/{uploadId}", produces=MediaType.TEXT_EVENT_STREAM_VALUE)

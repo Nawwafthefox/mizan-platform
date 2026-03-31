@@ -107,18 +107,20 @@ export interface UploadLog {
   fileName: string;
   fileType: string;
   status: string;
-  recordsInserted: number;
-  duplicatesSkipped: number;
+  recordsSaved: number;
   errorMessage?: string;
-  createdAt: string;
+  uploadedAt: string;
 }
 
 export interface UploadProgress {
   uploadId: string;
   fileName: string;
-  status: 'PENDING' | 'PROCESSING' | 'DONE' | 'ERROR';
+  fileType?: string;
+  status: string;
   percent: number;
+  savedRecords?: number;
   message?: string;
+  phaseAr?: string;
 }
 
 // ─── Tenant / Super-admin ─────────────────────────────────────
