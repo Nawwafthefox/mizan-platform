@@ -36,11 +36,11 @@ import { SubscriptionTier } from '../../shared/models/models';
               </div>
               <div class="tier-row">
                 <span>الحد الأقصى للفروع</span>
-                <strong>{{ t.limits?.maxBranches ?? '∞' }}</strong>
+                <strong>{{ t.features?.maxBranches === -1 ? '∞' : t.features?.maxBranches }}</strong>
               </div>
               <div class="tier-row">
-                <span>الحد الأقصى للمستخدمين</span>
-                <strong>{{ t.limits?.maxUsers ?? '∞' }}</strong>
+                <span>الحد الأقصى للموظفين</span>
+                <strong>{{ t.features?.maxEmployees === -1 ? '∞' : t.features?.maxEmployees }}</strong>
               </div>
             </div>
             <button class="btn btn--outline btn--sm mt-3 w-full" (click)="openEdit(t)">تعديل</button>
@@ -58,24 +58,28 @@ import { SubscriptionTier } from '../../shared/models/models';
           </div>
           <div class="modal__body">
             <div class="form-group">
-              <label>الاسم</label>
-              <input class="form-control" [(ngModel)]="form.displayName">
+              <label>الاسم (عربي)</label>
+              <input class="form-control" [(ngModel)]="form.tierNameAr">
             </div>
             <div class="form-group">
-              <label>السعر الشهري ($)</label>
-              <input class="form-control" type="number" [(ngModel)]="form.monthlyPrice" dir="ltr">
+              <label>الاسم (إنجليزي)</label>
+              <input class="form-control" [(ngModel)]="form.tierNameEn" dir="ltr">
             </div>
             <div class="form-group">
-              <label>السعر السنوي ($)</label>
-              <input class="form-control" type="number" [(ngModel)]="form.annualPrice" dir="ltr">
+              <label>الرسوم الشهرية الأساسية (ر.س)</label>
+              <input class="form-control" type="number" [(ngModel)]="form.baseFeeMonthly" dir="ltr">
             </div>
             <div class="form-group">
-              <label>الحد الأقصى للفروع</label>
+              <label>رسوم الفرع الشهرية (ر.س)</label>
+              <input class="form-control" type="number" [(ngModel)]="form.perBranchFeeMonthly" dir="ltr">
+            </div>
+            <div class="form-group">
+              <label>الحد الأقصى للفروع (-1 = لا حد)</label>
               <input class="form-control" type="number" [(ngModel)]="form.maxBranches" dir="ltr">
             </div>
             <div class="form-group">
-              <label>الحد الأقصى للمستخدمين</label>
-              <input class="form-control" type="number" [(ngModel)]="form.maxUsers" dir="ltr">
+              <label>الحد الأقصى للموظفين (-1 = لا حد)</label>
+              <input class="form-control" type="number" [(ngModel)]="form.maxEmployees" dir="ltr">
             </div>
           </div>
           <div class="modal__footer">
@@ -101,7 +105,7 @@ export class TiersComponent implements OnInit {
   showModal = signal(false);
   editTier = signal<SubscriptionTier | null>(null);
 
-  form = { displayName: '', monthlyPrice: 0, annualPrice: 0, maxBranches: 5, maxUsers: 10 };
+  form = { tierNameEn: '', tierNameAr: '', baseFeeMonthly: 0, perBranchFeeMonthly: 0, maxBranches: 5, maxEmployees: 20 };
 
   ngOnInit() { this.load(); }
 
@@ -116,11 +120,12 @@ export class TiersComponent implements OnInit {
   openEdit(t: any): void {
     this.editTier.set(t);
     this.form = {
-      displayName: t.tierNameEn ?? t.displayName,
-      monthlyPrice: t.pricing?.baseFeeMonthly ?? t.monthlyPrice ?? 0,
-      annualPrice: t.pricing?.baseFeeMonthly ?? t.annualPrice ?? 0,
-      maxBranches: t.limits?.maxBranches ?? t.maxBranches ?? 5,
-      maxUsers: t.limits?.maxUsers ?? t.maxUsers ?? 10
+      tierNameEn: t.tierNameEn ?? '',
+      tierNameAr: t.tierNameAr ?? '',
+      baseFeeMonthly: t.pricing?.baseFeeMonthly ?? 0,
+      perBranchFeeMonthly: t.pricing?.perBranchFeeMonthly ?? 0,
+      maxBranches: t.features?.maxBranches ?? 5,
+      maxEmployees: t.features?.maxEmployees ?? 20
     };
     this.showModal.set(true);
   }
@@ -131,7 +136,13 @@ export class TiersComponent implements OnInit {
     const et = this.editTier() as any;
     if (!et) return;
     this.saving.set(true);
-    this.svc.updateTier(et.tierId ?? et.id, this.form).subscribe({
+    const body = {
+      tierNameEn: this.form.tierNameEn,
+      tierNameAr: this.form.tierNameAr,
+      pricing: { ...et.pricing, baseFeeMonthly: this.form.baseFeeMonthly, perBranchFeeMonthly: this.form.perBranchFeeMonthly },
+      features: { ...et.features, maxBranches: this.form.maxBranches, maxEmployees: this.form.maxEmployees }
+    };
+    this.svc.updateTier(et.tierId ?? et.id, body).subscribe({
       next: () => { this.saving.set(false); this.closeModal(); this.load(); },
       error: () => this.saving.set(false)
     });
