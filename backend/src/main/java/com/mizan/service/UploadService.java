@@ -1,10 +1,11 @@
 package com.mizan.service;
+import com.mizan.dto.FileBytes;
 import com.mizan.model.*;
 import com.mizan.repository.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
+import java.io.ByteArrayInputStream;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -31,43 +32,62 @@ public class UploadService {
     }
 
     @Async
-    public void processAsync(List<MultipartFile> files, String uploadId,
+    public void processAsync(List<FileBytes> files, String uploadId,
             String tenantId, String userId) {
         int total = files.size();
         int totalSaved = 0;
+
         for (int i = 0; i < total; i++) {
-            MultipartFile file = files.get(i);
-            String name = file.getOriginalFilename();
+            FileBytes file = files.get(i);
+            String name = file.originalFilename();
             int base = (i * 100) / total;
             int next = ((i + 1) * 100) / total;
-            sendProgress(uploadId, "parsing", "جاري تحليل الملف", i+1, total, name, null, base, 0, "processing", null);
+
+            sendProgress(uploadId, "parsing", "جاري تحليل الملف",
+                i+1, total, name, null, base, 0, "processing", null);
             try {
-                ExcelParserService.ParseResult result = parser.parse(file.getInputStream(), name, tenantId, uploadId, userId);
+                // Parse from in-memory bytes — no temp file dependency
+                ExcelParserService.ParseResult result =
+                    parser.parse(new ByteArrayInputStream(file.bytes()), name, tenantId, uploadId, userId);
+
                 if (result.error() != null) {
-                    sendProgress(uploadId, "error", "حدث خطأ", i+1, total, name, result.fileType()!=null?result.fileType().name():null, next, 0, "error", result.error());
+                    sendProgress(uploadId, "error", "حدث خطأ",
+                        i+1, total, name,
+                        result.fileType() != null ? result.fileType().name() : null,
+                        next, 0, "error", result.error());
                     saveLog(tenantId, uploadId, name, "UNKNOWN", 0, "ERROR", result.error(), userId);
                     continue;
                 }
-                sendProgress(uploadId, "saving", "جاري الحفظ في قاعدة البيانات", i+1, total, name, result.fileType().name(), (base+next)/2, 0, "processing", null);
+
+                sendProgress(uploadId, "saving", "جاري الحفظ في قاعدة البيانات",
+                    i+1, total, name, result.fileType().name(), (base+next)/2, 0, "processing", null);
+
                 int saved = 0;
                 switch (result.fileType()) {
-                    case BRANCH_SALES -> saved = saveSales(result.sales());
-                    case PURCHASES    -> saved = savePurchases(result.purchases());
+                    case BRANCH_SALES   -> saved = saveSales(result.sales());
+                    case PURCHASES      -> saved = savePurchases(result.purchases());
                     case EMPLOYEE_SALES -> saved = saveEmpSales(result.empSales());
-                    case MOTHAN       -> saved = saveMothan(result.mothan());
+                    case MOTHAN         -> saved = saveMothan(result.mothan());
                     default -> {}
                 }
                 totalSaved += saved;
-                sendProgress(uploadId, "complete", "تم بنجاح", i+1, total, name, result.fileType().name(), next, saved, "success", null);
+                sendProgress(uploadId, "complete", "تم بنجاح",
+                    i+1, total, name, result.fileType().name(), next, saved, "success", null);
                 saveLog(tenantId, uploadId, name, result.fileType().name(), saved, "SUCCESS", null, userId);
+
             } catch (Exception e) {
-                log.error("Upload error: {}", e.getMessage(), e);
-                sendProgress(uploadId, "error", "حدث خطأ", i+1, total, name, null, next, 0, "error", e.getMessage());
+                log.error("Upload processing error for {}: {}", name, e.getMessage(), e);
+                sendProgress(uploadId, "error", "حدث خطأ أثناء المعالجة",
+                    i+1, total, name, null, next, 0, "error", e.getMessage());
                 saveLog(tenantId, uploadId, name, "UNKNOWN", 0, "ERROR", e.getMessage(), userId);
             }
         }
-        Map<String,Object> summary = Map.of("uploadId",uploadId,"totalFiles",total,"totalSaved",totalSaved,"status","complete");
-        progress.send(uploadId, "complete", summary);
+
+        progress.send(uploadId, "complete", Map.of(
+            "uploadId", uploadId,
+            "totalFiles", total,
+            "totalSaved", totalSaved,
+            "status", "complete"));
         progress.complete(uploadId);
     }
 

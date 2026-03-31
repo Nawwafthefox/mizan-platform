@@ -1,4 +1,5 @@
 package com.mizan.controller;
+import com.mizan.dto.FileBytes;
 import com.mizan.security.MizanUserDetails;
 import com.mizan.security.TenantContext;
 import com.mizan.service.UploadProgressService;
@@ -10,6 +11,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -44,9 +46,37 @@ public class UploadController {
             @RequestParam("files") List<MultipartFile> files,
             @RequestParam("uploadId") String uploadId,
             @AuthenticationPrincipal MizanUserDetails principal) {
+
+        // READ ALL BYTES NOW — synchronously, while the HTTP request is still alive
+        // and Tomcat's temp files still exist. After this method returns, Tomcat will
+        // delete the temp files; the async thread only sees our in-memory byte arrays.
+        List<FileBytes> fileBytesList = new ArrayList<>();
+        List<String> readErrors = new ArrayList<>();
+
+        for (MultipartFile file : files) {
+            try {
+                fileBytesList.add(new FileBytes(file.getOriginalFilename(), file.getBytes()));
+            } catch (Exception e) {
+                readErrors.add((file.getOriginalFilename() != null ? file.getOriginalFilename() : "unknown")
+                    + ": " + e.getMessage());
+            }
+        }
+
+        if (fileBytesList.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false,
+                "message", "تعذّر قراءة الملفات المرفوعة",
+                "details", readErrors));
+        }
+
         String tenantId = TenantContext.getTenantId();
-        uploadSvc.processAsync(files, uploadId, tenantId, principal.getUserId());
-        return ResponseEntity.accepted().body(Map.of("success",true,"message","Processing started"));
+        uploadSvc.processAsync(fileBytesList, uploadId, tenantId, principal.getUserId());
+
+        return ResponseEntity.accepted().body(Map.of(
+            "success", true,
+            "message", "Processing started",
+            "filesRead", fileBytesList.size(),
+            "readErrors", readErrors));
     }
 
     @GetMapping("/history")
