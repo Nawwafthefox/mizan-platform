@@ -66,7 +66,7 @@ import { Tenant } from '../../shared/models/models';
           <div class="modal__body">
             <div class="form-group">
               <label>اسم الشركة (عربي)</label>
-              <input class="form-control" [(ngModel)]="form.companyName">
+              <input class="form-control" [(ngModel)]="form.companyNameAr">
             </div>
             <div class="form-group">
               <label>اسم الشركة (إنجليزي)</label>
@@ -74,15 +74,15 @@ import { Tenant } from '../../shared/models/models';
             </div>
             <div class="form-group">
               <label>بريد المدير</label>
-              <input class="form-control" type="email" [(ngModel)]="form.adminEmail" dir="ltr">
+              <input class="form-control" type="email" [(ngModel)]="form.initialAdminEmail" dir="ltr">
             </div>
             <div class="form-group">
               <label>كلمة مرور المدير</label>
-              <input class="form-control" type="password" [(ngModel)]="form.adminPassword" dir="ltr">
+              <input class="form-control" type="password" [(ngModel)]="form.initialAdminPassword" dir="ltr">
             </div>
             <div class="form-group">
               <label>خطة الاشتراك</label>
-              <select class="form-control" [(ngModel)]="form.planTier">
+              <select class="form-control" [(ngModel)]="form.subscriptionTierId">
                 <option value="starter">Starter</option>
                 <option value="business">Business</option>
                 <option value="enterprise">Enterprise</option>
@@ -111,7 +111,7 @@ export class TenantsComponent implements OnInit {
   error = signal('');
   showModal = signal(false);
 
-  form = { companyName: '', companyNameEn: '', adminEmail: '', adminPassword: '', planTier: 'starter' };
+  form = { companyNameAr: '', companyNameEn: '', initialAdminEmail: '', initialAdminPassword: '', subscriptionTierId: 'starter' };
 
   ngOnInit() { this.load(); }
 
@@ -123,7 +123,7 @@ export class TenantsComponent implements OnInit {
     });
   }
 
-  openCreate(): void { this.form = { companyName:'', companyNameEn:'', adminEmail:'', adminPassword:'', planTier:'starter' }; this.showModal.set(true); }
+  openCreate(): void { this.form = { companyNameAr:'', companyNameEn:'', initialAdminEmail:'', initialAdminPassword:'', subscriptionTierId:'starter' }; this.showModal.set(true); }
   closeModal(): void { this.showModal.set(false); }
 
   createTenant(): void {
