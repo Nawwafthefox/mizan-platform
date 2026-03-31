@@ -2,676 +2,548 @@ package com.mizan.service;
 import com.mizan.config.BranchMaps;
 import com.mizan.model.*;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.stereotype.Service;
-import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.*;
 
+/**
+ * Parses ERP Excel exports (BIFF8 / HSSF format).
+ *
+ * VERIFIED COLUMN MAP — cols 0-15 — identical for Branch Sales, Employee Sales, Purchases:
+ *
+ *   Col  0  Sl.#               — sequential integer  (ROW FILTER: >= 1)
+ *   Col  1  Branch code        — 4-digit string       (ROW FILTER: matches \d{4})
+ *   Col  2  CODE1              — transaction ref
+ *   Col  3  CODE2 / EmployeeId — numeric integer (employee files only)
+ *   Col  4  CODE3 / EmployeeId — same as col 3 (employee files only)
+ *   Col  5  وصف / Name         — employee name string (employee files only)
+ *   Col  6  تاريخ السند        — Excel serial date   (ROW FILTER: > 40000)
+ *   Col  7  القطع              — invoice/piece count (negative = sale, positive = purchase)
+ *   Col  8  بالوزن الإجمالي   — gross weight incl. stones (display only)
+ *   Col  9  وزن الحجر          — stone weight (display only)
+ *   Col 10  الوزن الصافي       — net weight excl. stones (display only)
+ *   Col 11  النقاوة            — purity ratio: 0.75=18K, 0.875=21K, 0.916=22K, 1.0=24K
+ *   Col 12  الوزن النقي        — ★ PURE NET WEIGHT = gross×purity = RATE DENOMINATOR ★
+ *   Col 13  قيمة المعادن       — metal value SAR (excl. making charges)
+ *   Col 14  Mkg.Chgs           — making charges SAR
+ *   Col 15  مجموع              — ★ TOTAL SAR = col13 + col14 ★
+ *
+ * SIGN convention (sales / employee sales):
+ *   col15 negative in file → normal sale   → negate → positive SAR
+ *   col15 positive in file → return/مرتجع → negate → negative SAR
+ *   col12 always read as Math.abs(), sign follows SAR sign
+ *
+ * SIGN convention (purchases):
+ *   col15 always positive → Math.abs()
+ *   col12 always positive → Math.abs()
+ *
+ * EXCEL SERIAL DATE:  LocalDate.of(1899, 12, 30).plusDays((long) serial)
+ *   Excel epoch = 1899-12-30 (not 1900-01-01 — Excel leap year bug)
+ *   Example: serial 46082 → 2026-03-01
+ */
 @Slf4j
 @Service
 public class ExcelParserService {
+
     public enum FileType { BRANCH_SALES, EMPLOYEE_SALES, PURCHASES, MOTHAN, UNKNOWN }
 
+    // ── Public ParseResult record (interface unchanged — UploadService depends on it) ──
     public record ParseResult(
-        FileType fileType, LocalDate fileDate,
-        List<BranchSale> sales, List<BranchPurchase> purchases,
-        List<EmployeeSale> empSales, List<MothanTransaction> mothan,
+        FileType fileType,
+        LocalDate fileDate,
+        List<BranchSale>         sales,
+        List<BranchPurchase>     purchases,
+        List<EmployeeSale>       empSales,
+        List<MothanTransaction>  mothan,
         String error
     ) {}
 
-    // ─── File type detection from filename ────────────────────────────────────
-    public FileType detectType(String filename) {
-        String f = filename.toLowerCase();
-        if (f.contains("موطن") || f.contains("mothan")) return FileType.MOTHAN;
-        if (f.contains("مشتريات") || f.contains("purch")) return FileType.PURCHASES;
-        if (f.contains("الموظفين") || f.contains("employee")) return FileType.EMPLOYEE_SALES;
-        if (f.contains("الفروع") || f.contains("branch")) return FileType.BRANCH_SALES;
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  MAIN ENTRY POINT
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    public ParseResult parse(InputStream is, String filename,
+            String tenantId, String uploadBatch, String uploadedBy) {
+
+        try (HSSFWorkbook wb = new HSSFWorkbook(is)) {
+            Sheet sheet = wb.getSheetAt(0);
+
+            FileType type = detectFromFilename(filename);
+            if (type == FileType.UNKNOWN) type = detectFromContent(sheet);
+            log.info("Parsing '{}' → detected type: {}", filename, type);
+
+            LocalDate fileDate = extractDateFromHeader(sheet, filename);
+            log.info("File date: {}", fileDate);
+
+            return switch (type) {
+                case BRANCH_SALES   -> parseBranchSales  (sheet, fileDate, tenantId, uploadBatch, uploadedBy);
+                case EMPLOYEE_SALES -> parseEmployeeSales(sheet, fileDate, tenantId, uploadBatch, uploadedBy);
+                case PURCHASES      -> parsePurchases     (sheet, fileDate, tenantId, uploadBatch, uploadedBy);
+                case MOTHAN         -> parseMothan        (sheet, fileDate, tenantId, uploadBatch, uploadedBy);
+                default -> fail(type, fileDate, "لا يمكن تحديد نوع الملف: " + filename);
+            };
+        } catch (Exception e) {
+            log.error("Parse failed for '{}': {}", filename, e.getMessage(), e);
+            String msg = e.getMessage();
+            if (msg == null || msg.isBlank() || msg.contains("/tmp") || msg.length() > 150)
+                msg = "تعذّر قراءة الملف — تأكد أنه بصيغة Excel .xls صحيحة";
+            return fail(FileType.UNKNOWN, LocalDate.now(), msg);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  FILE TYPE DETECTION
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    FileType detectFromFilename(String filename) {
+        if (filename == null) return FileType.UNKNOWN;
+        // Check mothan FIRST — mothan files may also contain "مشتريات"
+        if (filename.contains("موطن") || filename.toLowerCase().contains("mothan"))
+            return FileType.MOTHAN;
+        if (filename.contains("مشتريات") || filename.toLowerCase().contains("purch"))
+            return FileType.PURCHASES;
+        if (filename.contains("الموظفين") || filename.toLowerCase().contains("employee"))
+            return FileType.EMPLOYEE_SALES;
+        if (filename.contains("الفروع") || filename.toLowerCase().contains("branch"))
+            return FileType.BRANCH_SALES;
         return FileType.UNKNOWN;
     }
 
-    public LocalDate extractDate(String filename) {
-        Pattern p = Pattern.compile("(\\d{2})-(\\d{2})-(\\d{4})");
-        Matcher m = p.matcher(filename);
-        if (m.find()) {
+    private FileType detectFromContent(Sheet sheet) {
+        // Scan first 15 rows for the report title string
+        StringBuilder header = new StringBuilder();
+        for (int i = 0; i < 15; i++) {
+            Row row = sheet.getRow(i);
+            if (row == null) continue;
+            for (Cell cell : row) {
+                if (cell.getCellType() == CellType.STRING) {
+                    header.append(cell.getStringCellValue()).append(" ");
+                }
+            }
+        }
+        String h = header.toString();
+        if (h.contains("STATEMENT OF ACCOUNT") || h.contains("موطن"))
+            return FileType.MOTHAN;
+        if (h.contains("المشتريات"))
+            return FileType.PURCHASES;
+        if (h.contains("مندوب المبيعات") || h.contains("الموظفين"))
+            return FileType.EMPLOYEE_SALES;
+        if (h.contains("المبيعات") || h.contains("الفروع"))
+            return FileType.BRANCH_SALES;
+        return FileType.UNKNOWN;
+    }
+
+    private LocalDate extractDateFromHeader(Sheet sheet, String filename) {
+        // Try: header contains "From YYYY-MM-DD To YYYY-MM-DD"
+        Pattern fromTo = Pattern.compile("From\\s+(\\d{4}-\\d{2}-\\d{2})\\s+To");
+        for (int i = 0; i < 8; i++) {
+            Row row = sheet.getRow(i);
+            if (row == null) continue;
+            for (Cell cell : row) {
+                if (cell.getCellType() != CellType.STRING) continue;
+                Matcher m = fromTo.matcher(cell.getStringCellValue());
+                if (m.find()) {
+                    try { return LocalDate.parse(m.group(1)); } catch (Exception ignored) {}
+                }
+            }
+        }
+        // Fallback: DD-MM-YYYY in filename
+        Matcher fm = Pattern.compile("(\\d{2})-(\\d{2})-(\\d{4})").matcher(filename != null ? filename : "");
+        if (fm.find()) {
             try {
-                return LocalDate.parse(m.group(1)+"-"+m.group(2)+"-"+m.group(3),
-                    DateTimeFormatter.ofPattern("dd-MM-yyyy"));
+                return LocalDate.of(
+                    Integer.parseInt(fm.group(3)),
+                    Integer.parseInt(fm.group(2)),
+                    Integer.parseInt(fm.group(1)));
             } catch (Exception ignored) {}
         }
         return LocalDate.now();
     }
 
-    // ─── Main entry point ─────────────────────────────────────────────────────
-    public ParseResult parse(InputStream is, String filename, String tenantId,
-            String uploadBatch, String uploadedBy) {
-        FileType type = detectType(filename);
-        LocalDate date = extractDate(filename);
-        try {
-            // Read entire stream into memory first.
-            // WorkbookFactory requires mark/reset support; multipart streams don't provide it.
-            // Reading to byte array avoids POI creating temp files (which leak paths in errors).
-            byte[] bytes = is.readAllBytes();
-            try (Workbook wb = WorkbookFactory.create(new BufferedInputStream(new ByteArrayInputStream(bytes)))) {
-                Sheet sheet = wb.getSheetAt(0);
-                return switch (type) {
-                    case BRANCH_SALES    -> parseBranchSales(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
-                    case PURCHASES       -> parsePurchases(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
-                    case EMPLOYEE_SALES  -> parseEmployeeSales(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
-                    case MOTHAN          -> parseMothan(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
-                    default -> new ParseResult(type, date, List.of(), List.of(), List.of(), List.of(), "نوع ملف غير معروف");
-                };
-            }
-        } catch (Exception e) {
-            log.error("Parse error for {}: {}", filename, e.getMessage(), e);
-            String msg = e.getMessage();
-            if (msg == null || msg.isBlank() || msg.contains("/tmp") || msg.contains("\\tmp") || msg.length() > 150) {
-                msg = "تعذّر قراءة الملف — تأكد أن الملف بصيغة Excel صحيحة (.xls أو .xlsx)";
-            }
-            return new ParseResult(type, date, List.of(), List.of(), List.of(), List.of(), msg);
-        }
-    }
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  BRANCH SALES PARSER
+    // ─────────────────────────────────────────────────────────────────────────────
 
-    // ─── Format router: branch sales ──────────────────────────────────────────
-    private ParseResult parseBranchSales(Sheet sheet, LocalDate date, String tenantId,
-            String batch, String by, String filename) {
-        if (isAggregateFormat(sheet)) {
-            log.info("Detected aggregate format for {}", filename);
-            return parseAggBranchSales(sheet, date, tenantId, batch, by);
-        }
-        return parseDailyBranchSales(sheet, date, tenantId, batch, by, filename);
-    }
+    private ParseResult parseBranchSales(Sheet sheet, LocalDate fallbackDate,
+            String tenantId, String batch, String by) {
 
-    // ─── Format router: purchases ─────────────────────────────────────────────
-    private ParseResult parsePurchases(Sheet sheet, LocalDate date, String tenantId,
-            String batch, String by, String filename) {
-        if (isAggregateFormat(sheet)) {
-            log.info("Detected aggregate purchases format for {}", filename);
-            return parseAggPurchases(sheet, date, tenantId, batch, by);
-        }
-        return parseDailyPurchases(sheet, date, tenantId, batch, by, filename);
-    }
-
-    // ─── Format router: employee sales ────────────────────────────────────────
-    private ParseResult parseEmployeeSales(Sheet sheet, LocalDate date, String tenantId,
-            String batch, String by, String filename) {
-        if (isAggregateFormat(sheet)) {
-            log.info("Detected aggregate employee sales format for {}", filename);
-            return parseAggEmployeeSales(sheet, date, tenantId, batch, by);
-        }
-        return parseDailyEmployeeSales(sheet, date, tenantId, batch, by, filename);
-    }
-
-    // ─── Format router: mothan ────────────────────────────────────────────────
-    private ParseResult parseMothan(Sheet sheet, LocalDate date, String tenantId,
-            String batch, String by, String filename) {
-        if (isAggregateFormat(sheet)) {
-            log.info("Detected aggregate mothan format for {}", filename);
-            return parseAggMothan(sheet, date, tenantId, batch, by);
-        }
-        return parseDailyMothan(sheet, date, tenantId, batch, by, filename);
-    }
-
-    // ════════════════════════════════════════════════════════════════════════════
-    // FORMAT DETECTION
-    // ════════════════════════════════════════════════════════════════════════════
-
-    private boolean isAggregateFormat(Sheet sheet) {
-        int checked = 0;
-        for (int i = 5; i <= Math.min(25, sheet.getLastRowNum()) && checked < 15; i++) {
-            Row row = sheet.getRow(i);
-            if (row == null) continue;
-            String col0 = safeGetString(row, 0);
-            String col1 = safeGetString(row, 1);
-            if (col0 == null || col1 == null) { checked++; continue; }
-            col0 = col0.trim(); col1 = col1.trim();
-            boolean isSeqNum    = col0.matches("^\\d+$");
-            boolean isBranchCode = col1.matches("^\\d{4}$");
-            if (!isSeqNum || !isBranchCode) { checked++; continue; }
-            // Check col6 has a date-like value
-            Cell col6Cell = row.getCell(6);
-            boolean hasDate = false;
-            if (col6Cell != null) {
-                if (col6Cell.getCellType() == CellType.NUMERIC) {
-                    double v = col6Cell.getNumericCellValue();
-                    hasDate = (v > 40000 && v < 60000);
-                } else {
-                    String s = safeGetString(row, 6);
-                    if (s != null) {
-                        hasDate = s.matches(".*\\d{2}/\\d{2}/\\d{4}.*")
-                               || s.matches("^\\d{4}-\\d{2}-\\d{2}.*");
-                    }
-                }
-            }
-            if (hasDate) return true;
-            checked++;
-        }
-        return false;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════════
-    // AGGREGATE FORMAT PARSERS
-    // ════════════════════════════════════════════════════════════════════════════
-
-    private ParseResult parseAggBranchSales(Sheet sheet, LocalDate fallback, String tenantId,
-            String batch, String by) {
-        // key → BranchSale accumulator
-        Map<String, BranchSale> salesMap = new LinkedHashMap<>();
-        // key → karat → KaratRow accumulator
-        Map<String, Map<String, KaratRow>> karatMap = new LinkedHashMap<>();
+        Map<String, BranchSale>           salesMap  = new LinkedHashMap<>();
+        Map<String, Map<String, KaratRow>> karatMap  = new LinkedHashMap<>();
 
         for (Row row : sheet) {
-            String col0 = safeGetString(row, 0);
-            String col1 = safeGetString(row, 1);
-            if (col0 == null || col1 == null) continue;
-            col0 = col0.trim(); col1 = col1.trim();
-            if (!col0.matches("^\\d+$") || !col1.matches("^\\d{4}$")) continue;
+            if (!isDataRow(row)) continue;
 
-            String branchCode = col1;
-            LocalDate txDate  = parseAggDate(row, 6, fallback);
-            double rawSar     = getDoubleRaw(row, 15);
-            double sar        = -rawSar;                          // negate: neg in file = sale
-            double sign       = sar >= 0 ? 1.0 : -1.0;
-            double netWt      = sign * Math.abs(getDoubleAbs(row, 10));
-            double grossWt    = sign * Math.abs(getDoubleAbs(row, 12));
-            int pieces        = (int)(sign * Math.abs(getDoubleAbs(row, 7)));
-            String purity     = safeGetString(row, 11);
-            String karat      = purity != null ? mapKarat(purity.trim()) : null;
+            String    branchCode = getStr(row, 1);
+            LocalDate date       = parseSerialDate(getNum(row, 6), fallbackDate);
+            double    rawTotal   = getNumRaw(row, 15);   // signed: neg=sale, pos=return
+            double    sar        = -rawTotal;             // negate
+            double    sign       = sar >= 0 ? 1.0 : -1.0;
+            double    pureWt     = sign * Math.abs(getNumRaw(row, 12)); // rate denominator
+            double    grossWt    = sign * Math.abs(getNumRaw(row, 10)); // display
+            int       pieces     = (int)(sign * Math.abs(getNum(row, 7)));
+            double    purity     = Math.abs(getNumRaw(row, 11));
+            String    karat      = mapKarat(purity);
 
-            String key = branchCode + "|" + txDate.toString();
+            String key = branchCode + "|" + date;
             BranchSale bs = salesMap.computeIfAbsent(key, k -> {
                 BranchSale b = new BranchSale();
                 b.setTenantId(tenantId);
-                b.setSaleDate(txDate);
+                b.setSaleDate(date);
                 b.setBranchCode(branchCode);
                 b.setBranchName(BranchMaps.getName(branchCode));
                 b.setRegion(BranchMaps.getRegion(branchCode));
-                b.setTotalSarAmount(0); b.setNetWeight(0); b.setGrossWeight(0); b.setInvoiceCount(0);
+                b.setSourceFileName(date + "_" + branchCode);
+                b.setUploadBatch(batch);
+                b.setUploadedBy(by);
                 b.setKaratRows(new ArrayList<>());
-                b.setSourceFileName(txDate.toString() + "_" + branchCode);
-                b.setUploadBatch(batch); b.setUploadedBy(by);
                 return b;
             });
 
             bs.setTotalSarAmount(bs.getTotalSarAmount() + sar);
-            bs.setNetWeight(bs.getNetWeight() + netWt);
+            bs.setNetWeight(bs.getNetWeight() + pureWt);
             bs.setGrossWeight(bs.getGrossWeight() + grossWt);
             bs.setInvoiceCount(bs.getInvoiceCount() + pieces);
 
-            // accumulate karat
             if (karat != null) {
-                Map<String, KaratRow> kMap = karatMap.computeIfAbsent(key, k -> new LinkedHashMap<>());
-                KaratRow kr = kMap.computeIfAbsent(karat, k -> new KaratRow(karat, 0, 0, 0, 0, 0, 0));
-                kr.setSarAmount(kr.getSarAmount() + sar);
-                kr.setNetWeight(kr.getNetWeight() + netWt);
-                kr.setGrossWeight(kr.getGrossWeight() + grossWt);
-                kr.setInvoiceCount(kr.getInvoiceCount() + pieces);
+                Map<String, KaratRow> km = karatMap.computeIfAbsent(key, k -> new LinkedHashMap<>());
+                KaratRow kr = km.computeIfAbsent(karat, k -> {
+                    KaratRow r = new KaratRow(); r.setKarat(karat); r.setPurity(purity); return r;
+                });
+                // accumulate absolute amounts per karat (returns tracked at BranchSale level)
+                kr.setSarAmount(kr.getSarAmount() + Math.abs(sar));
+                kr.setNetWeight(kr.getNetWeight() + Math.abs(pureWt));
+                kr.setGrossWeight(kr.getGrossWeight() + Math.abs(grossWt));
+                kr.setInvoiceCount(kr.getInvoiceCount() + Math.abs(pieces));
             }
         }
 
-        // finalise each record
         List<BranchSale> results = new ArrayList<>();
         for (Map.Entry<String, BranchSale> e : salesMap.entrySet()) {
             BranchSale bs = e.getValue();
             double nw = bs.getNetWeight();
-            bs.setSaleRate(nw != 0 ? Math.round(bs.getTotalSarAmount() / nw * 10000.0) / 10000.0 : 0);
+            bs.setSaleRate(nw != 0 ? round4(bs.getTotalSarAmount() / nw) : 0);
             bs.setReturn(bs.getTotalSarAmount() < 0);
-
-            Map<String, KaratRow> kMap = karatMap.get(e.getKey());
-            if (kMap != null) {
-                List<KaratRow> kList = new ArrayList<>();
-                for (KaratRow kr : kMap.values()) {
-                    kr.setSaleRate(kr.getNetWeight() != 0 ? kr.getSarAmount() / kr.getNetWeight() : 0);
-                    kList.add(kr);
-                }
-                bs.setKaratRows(kList);
+            Map<String, KaratRow> km = karatMap.get(e.getKey());
+            if (km != null) {
+                for (KaratRow kr : km.values())
+                    kr.setSaleRate(kr.getNetWeight() > 0 ? kr.getSarAmount() / kr.getNetWeight() : 0);
+                bs.setKaratRows(new ArrayList<>(km.values()));
             }
             results.add(bs);
         }
-        log.info("Aggregate branch sales parsed: {} records", results.size());
-        return new ParseResult(FileType.BRANCH_SALES, fallback, results, List.of(), List.of(), List.of(), null);
+        log.info("Branch sales: {} records", results.size());
+        return new ParseResult(FileType.BRANCH_SALES, fallbackDate, results, List.of(), List.of(), List.of(), null);
     }
 
-    private ParseResult parseAggPurchases(Sheet sheet, LocalDate fallback, String tenantId,
-            String batch, String by) {
-        Map<String, BranchPurchase> map = new LinkedHashMap<>();
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  EMPLOYEE SALES PARSER
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    private ParseResult parseEmployeeSales(Sheet sheet, LocalDate fallbackDate,
+            String tenantId, String batch, String by) {
+
+        Map<String, EmployeeSale> empMap = new LinkedHashMap<>();
 
         for (Row row : sheet) {
-            String col0 = safeGetString(row, 0);
-            String col1 = safeGetString(row, 1);
-            if (col0 == null || col1 == null) continue;
-            col0 = col0.trim(); col1 = col1.trim();
-            if (!col0.matches("^\\d+$") || !col1.matches("^\\d{4}$")) continue;
+            if (!isDataRow(row)) continue;
 
-            String branchCode = col1;
-            LocalDate txDate  = parseAggDate(row, 6, fallback);
-            double sar        = Math.abs(getDoubleRaw(row, 15));
-            double netWt      = Math.abs(getDoubleAbs(row, 10));
-            double grossWt    = Math.abs(getDoubleAbs(row, 12));
-            int pieces        = (int) Math.abs(getDoubleAbs(row, 7));
+            String    branchCode = getStr(row, 1);
+            String    empIdStr   = getStr(row, 3);   // col3 = Employee ID (numeric cell)
+            if (empIdStr.isBlank() || empIdStr.equals("0")) continue;
+            String    empName    = getStr(row, 5);   // col5 = Employee name
+            LocalDate date       = parseSerialDate(getNum(row, 6), fallbackDate);
+            double    rawTotal   = getNumRaw(row, 15);
+            double    sar        = -rawTotal;
+            double    sign       = sar >= 0 ? 1.0 : -1.0;
+            double    pureWt     = sign * Math.abs(getNumRaw(row, 12));
+            double    grossWt    = sign * Math.abs(getNumRaw(row, 10));
+            int       pieces     = (int)(sign * Math.abs(getNum(row, 7)));
 
-            String key = branchCode + "|" + txDate.toString();
-            BranchPurchase bp = map.computeIfAbsent(key, k -> {
-                BranchPurchase b = new BranchPurchase();
-                b.setTenantId(tenantId);
-                b.setPurchaseDate(txDate);
-                b.setBranchCode(branchCode);
-                b.setBranchName(BranchMaps.getName(branchCode));
-                b.setRegion(BranchMaps.getRegion(branchCode));
-                b.setTotalSarAmount(0); b.setNetWeight(0); b.setGrossWeight(0); b.setInvoiceCount(0);
-                b.setSourceFileName(txDate.toString() + "_" + branchCode);
-                b.setUploadBatch(batch); b.setUploadedBy(by);
-                return b;
-            });
-
-            bp.setTotalSarAmount(bp.getTotalSarAmount() + sar);
-            bp.setNetWeight(bp.getNetWeight() + netWt);
-            bp.setGrossWeight(bp.getGrossWeight() + grossWt);
-            bp.setInvoiceCount(bp.getInvoiceCount() + pieces);
-        }
-
-        List<BranchPurchase> results = new ArrayList<>(map.values());
-        for (BranchPurchase bp : results) {
-            double nw = bp.getNetWeight();
-            bp.setPurchaseRate(nw > 0 ? Math.round(bp.getTotalSarAmount() / nw * 10000.0) / 10000.0 : 0);
-        }
-        log.info("Aggregate purchases parsed: {} records", results.size());
-        return new ParseResult(FileType.PURCHASES, fallback, List.of(), results, List.of(), List.of(), null);
-    }
-
-    private ParseResult parseAggEmployeeSales(Sheet sheet, LocalDate fallback, String tenantId,
-            String batch, String by) {
-        // key: employeeId|branchCode|date
-        Map<String, EmployeeSale> map = new LinkedHashMap<>();
-
-        for (Row row : sheet) {
-            String col0 = safeGetString(row, 0);
-            String col1 = safeGetString(row, 1);
-            if (col0 == null || col1 == null) continue;
-            col0 = col0.trim(); col1 = col1.trim();
-            if (!col0.matches("^\\d+$") || !col1.matches("^\\d{4}$")) continue;
-
-            String branchCode = col1;
-            String empId      = safeGetString(row, 3);
-            String empName    = safeGetString(row, 5);
-            if (empId == null || empId.isBlank() || empId.equals("0")) continue;
-            empId   = empId.trim();
-            empName = empName != null ? empName.trim() : "";
-
-            LocalDate txDate = parseAggDate(row, 6, fallback);
-            double rawSar    = getDoubleRaw(row, 15);
-            double sar       = -rawSar;
-            double sign      = sar >= 0 ? 1.0 : -1.0;
-            double netWt     = sign * Math.abs(getDoubleAbs(row, 10));
-            double grossWt   = sign * Math.abs(getDoubleAbs(row, 12));
-            int pieces       = (int)(sign * Math.abs(getDoubleAbs(row, 7)));
-
-            String key = empId + "|" + branchCode + "|" + txDate.toString();
-            final String finalEmpId   = empId;
-            final String finalEmpName = empName;
-            EmployeeSale es = map.computeIfAbsent(key, k -> {
+            String key = empIdStr + "|" + branchCode + "|" + date;
+            EmployeeSale es = empMap.computeIfAbsent(key, k -> {
                 EmployeeSale e2 = new EmployeeSale();
                 e2.setTenantId(tenantId);
-                e2.setSaleDate(txDate);
+                e2.setSaleDate(date);
                 e2.setBranchCode(branchCode);
                 e2.setBranchName(BranchMaps.getName(branchCode));
                 e2.setRegion(BranchMaps.getRegion(branchCode));
-                e2.setEmployeeId(finalEmpId);
-                e2.setEmployeeName(finalEmpName);
-                e2.setTotalSarAmount(0); e2.setNetWeight(0); e2.setGrossWeight(0); e2.setInvoiceCount(0);
-                e2.setSourceFileName(txDate.toString() + "_" + finalEmpId);
-                e2.setUploadBatch(batch); e2.setUploadedBy(by);
+                e2.setEmployeeId(empIdStr);
+                e2.setEmployeeName(empName);
+                e2.setSourceFileName(date + "_" + empIdStr);
+                e2.setUploadBatch(batch);
+                e2.setUploadedBy(by);
                 return e2;
             });
 
             es.setTotalSarAmount(es.getTotalSarAmount() + sar);
-            es.setNetWeight(es.getNetWeight() + netWt);
+            es.setNetWeight(es.getNetWeight() + pureWt);
             es.setGrossWeight(es.getGrossWeight() + grossWt);
             es.setInvoiceCount(es.getInvoiceCount() + pieces);
         }
 
-        List<EmployeeSale> results = new ArrayList<>(map.values());
+        List<EmployeeSale> results = new ArrayList<>(empMap.values());
         for (EmployeeSale es : results) {
             double nw = es.getNetWeight();
-            es.setSaleRate(nw != 0 ? Math.round(es.getTotalSarAmount() / nw * 10000.0) / 10000.0 : 0);
+            es.setSaleRate(nw != 0 ? round4(es.getTotalSarAmount() / nw) : 0);
             es.setReturn(es.getTotalSarAmount() < 0);
         }
-        log.info("Aggregate employee sales parsed: {} records", results.size());
-        return new ParseResult(FileType.EMPLOYEE_SALES, fallback, List.of(), List.of(), results, List.of(), null);
+        log.info("Employee sales: {} records", results.size());
+        return new ParseResult(FileType.EMPLOYEE_SALES, fallbackDate, List.of(), List.of(), results, List.of(), null);
     }
 
-    private ParseResult parseAggMothan(Sheet sheet, LocalDate fallback, String tenantId,
-            String batch, String by) {
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  PURCHASES PARSER
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    private ParseResult parsePurchases(Sheet sheet, LocalDate fallbackDate,
+            String tenantId, String batch, String by) {
+
+        Map<String, BranchPurchase> purchMap = new LinkedHashMap<>();
+
+        for (Row row : sheet) {
+            if (!isDataRow(row)) continue;
+
+            String    branchCode = getStr(row, 1);
+            LocalDate date       = parseSerialDate(getNum(row, 6), fallbackDate);
+            double    sar        = Math.abs(getNumRaw(row, 15));  // purchases always positive
+            double    pureWt     = Math.abs(getNumRaw(row, 12));
+            double    grossWt    = Math.abs(getNumRaw(row, 10));
+            int       pieces     = (int) Math.abs(getNum(row, 7));
+            double    purity     = Math.abs(getNumRaw(row, 11));
+            String    karat      = mapKarat(purity);
+
+            String key = branchCode + "|" + date;
+            BranchPurchase bp = purchMap.computeIfAbsent(key, k -> {
+                BranchPurchase b = new BranchPurchase();
+                b.setTenantId(tenantId);
+                b.setPurchaseDate(date);
+                b.setBranchCode(branchCode);
+                b.setBranchName(BranchMaps.getName(branchCode));
+                b.setRegion(BranchMaps.getRegion(branchCode));
+                b.setSourceFileName(date + "_" + branchCode);
+                b.setUploadBatch(batch);
+                b.setUploadedBy(by);
+                return b;
+            });
+
+            bp.setTotalSarAmount(bp.getTotalSarAmount() + sar);
+            bp.setNetWeight(bp.getNetWeight() + pureWt);
+            bp.setGrossWeight(bp.getGrossWeight() + grossWt);
+            bp.setInvoiceCount(bp.getInvoiceCount() + pieces);
+        }
+
+        List<BranchPurchase> results = new ArrayList<>(purchMap.values());
+        for (BranchPurchase bp : results) {
+            double nw = bp.getNetWeight();
+            bp.setPurchaseRate(nw > 0 ? round4(bp.getTotalSarAmount() / nw) : 0);
+        }
+        log.info("Purchases: {} records", results.size());
+        return new ParseResult(FileType.PURCHASES, fallbackDate, List.of(), results, List.of(), List.of(), null);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  MOTHAN (STATEMENT OF ACCOUNT) PARSER
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    private ParseResult parseMothan(Sheet sheet, LocalDate fallbackDate,
+            String tenantId, String batch, String by) {
+
         List<MothanTransaction> results = new ArrayList<>();
-        Pattern weightPat1 = Pattern.compile("وزن\\s*\\(\\s*([\\d.]+)\\s*\\)");
-        Pattern weightPat2 = Pattern.compile("([\\d.]+)\\s*جم");
-        Pattern weightPat3 = Pattern.compile("weight\\s+([\\d.]+)", Pattern.CASE_INSENSITIVE);
+
+        // Patterns to extract data from description strings
+        Pattern wtPat   = Pattern.compile("وزن\\s*\\(\\s*([\\d.,]+)\\s*\\)");
+        Pattern amtPat  = Pattern.compile("بمبلغ\\s*\\(\\s*([\\d,]+(?:\\.[\\d]+)?)\\s*\\)");
+        Pattern ratePat = Pattern.compile("معدل\\s*\\(\\s*([\\d.,]+)\\s*\\)");
+        Pattern datePat = Pattern.compile("(\\d{2})-(\\d{2})-(\\d{4})");
+        Pattern branch4 = Pattern.compile("^\\d{4}$");
+        Pattern docRef  = Pattern.compile("^[A-Z]{2,}[\\-/]\\d+|^\\d{6,}$");
+
+        String currentBranch = null;
+        String currentDocRef = null;
+        LocalDate currentDate = fallbackDate;
+        int seq = 0;
 
         for (Row row : sheet) {
-            String col0 = safeGetString(row, 0);
-            String col1 = safeGetString(row, 1);
-            if (col0 == null || col1 == null) continue;
-            col0 = col0.trim(); col1 = col1.trim();
-            if (!col0.matches("^\\d+$")) continue;
-            // branch code may be in col1 or col2
-            String branchCode = col1.matches("^\\d{3,5}$") ? col1 :
-                                 safeGetStringTrimmed(row, 2);
-            if (branchCode == null || branchCode.isBlank()) continue;
+            if (row == null) continue;
 
-            LocalDate txDate    = parseAggDate(row, 6, fallback);
-            String docRef       = safeGetStringTrimmed(row, 2);
-            String description  = safeGetStringTrimmed(row, 3);
-            if (description == null) description = safeGetStringTrimmed(row, 4);
-            double credit       = Math.abs(getDoubleRaw(row, 5));
-            if (credit <= 0) credit = Math.abs(getDoubleRaw(row, 15));
-            // if still zero, skip
-            if (credit <= 0) continue;
+            // Scan each cell in the row
+            String description = null;
+            String cellBranch  = null;
+            String cellDocRef  = null;
+            LocalDate cellDate = null;
 
-            double weight = extractWeight(description, weightPat1, weightPat2, weightPat3);
+            for (Cell cell : row) {
+                if (cell == null) continue;
+                CellType ct = cell.getCellType();
 
-            MothanTransaction mt = new MothanTransaction();
-            mt.setTenantId(tenantId);
-            mt.setTransactionDate(txDate);
-            mt.setBranchCode(branchCode);
-            mt.setBranchName(BranchMaps.getName(branchCode));
-            mt.setDocReference(docRef);
-            mt.setDescription(description);
-            mt.setCreditSar(credit);
-            mt.setGoldWeightGrams(weight);
-            mt.setSourceFileName(txDate.toString() + "_" + branchCode + "_" + col0);
-            mt.setUploadBatch(batch); mt.setUploadedBy(by);
-            results.add(mt);
-        }
-        log.info("Aggregate mothan parsed: {} records", results.size());
-        return new ParseResult(FileType.MOTHAN, fallback, List.of(), List.of(), List.of(), results, null);
-    }
+                if (ct == CellType.STRING) {
+                    String val = cell.getStringCellValue().trim();
+                    if (val.isEmpty()) continue;
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // DAILY FORMAT PARSERS (original logic — unchanged)
-    // ════════════════════════════════════════════════════════════════════════════
-
-    private ParseResult parseDailyBranchSales(Sheet sheet, LocalDate date, String tenantId,
-            String batch, String by, String filename) {
-        List<BranchSale> results = new ArrayList<>();
-        String currentCode = null;
-        List<KaratRow> karatRows = new ArrayList<>();
-        Pattern branchPat = Pattern.compile("^(\\d{4})\\s*-");
-
-        for (Row row : sheet) {
-            String desc = getString(row, 12);
-            if (desc == null) continue;
-            Matcher bm = branchPat.matcher(desc);
-            if (bm.find()) {
-                currentCode = bm.group(1).trim();
-                karatRows = new ArrayList<>();
-                continue;
+                    // Branch code?
+                    if (branch4.matcher(val).matches()) {
+                        cellBranch = val;
+                    }
+                    // Doc ref?
+                    else if (docRef.matcher(val).matches()) {
+                        cellDocRef = val;
+                    }
+                    // Date string DD-MM-YYYY ?
+                    else {
+                        Matcher dm = datePat.matcher(val);
+                        if (dm.find()) {
+                            try {
+                                cellDate = LocalDate.of(
+                                    Integer.parseInt(dm.group(3)),
+                                    Integer.parseInt(dm.group(2)),
+                                    Integer.parseInt(dm.group(1)));
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                    // Description with gold data?
+                    if (val.contains("وزن") || val.contains("بمبلغ") ||
+                        val.contains("تسكير") || val.contains("شراء")) {
+                        description = val;
+                    }
+                } else if (ct == CellType.NUMERIC) {
+                    double v = cell.getNumericCellValue();
+                    // Excel serial date in mothan?
+                    if (v > 40000 && v < 60000 && cellDate == null) {
+                        cellDate = parseSerialDate(v, fallbackDate);
+                    }
+                }
             }
-            if (desc.equals("18")||desc.equals("21")||desc.equals("22")||desc.equals("24")) {
-                double sar = getAbs(row,3); double nw = getAbs(row,6);
-                karatRows.add(new KaratRow(desc, 0, sar, nw, getAbs(row,8), (int)getAbs(row,11),
-                    nw>0?sar/nw:0));
-                continue;
-            }
-            if (desc.contains("Sub Total") && currentCode != null) {
-                double sar = getAbs(row,3); double nw = getAbs(row,6);
-                boolean isReturn = getRaw(row,3) > 0;
-                BranchSale bs = new BranchSale();
-                bs.setTenantId(tenantId); bs.setSaleDate(date);
-                bs.setBranchCode(currentCode);
-                bs.setBranchName(BranchMaps.getName(currentCode));
-                bs.setRegion(BranchMaps.getRegion(currentCode));
-                bs.setTotalSarAmount(sar); bs.setNetWeight(nw);
-                bs.setGrossWeight(getAbs(row,8)); bs.setInvoiceCount((int)getAbs(row,11));
-                bs.setSaleRate(nw>0?sar/nw:0); bs.setReturn(isReturn);
-                bs.setKaratRows(new ArrayList<>(karatRows));
-                bs.setSourceFileName(filename); bs.setUploadBatch(batch); bs.setUploadedBy(by);
-                results.add(bs);
-                karatRows = new ArrayList<>();
-            }
-        }
-        return new ParseResult(FileType.BRANCH_SALES, date, results, List.of(), List.of(), List.of(), null);
-    }
 
-    private ParseResult parseDailyPurchases(Sheet sheet, LocalDate date, String tenantId,
-            String batch, String by, String filename) {
-        List<BranchPurchase> results = new ArrayList<>();
-        String currentCode = null;
-        Pattern branchPat = Pattern.compile("^(\\d{4})\\s*-");
+            // Update running context
+            if (cellBranch != null)  currentBranch = cellBranch;
+            if (cellDocRef != null)  currentDocRef = cellDocRef;
+            if (cellDate   != null)  currentDate   = cellDate;
 
-        for (Row row : sheet) {
-            String desc = getString(row, 12);
-            if (desc == null) continue;
-            Matcher bm = branchPat.matcher(desc);
-            if (bm.find()) { currentCode = bm.group(1).trim(); continue; }
-            if (desc.contains("Sub Total") && currentCode != null) {
-                double sar = getAbs(row,3); double nw = getAbs(row,6);
-                BranchPurchase bp = new BranchPurchase();
-                bp.setTenantId(tenantId); bp.setPurchaseDate(date);
-                bp.setBranchCode(currentCode);
-                bp.setBranchName(BranchMaps.getName(currentCode));
-                bp.setRegion(BranchMaps.getRegion(currentCode));
-                bp.setTotalSarAmount(sar); bp.setNetWeight(nw);
-                bp.setGrossWeight(getAbs(row,8)); bp.setInvoiceCount((int)getAbs(row,11));
-                bp.setPurchaseRate(nw>0?sar/nw:0);
-                bp.setSourceFileName(filename); bp.setUploadBatch(batch); bp.setUploadedBy(by);
-                results.add(bp);
+            // Build a transaction if we have a description with weight + amount
+            if (description != null && currentBranch != null) {
+                Matcher wm  = wtPat.matcher(description);
+                Matcher am  = amtPat.matcher(description);
+                if (wm.find() && am.find()) {
+                    try {
+                        double weight = Double.parseDouble(wm.group(1).replace(",",""));
+                        double amount = Double.parseDouble(am.group(1).replace(",",""));
+                        if (weight > 0 && amount > 0) {
+                            double rate = 0;
+                            Matcher rm = ratePat.matcher(description);
+                            if (rm.find()) {
+                                try { rate = Double.parseDouble(rm.group(1).replace(",","")); }
+                                catch (Exception ignored) {}
+                            }
+                            MothanTransaction mt = new MothanTransaction();
+                            mt.setTenantId(tenantId);
+                            mt.setTransactionDate(currentDate);
+                            mt.setBranchCode(currentBranch);
+                            mt.setBranchName(BranchMaps.getName(currentBranch));
+                            mt.setDocReference(currentDocRef != null ? currentDocRef : currentDate + "-" + (++seq));
+                            mt.setDescription(description.length() > 250 ? description.substring(0, 250) : description);
+                            mt.setCreditSar(amount);
+                            mt.setGoldWeightGrams(weight);
+                            mt.setRunningBalance(rate); // store rate in runningBalance for now
+                            mt.setSourceFileName(currentDate + "_" + currentBranch + "_" + mt.getDocReference());
+                            mt.setUploadBatch(batch);
+                            mt.setUploadedBy(by);
+                            results.add(mt);
+                        }
+                    } catch (Exception ignored) {}
+                }
             }
         }
-        return new ParseResult(FileType.PURCHASES, date, List.of(), results, List.of(), List.of(), null);
+        log.info("Mothan: {} records", results.size());
+        return new ParseResult(FileType.MOTHAN, fallbackDate, List.of(), List.of(), List.of(), results, null);
     }
 
-    private ParseResult parseDailyEmployeeSales(Sheet sheet, LocalDate date, String tenantId,
-            String batch, String by, String filename) {
-        List<EmployeeSale> results = new ArrayList<>();
-        String currentCode = null;
-        Pattern branchPat = Pattern.compile("^(\\d{4})\\s*-");
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  ROW VALIDATION
+    // ─────────────────────────────────────────────────────────────────────────────
 
-        for (Row row : sheet) {
-            String desc = getString(row, 12);
-            if (desc == null) continue;
-            Matcher bm = branchPat.matcher(desc);
-            if (bm.find()) { currentCode = bm.group(1).trim(); continue; }
-            if (desc.contains("Sub Total") || desc.contains("المجموع")) continue;
-            String empId = getString(row, 13);
-            if (empId == null || empId.isBlank() || currentCode == null) continue;
-            double sar = getAbs(row,3); double nw = getAbs(row,6);
-            EmployeeSale es = new EmployeeSale();
-            es.setTenantId(tenantId); es.setSaleDate(date);
-            es.setBranchCode(currentCode);
-            es.setBranchName(BranchMaps.getName(currentCode));
-            es.setRegion(BranchMaps.getRegion(currentCode));
-            es.setEmployeeId(empId.trim()); es.setEmployeeName(desc.trim());
-            es.setAvgMakingCharge(getAbs(row,0));
-            es.setTotalSarAmount(sar); es.setNetWeight(nw);
-            es.setGrossWeight(getAbs(row,8)); es.setInvoiceCount((int)getAbs(row,11));
-            es.setSaleRate(nw>0?sar/nw:0); es.setReturn(getRaw(row,3)>0);
-            es.setSourceFileName(filename); es.setUploadBatch(batch); es.setUploadedBy(by);
-            results.add(es);
-        }
-        return new ParseResult(FileType.EMPLOYEE_SALES, date, List.of(), List.of(), results, List.of(), null);
+    /**
+     * A row is a data row if:
+     *  col0 = numeric integer >= 1   (sequential row number)
+     *  col1 = 4-digit string         (branch code)
+     *  col6 = numeric > 40000        (Excel serial date)
+     */
+    private boolean isDataRow(Row row) {
+        if (row == null) return false;
+        Cell c0 = row.getCell(0, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+        Cell c1 = row.getCell(1, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+        Cell c6 = row.getCell(6, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+        if (c0 == null || c1 == null || c6 == null) return false;
+        // col0: numeric integer >= 1
+        if (c0.getCellType() != CellType.NUMERIC) return false;
+        if (c0.getNumericCellValue() < 1) return false;
+        // col1: 4-digit branch code string
+        if (c1.getCellType() != CellType.STRING) return false;
+        if (!c1.getStringCellValue().trim().matches("^\\d{4}$")) return false;
+        // col6: Excel serial date > 40000
+        if (c6.getCellType() != CellType.NUMERIC) return false;
+        if (c6.getNumericCellValue() < 40000) return false;
+        return true;
     }
 
-    private ParseResult parseDailyMothan(Sheet sheet, LocalDate date, String tenantId,
-            String batch, String by, String filename) {
-        List<MothanTransaction> results = new ArrayList<>();
-        Pattern weightPat1 = Pattern.compile("وزن\\s*\\(\\s*([\\d.]+)\\s*\\)");
-        Pattern weightPat2 = Pattern.compile("([\\d.]+)\\s*جم");
-        Pattern weightPat3 = Pattern.compile("weight\\s+([\\d.]+)", Pattern.CASE_INSENSITIVE);
-        Pattern datePat    = Pattern.compile("^(\\d{2})/(\\d{2})/(\\d{4})$");
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  HELPERS
+    // ─────────────────────────────────────────────────────────────────────────────
 
-        for (Row row : sheet) {
-            String col0 = getString(row, 0);
-            if (col0 == null) continue;
-            Matcher dm = datePat.matcher(col0.trim());
-            LocalDate rowDate = date;
-            if (dm.matches()) {
-                try { rowDate = LocalDate.parse(dm.group(1)+"-"+dm.group(2)+"-"+dm.group(3),
-                    DateTimeFormatter.ofPattern("dd-MM-yyyy")); } catch (Exception ignored) {}
-            } else continue;
-
-            String branchCode = getString(row,2);
-            if (branchCode == null || branchCode.isBlank()) continue;
-            String description = getString(row,3);
-            double credit = Math.abs(getAbs(row,5));
-            if (credit <= 0) continue;
-
-            double weight = extractWeight(description, weightPat1, weightPat2, weightPat3);
-            if (weight <= 0) continue;
-
-            MothanTransaction mt = new MothanTransaction();
-            mt.setTenantId(tenantId); mt.setTransactionDate(rowDate);
-            mt.setBranchCode(branchCode.trim());
-            mt.setBranchName(BranchMaps.getName(branchCode.trim()));
-            mt.setDocReference(getString(row,1));
-            mt.setDescription(description);
-            mt.setDebitSar(getAbs(row,4)); mt.setCreditSar(credit);
-            mt.setRunningBalance(getAbs(row,6)); mt.setGoldWeightGrams(weight);
-            mt.setSourceFileName(filename); mt.setUploadBatch(batch); mt.setUploadedBy(by);
-            results.add(mt);
-        }
-        return new ParseResult(FileType.MOTHAN, date, List.of(), List.of(), List.of(), results, null);
+    /** Excel serial date → LocalDate. Epoch = 1899-12-30 (Excel's leap-year bug). */
+    private LocalDate parseSerialDate(double serial, LocalDate fallback) {
+        if (serial < 40000 || serial > 60000) return fallback;
+        try { return LocalDate.of(1899, 12, 30).plusDays((long) serial); }
+        catch (Exception e) { return fallback; }
     }
 
-    // ════════════════════════════════════════════════════════════════════════════
-    // HELPER METHODS
-    // ════════════════════════════════════════════════════════════════════════════
-
-    /** Parse date from aggregate format column (Excel serial or string DD/MM/YYYY) */
-    private LocalDate parseAggDate(Row row, int col, LocalDate fallback) {
-        Cell cell = row.getCell(col);
-        if (cell == null) return fallback;
-        if (cell.getCellType() == CellType.NUMERIC) {
-            double v = cell.getNumericCellValue();
-            if (v > 40000 && v < 60000) {
-                try {
-                    long ms = (long)((v - 25569) * 86400000L);
-                    return Instant.ofEpochMilli(ms).atZone(ZoneId.of("Asia/Riyadh")).toLocalDate();
-                } catch (Exception ignored) {}
-            }
-        }
-        String s = safeGetString(row, col);
-        if (s == null) return fallback;
-        s = s.trim();
-        // DD/MM/YYYY
-        Matcher m1 = Pattern.compile("(\\d{2})/(\\d{2})/(\\d{4})").matcher(s);
-        if (m1.find()) {
-            try { return LocalDate.of(Integer.parseInt(m1.group(3)),
-                                      Integer.parseInt(m1.group(2)),
-                                      Integer.parseInt(m1.group(1))); }
-            catch (Exception ignored) {}
-        }
-        // YYYY-MM-DD
-        Matcher m2 = Pattern.compile("(\\d{4})-(\\d{2})-(\\d{2})").matcher(s);
-        if (m2.find()) {
-            try { return LocalDate.parse(m2.group()); }
-            catch (Exception ignored) {}
-        }
-        return fallback;
-    }
-
-    /** Map karat purity ratio to karat label */
-    private String mapKarat(String purity) {
-        if (purity == null) return null;
-        return switch (purity) {
-            case "0.75", "0.750", "0.7500", "0.75000", "0.750000" -> "18";
-            case "0.875", "0.8750", "0.87500", "0.875000" -> "21";
-            case "0.916", "0.9160", "0.91600", "0.916000",
-                 "0.9166", "0.91660", "0.916600",
-                 "0.91667", "0.916670" -> "22";
-            case "1", "1.0", "1.00", "1.000", "1.0000", "1.00000", "1.000000" -> "24";
-            default -> null;
-        };
-    }
-
-    /** Get raw numeric value without Math.abs() */
-    private double getDoubleRaw(Row row, int col) {
-        Cell cell = row.getCell(col);
+    /** Raw numeric value, sign preserved. */
+    private double getNumRaw(Row row, int col) {
+        Cell cell = row.getCell(col, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
         if (cell == null) return 0.0;
         if (cell.getCellType() == CellType.NUMERIC) return cell.getNumericCellValue();
         if (cell.getCellType() == CellType.STRING) {
-            try { return Double.parseDouble(cell.getStringCellValue().replace(",","").replace(" ","").trim()); }
+            try { return Double.parseDouble(cell.getStringCellValue().replace(",","").trim()); }
             catch (Exception ignored) {}
         }
         return 0.0;
     }
 
-    /** Get absolute numeric value */
-    private double getDoubleAbs(Row row, int col) {
-        return Math.abs(getDoubleRaw(row, col));
-    }
+    /** Absolute numeric value. */
+    private double getNum(Row row, int col) { return Math.abs(getNumRaw(row, col)); }
 
-    /** Get string, returns null if empty */
-    private String safeGetString(Row row, int col) {
-        Cell cell = row.getCell(col);
-        if (cell == null) return null;
-        String v;
-        if (cell.getCellType() == CellType.STRING) {
-            v = cell.getStringCellValue().trim();
-        } else if (cell.getCellType() == CellType.NUMERIC) {
-            double d = cell.getNumericCellValue();
-            // If it looks like a whole number, return without decimals
-            if (d == Math.floor(d) && !Double.isInfinite(d)) {
-                v = String.valueOf((long) d);
-            } else {
-                v = String.valueOf(d);
-            }
-        } else {
-            return null;
+    /** String value. Numeric cells converted to integer string ("2511"). */
+    private String getStr(Row row, int col) {
+        Cell cell = row.getCell(col, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+        if (cell == null) return "";
+        if (cell.getCellType() == CellType.STRING) return cell.getStringCellValue().trim();
+        if (cell.getCellType() == CellType.NUMERIC) {
+            double v = cell.getNumericCellValue();
+            return v == Math.floor(v) ? String.valueOf((long) v) : String.valueOf(v);
         }
-        return v.isEmpty() ? null : v;
+        return "";
     }
 
-    private String safeGetStringTrimmed(Row row, int col) {
-        String s = safeGetString(row, col);
-        return s != null ? s.trim() : null;
-    }
-
-    private double extractWeight(String description, Pattern... patterns) {
-        if (description == null) return 0;
-        for (Pattern p : patterns) {
-            Matcher m = p.matcher(description);
-            if (m.find()) {
-                try { return Double.parseDouble(m.group(1)); } catch (Exception ignored) {}
-            }
-        }
-        return 0;
-    }
-
-    // ─── Original helpers (kept for daily parsers) ────────────────────────────
-
-    private double getAbs(Row row, int col) {
-        Cell cell = row.getCell(col);
-        if (cell == null) return 0;
-        if (cell.getCellType() == CellType.NUMERIC) return Math.abs(cell.getNumericCellValue());
-        if (cell.getCellType() == CellType.STRING) {
-            try { return Math.abs(Double.parseDouble(cell.getStringCellValue().replace(",",""))); }
-            catch (Exception ignored) {}
-        }
-        return 0;
-    }
-
-    private double getRaw(Row row, int col) {
-        Cell cell = row.getCell(col);
-        if (cell == null) return 0;
-        if (cell.getCellType() == CellType.NUMERIC) return cell.getNumericCellValue();
-        return 0;
-    }
-
-    private String getString(Row row, int col) {
-        Cell cell = row.getCell(col);
-        if (cell == null) return null;
-        if (cell.getCellType() == CellType.STRING) {
-            String v = cell.getStringCellValue().trim();
-            return v.isEmpty() ? null : v;
-        }
-        if (cell.getCellType() == CellType.NUMERIC) return String.valueOf((long)cell.getNumericCellValue());
+    /**
+     * Map purity ratio to karat label using range matching
+     * (tolerates minor floating-point variations like 0.91600000001).
+     */
+    private String mapKarat(double purity) {
+        if (purity >= 0.745 && purity <= 0.755) return "18";
+        if (purity >= 0.870 && purity <= 0.880) return "21";
+        if (purity >= 0.912 && purity <= 0.920) return "22";
+        if (purity >= 0.995 && purity <= 1.005) return "24";
         return null;
+    }
+
+    private double round4(double v) {
+        return Math.round(v * 10000.0) / 10000.0;
+    }
+
+    private ParseResult fail(FileType type, LocalDate date, String msg) {
+        return new ParseResult(type, date, List.of(), List.of(), List.of(), List.of(), msg);
     }
 }

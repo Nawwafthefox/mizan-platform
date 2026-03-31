@@ -31,6 +31,7 @@ com/mizan/repository/BranchPurchaseRateRepository.class
 com/mizan/repository/AuditLogRepository.class
 com/mizan/model/Tenant.class
 com/mizan/service/DashboardService.class
+com/mizan/dto/FileBytes.class
 com/mizan/model/BranchPurchaseRate.class
 com/mizan/repository/MothanTransactionRepository.class
 com/mizan/model/MothanTransaction.class
@@ -52,5 +53,6 @@ com/mizan/controller/SuperAdminController.class
 com/mizan/controller/AuthController.class
 com/mizan/repository/BranchPurchaseRepository.class
 com/mizan/repository/UserRepository.class
+com/mizan/config/MongoConfig.class
 com/mizan/model/BranchSale.class
 com/mizan/service/UploadProgressService.class

@@ -4,6 +4,7 @@
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/config/SecurityConfig.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/repository/UserRepository.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/model/BranchSale.java
+/Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/dto/FileBytes.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/security/MizanUserDetails.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/repository/BranchPurchaseRateRepository.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/repository/MothanTransactionRepository.java
@@ -20,6 +21,7 @@
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/repository/BranchPurchaseRepository.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/service/DashboardService.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/repository/EmployeeSaleRepository.java
+/Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/config/MongoConfig.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/model/User.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/repository/TenantRepository.java
 /Users/macintosh/Downloads/mizan/backend/src/main/java/com/mizan/controller/SuperAdminController.java
