@@ -2,8 +2,8 @@ package com.mizan.service;
 import com.mizan.config.BranchMaps;
 import com.mizan.model.*;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.stereotype.Service;
 import java.io.InputStream;
 import java.time.LocalDate;
@@ -48,7 +48,7 @@ public class ExcelParserService {
             String uploadBatch, String uploadedBy) {
         FileType type = detectType(filename);
         LocalDate date = extractDate(filename);
-        try (HSSFWorkbook wb = new HSSFWorkbook(is)) {
+        try (Workbook wb = WorkbookFactory.create(is)) {
             Sheet sheet = wb.getSheetAt(0);
             return switch (type) {
                 case BRANCH_SALES    -> parseBranchSales(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
@@ -59,7 +59,11 @@ public class ExcelParserService {
             };
         } catch (Exception e) {
             log.error("Parse error for {}: {}", filename, e.getMessage(), e);
-            return new ParseResult(type, date, List.of(), List.of(), List.of(), List.of(), e.getMessage());
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("/tmp") || msg.contains("\\tmp") || msg.length() > 200)) {
+                msg = "تعذّر قراءة الملف — تأكد أن الملف بصيغة Excel صحيحة (.xls أو .xlsx)";
+            }
+            return new ParseResult(type, date, List.of(), List.of(), List.of(), List.of(), msg);
         }
     }
 
