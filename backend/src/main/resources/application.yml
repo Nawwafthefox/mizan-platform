@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: mizan-platform
+  data:
+    mongodb:
+      uri: ${MONGODB_URI:mongodb://localhost:27017/mizan_platform}
+      auto-index-creation: true
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 200MB
+
+server:
+  port: 8080
+
+mizan:
+  jwt:
+    secret: ${JWT_SECRET:mizan-super-secret-key-change-in-production-2026-very-long-string}
+    expiration: 86400000
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:4200}

@@ -1,0 +1,31 @@
+import { Injectable } from '@angular/core';
+import { HttpClient, HttpParams } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { environment } from '../../../environments/environment';
+import { ApiResponse, UploadLog } from '../../shared/models/models';
+
+@Injectable({ providedIn: 'root' })
+export class UploadService {
+  constructor(private http: HttpClient) {}
+
+  requestToken(): Observable<ApiResponse<{ uploadId: string; token: string }>> {
+    return this.http.post<ApiResponse<{ uploadId: string; token: string }>>(
+      `${environment.apiUrl}/upload/request-token`, null);
+  }
+
+  uploadFiles(files: File[], uploadId: string): Observable<ApiResponse<any>> {
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f, f.name));
+    const params = new HttpParams().set('uploadId', uploadId);
+    return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/upload/files`, formData, { params });
+  }
+
+  getProgressUrl(uploadId: string, token: string): string {
+    return `${environment.apiUrl}/upload/progress/${uploadId}?token=${token}`;
+  }
+
+  getHistory(page = 0, size = 20): Observable<ApiResponse<UploadLog[]>> {
+    const params = new HttpParams().set('page', page).set('size', size);
+    return this.http.get<ApiResponse<UploadLog[]>>(`${environment.apiUrl}/upload/history`, { params });
+  }
+}

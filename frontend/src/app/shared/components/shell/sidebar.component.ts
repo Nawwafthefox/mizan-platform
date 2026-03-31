@@ -1,0 +1,196 @@
+import { Component, computed, inject } from '@angular/core';
+import { RouterLink, RouterLinkActive } from '@angular/router';
+import { CommonModule } from '@angular/common';
+import { AuthService } from '../../../core/services/auth.service';
+
+interface NavItem {
+  label: string;
+  labelAr: string;
+  icon: string;
+  route: string;
+  roles?: string[];
+}
+
+@Component({
+  selector: 'app-sidebar',
+  standalone: true,
+  imports: [CommonModule, RouterLink, RouterLinkActive],
+  template: `
+    <aside class="sidebar">
+      <div class="sidebar__logo">
+        <span class="logo-en">MIZAN</span>
+        <span class="logo-ar">ميزان</span>
+      </div>
+
+      @if (auth.impersonating()) {
+        <div class="impersonating-banner">
+          <span>👁 {{ auth.impersonating() }}</span>
+          <button (click)="auth.endImpersonation()" class="exit-imp">خروج</button>
+        </div>
+      }
+
+      <nav class="sidebar__nav">
+        @for (item of visibleItems(); track item.route) {
+          <a [routerLink]="item.route" routerLinkActive="active"
+             class="nav-item" [title]="item.labelAr">
+            <span class="nav-icon">{{ item.icon }}</span>
+            <span class="nav-label">{{ item.labelAr }}</span>
+          </a>
+        }
+      </nav>
+
+      <div class="sidebar__footer">
+        <div class="user-info">
+          <div class="user-avatar">{{ initials() }}</div>
+          <div>
+            <div class="user-name">{{ auth.currentUser?.fullName }}</div>
+            <div class="user-role">{{ roleLabel() }}</div>
+          </div>
+        </div>
+        <button class="logout-btn" (click)="auth.logout()" title="تسجيل الخروج">⬡</button>
+      </div>
+    </aside>
+  `,
+  styles: [`
+    .sidebar {
+      width: var(--sidebar-w);
+      height: 100vh;
+      background: var(--mizan-green-dark);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0; left: 0;
+      z-index: 100;
+      overflow-y: auto;
+    }
+
+    .sidebar__logo {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid rgba(255,255,255,.1);
+      display: flex;
+      align-items: baseline;
+      gap: .5rem;
+    }
+    .logo-en {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: var(--mizan-gold);
+      letter-spacing: .1em;
+    }
+    .logo-ar {
+      font-size: .9rem;
+      color: rgba(255,255,255,.6);
+    }
+
+    .impersonating-banner {
+      background: rgba(201,168,76,.2);
+      border-bottom: 1px solid rgba(201,168,76,.3);
+      padding: .5rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: .78rem;
+      color: var(--mizan-gold-light);
+    }
+    .exit-imp {
+      background: none; border: 1px solid var(--mizan-gold);
+      color: var(--mizan-gold); border-radius: 4px;
+      padding: .15rem .5rem; font-size: .72rem; cursor: pointer;
+      &:hover { background: var(--mizan-gold); color: var(--mizan-green-dark); }
+    }
+
+    .sidebar__nav {
+      flex: 1;
+      padding: .75rem 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      padding: .7rem 1.5rem;
+      color: rgba(255,255,255,.7);
+      transition: all .2s;
+      font-size: .9rem;
+      border-inline-start: 3px solid transparent;
+
+      &:hover { background: rgba(255,255,255,.07); color: #fff; }
+      &.active {
+        background: rgba(201,168,76,.15);
+        color: var(--mizan-gold);
+        border-inline-start-color: var(--mizan-gold);
+      }
+    }
+
+    .nav-icon { font-size: 1rem; width: 20px; text-align: center; }
+    .nav-label { flex: 1; }
+
+    .sidebar__footer {
+      padding: 1rem 1.25rem;
+      border-top: 1px solid rgba(255,255,255,.1);
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+    }
+    .user-info { flex: 1; display: flex; align-items: center; gap: .6rem; overflow: hidden; }
+    .user-avatar {
+      width: 34px; height: 34px;
+      background: var(--mizan-gold);
+      color: var(--mizan-green-dark);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: .8rem;
+      flex-shrink: 0;
+    }
+    .user-name { font-size: .82rem; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .user-role { font-size: .72rem; color: rgba(255,255,255,.5); }
+    .logout-btn {
+      background: none; border: none;
+      color: rgba(255,255,255,.45); font-size: 1.1rem;
+      padding: .35rem;
+      border-radius: 6px;
+      &:hover { color: var(--mizan-danger); background: rgba(220,53,69,.1); }
+    }
+  `]
+})
+export class SidebarComponent {
+  auth = inject(AuthService);
+
+  private allItems: NavItem[] = [
+    { label: 'Dashboard', labelAr: 'لوحة التحكم', icon: '◈', route: '/dashboard', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER','BRANCH_EMPLOYEE','DATA_ENTRY'] },
+    { label: 'Branches',  labelAr: 'الفروع',      icon: '⊞', route: '/dashboard/branches', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER'] },
+    { label: 'Employees', labelAr: 'الموظفون',    icon: '◎', route: '/dashboard/employees', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
+    { label: 'Karat',     labelAr: 'عيارات الذهب', icon: '◇', route: '/dashboard/karat' },
+    { label: 'Mothan',    labelAr: 'المثان',       icon: '◈', route: '/dashboard/mothan' },
+    { label: 'Upload',    labelAr: 'رفع الملفات',  icon: '⊕', route: '/upload', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','DATA_ENTRY'] },
+    { label: 'Users',     labelAr: 'المستخدمون',  icon: '◉', route: '/users', roles: ['COMPANY_ADMIN'] },
+    { label: 'Rates',     labelAr: 'أسعار الشراء', icon: '◑', route: '/dashboard/rates', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+  ];
+
+  visibleItems = computed(() => {
+    const role = this.auth.currentUser?.role;
+    if (!role) return [];
+    return this.allItems.filter(item => !item.roles || item.roles.includes(role));
+  });
+
+  initials = computed(() => {
+    const name = this.auth.currentUser?.fullName || '';
+    return name.split(' ').map(w => w[0]).slice(0,2).join('').toUpperCase();
+  });
+
+  roleLabel(): string {
+    const map: Record<string,string> = {
+      SUPER_ADMIN: 'مدير النظام',
+      COMPANY_ADMIN: 'مدير الشركة',
+      CEO: 'الرئيس التنفيذي',
+      HEAD_OF_SALES: 'رئيس المبيعات',
+      REGION_MANAGER: 'مدير المنطقة',
+      BRANCH_MANAGER: 'مدير الفرع',
+      BRANCH_EMPLOYEE: 'موظف',
+      DATA_ENTRY: 'إدخال البيانات',
+    };
+    return map[this.auth.currentUser?.role || ''] || '';
+  }
+}
