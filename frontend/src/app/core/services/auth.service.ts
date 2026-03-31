@@ -9,12 +9,17 @@ import { ApiResponse, AuthResponse, User } from '../../shared/models/models';
 export class AuthService {
   private userSubject = new BehaviorSubject<User | null>(null);
   currentUser$ = this.userSubject.asObservable();
+  readonly currentUserSignal = signal<User | null>(null);
   impersonating = signal<string | null>(localStorage.getItem('is_impersonating'));
 
   constructor(private http: HttpClient, private router: Router) {
     const stored = localStorage.getItem('user');
     if (stored && stored !== 'null') {
-      try { this.userSubject.next(JSON.parse(stored)); } catch { /* ignore */ }
+      try {
+        const u = JSON.parse(stored);
+        this.userSubject.next(u);
+        this.currentUserSignal.set(u);
+      } catch { /* ignore */ }
     }
   }
 
@@ -27,6 +32,7 @@ export class AuthService {
         localStorage.setItem('refresh_token', res.data.refreshToken);
         localStorage.setItem('user', JSON.stringify(res.data.user));
         this.userSubject.next(res.data.user);
+        this.currentUserSignal.set(res.data.user);
       }
     }));
   }
@@ -34,6 +40,7 @@ export class AuthService {
   logout(): void {
     localStorage.clear();
     this.userSubject.next(null);
+    this.currentUserSignal.set(null);
     this.impersonating.set(null);
     this.router.navigate(['/auth/login']);
   }
@@ -98,6 +105,7 @@ export class AuthService {
     localStorage.setItem('access_token', token);
     localStorage.setItem('user', JSON.stringify(fakeUser));
     this.userSubject.next(fakeUser);
+    this.currentUserSignal.set(fakeUser);
     this.impersonating.set(companyName);
     this.router.navigate(['/dashboard']);
   }
@@ -113,7 +121,7 @@ export class AuthService {
     localStorage.removeItem('imp_orig_refresh');
     localStorage.removeItem('imp_orig_user');
     localStorage.removeItem('is_impersonating');
-    try { this.userSubject.next(JSON.parse(origUser)); } catch { this.userSubject.next(null); }
+    try { const u = JSON.parse(origUser); this.userSubject.next(u); this.currentUserSignal.set(u); } catch { this.userSubject.next(null); this.currentUserSignal.set(null); }
     this.impersonating.set(null);
     this.router.navigate(['/super-admin/tenants']);
   }

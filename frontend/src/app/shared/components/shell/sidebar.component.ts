@@ -57,7 +57,7 @@ interface NavSection {
         <div class="user-info">
           <div class="user-avatar">{{ initials() }}</div>
           <div>
-            <div class="user-name">{{ auth.currentUser?.fullName }}</div>
+            <div class="user-name">{{ auth.currentUserSignal()?.fullName }}</div>
             <div class="user-role">{{ roleLabel() }}</div>
           </div>
         </div>
@@ -228,7 +228,7 @@ export class SidebarComponent {
   ];
 
   visibleSections = computed(() => {
-    const role = this.auth.currentUser?.role;
+    const role = this.auth.currentUserSignal()?.role;
     if (!role) return [];
     return this.navSections
       .map(s => ({ ...s, items: s.items.filter(i => !i.roles || i.roles.includes(role)) }))
@@ -236,7 +236,7 @@ export class SidebarComponent {
   });
 
   initials = computed(() => {
-    const name = this.auth.currentUser?.fullName || '';
+    const name = this.auth.currentUserSignal()?.fullName || '';
     return name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase();
   });
 
@@ -251,6 +251,6 @@ export class SidebarComponent {
       BRANCH_EMPLOYEE: 'موظف',
       DATA_ENTRY: 'إدخال البيانات',
     };
-    return map[this.auth.currentUser?.role || ''] || '';
+    return map[this.auth.currentUserSignal()?.role || ''] || '';
   }
 }
