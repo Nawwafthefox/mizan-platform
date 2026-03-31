@@ -5,6 +5,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.stereotype.Service;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -52,19 +54,25 @@ public class ExcelParserService {
             String uploadBatch, String uploadedBy) {
         FileType type = detectType(filename);
         LocalDate date = extractDate(filename);
-        try (Workbook wb = WorkbookFactory.create(is)) {
-            Sheet sheet = wb.getSheetAt(0);
-            return switch (type) {
-                case BRANCH_SALES    -> parseBranchSales(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
-                case PURCHASES       -> parsePurchases(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
-                case EMPLOYEE_SALES  -> parseEmployeeSales(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
-                case MOTHAN          -> parseMothan(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
-                default -> new ParseResult(type, date, List.of(), List.of(), List.of(), List.of(), "نوع ملف غير معروف");
-            };
+        try {
+            // Read entire stream into memory first.
+            // WorkbookFactory requires mark/reset support; multipart streams don't provide it.
+            // Reading to byte array avoids POI creating temp files (which leak paths in errors).
+            byte[] bytes = is.readAllBytes();
+            try (Workbook wb = WorkbookFactory.create(new BufferedInputStream(new ByteArrayInputStream(bytes)))) {
+                Sheet sheet = wb.getSheetAt(0);
+                return switch (type) {
+                    case BRANCH_SALES    -> parseBranchSales(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
+                    case PURCHASES       -> parsePurchases(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
+                    case EMPLOYEE_SALES  -> parseEmployeeSales(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
+                    case MOTHAN          -> parseMothan(sheet, date, tenantId, uploadBatch, uploadedBy, filename);
+                    default -> new ParseResult(type, date, List.of(), List.of(), List.of(), List.of(), "نوع ملف غير معروف");
+                };
+            }
         } catch (Exception e) {
             log.error("Parse error for {}: {}", filename, e.getMessage(), e);
             String msg = e.getMessage();
-            if (msg == null || msg.contains("/tmp") || msg.contains("\\tmp") || msg.length() > 200) {
+            if (msg == null || msg.isBlank() || msg.contains("/tmp") || msg.contains("\\tmp") || msg.length() > 150) {
                 msg = "تعذّر قراءة الملف — تأكد أن الملف بصيغة Excel صحيحة (.xls أو .xlsx)";
             }
             return new ParseResult(type, date, List.of(), List.of(), List.of(), List.of(), msg);
