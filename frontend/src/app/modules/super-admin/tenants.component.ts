@@ -145,8 +145,8 @@ export class TenantsComponent implements OnInit {
   impersonate(t: Tenant): void {
     this.svc.impersonate(t.tenantId).subscribe({
       next: res => {
-        if (res.data?.token) {
-          this.auth.startImpersonation(res.data.token, t.tenantId, t.companyName);
+        if (res.data?.impersonationToken) {
+          this.auth.startImpersonation(res.data.impersonationToken, t.tenantId, t.companyNameAr ?? t.companyName);
         }
       },
       error: err => this.error.set(err?.error?.message || 'فشل الانتحال')

@@ -29,8 +29,9 @@ export class SuperAdminService {
     return this.http.patch<ApiResponse<any>>(`${environment.apiUrl}/super-admin/tenants/${tenantId}/activate`, null);
   }
 
-  impersonate(tenantId: string): Observable<ApiResponse<{ token: string }>> {
-    return this.http.post<ApiResponse<{ token: string }>>(`${environment.apiUrl}/super-admin/tenants/${tenantId}/impersonate`, null);
+  impersonate(tenantId: string): Observable<ApiResponse<{ impersonationToken: string; tenantName: string }>> {
+    return this.http.post<ApiResponse<{ impersonationToken: string; tenantName: string }>>(
+      `${environment.apiUrl}/super-admin/impersonate`, { tenantId });
   }
 
   getTiers(): Observable<ApiResponse<SubscriptionTier[]>> {
