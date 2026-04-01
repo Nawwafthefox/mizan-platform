@@ -174,17 +174,26 @@ public class ExcelParserService {
         Map<String, BranchSale>           salesMap  = new LinkedHashMap<>();
         Map<String, Map<String, KaratRow>> karatMap  = new LinkedHashMap<>();
 
+        // Carry-forward: ERP paginates — branch code may be absent in some data rows
+        String lastBranchCode = null;
+
         for (Row row : sheet) {
+            // Update carry-forward from ANY row that has a 4-digit branch in col1
+            String rowCol1 = row == null ? "" : getStr(row, 1);
+            if (rowCol1.matches("^\\d{4}$")) lastBranchCode = rowCol1;
+
             if (!isDataRow(row)) continue;
 
-            String    branchCode = getStr(row, 1);
+            String    branchCode = rowCol1.matches("^\\d{4}$") ? rowCol1 : lastBranchCode;
+            if (branchCode == null || branchCode.isBlank()) continue; // no branch context yet
+
             LocalDate date       = parseSerialDate(getNum(row, 6), fallbackDate);
             double    rawTotal   = getNumRaw(row, 15);   // signed: neg=sale, pos=return
+            if (rawTotal == 0) continue;                  // skip zero-amount rows
             double    sar        = -rawTotal;             // negate
             double    sign       = sar >= 0 ? 1.0 : -1.0;
-            double    pureWt     = sign * Math.abs(getNumRaw(row, 12)); // rate denominator
-            double    grossWt    = sign * Math.abs(getNumRaw(row, 10)); // display
-            int       pieces     = (int)(sign * Math.abs(getNum(row, 7)));
+            double    pureWt     = sign * Math.abs(getNumRaw(row, 12)); // col12 = rate denominator
+            double    grossWt    = sign * Math.abs(getNumRaw(row, 10)); // col10 = display only
             double    purity     = Math.abs(getNumRaw(row, 11));
             String    karat      = mapKarat(purity);
 
@@ -206,7 +215,8 @@ public class ExcelParserService {
             bs.setTotalSarAmount(bs.getTotalSarAmount() + sar);
             bs.setNetWeight(bs.getNetWeight() + pureWt);
             bs.setGrossWeight(bs.getGrossWeight() + grossWt);
-            bs.setInvoiceCount(bs.getInvoiceCount() + pieces);
+            // Invoice count = 1 per valid data row (not sum of col7 pieces)
+            bs.setInvoiceCount(bs.getInvoiceCount() + 1);
 
             if (karat != null) {
                 Map<String, KaratRow> km = karatMap.computeIfAbsent(key, k -> new LinkedHashMap<>());
@@ -217,7 +227,7 @@ public class ExcelParserService {
                 kr.setSarAmount(kr.getSarAmount() + Math.abs(sar));
                 kr.setNetWeight(kr.getNetWeight() + Math.abs(pureWt));
                 kr.setGrossWeight(kr.getGrossWeight() + Math.abs(grossWt));
-                kr.setInvoiceCount(kr.getInvoiceCount() + Math.abs(pieces));
+                kr.setInvoiceCount(kr.getInvoiceCount() + 1);
             }
         }
 
@@ -248,20 +258,28 @@ public class ExcelParserService {
 
         Map<String, EmployeeSale> empMap = new LinkedHashMap<>();
 
+        // Carry-forward branch code (same pagination issue as branch sales)
+        String lastBranchCode = null;
+
         for (Row row : sheet) {
+            String rowCol1 = row == null ? "" : getStr(row, 1);
+            if (rowCol1.matches("^\\d{4}$")) lastBranchCode = rowCol1;
+
             if (!isDataRow(row)) continue;
 
-            String    branchCode = getStr(row, 1);
+            String    branchCode = rowCol1.matches("^\\d{4}$") ? rowCol1 : lastBranchCode;
+            if (branchCode == null || branchCode.isBlank()) continue;
+
             String    empIdStr   = getStr(row, 3);   // col3 = Employee ID (numeric cell)
             if (empIdStr.isBlank() || empIdStr.equals("0")) continue;
             String    empName    = getStr(row, 5);   // col5 = Employee name
             LocalDate date       = parseSerialDate(getNum(row, 6), fallbackDate);
             double    rawTotal   = getNumRaw(row, 15);
+            if (rawTotal == 0) continue;
             double    sar        = -rawTotal;
             double    sign       = sar >= 0 ? 1.0 : -1.0;
             double    pureWt     = sign * Math.abs(getNumRaw(row, 12));
             double    grossWt    = sign * Math.abs(getNumRaw(row, 10));
-            int       pieces     = (int)(sign * Math.abs(getNum(row, 7)));
 
             String key = empIdStr + "|" + branchCode + "|" + date;
             EmployeeSale es = empMap.computeIfAbsent(key, k -> {
@@ -282,7 +300,7 @@ public class ExcelParserService {
             es.setTotalSarAmount(es.getTotalSarAmount() + sar);
             es.setNetWeight(es.getNetWeight() + pureWt);
             es.setGrossWeight(es.getGrossWeight() + grossWt);
-            es.setInvoiceCount(es.getInvoiceCount() + pieces);
+            es.setInvoiceCount(es.getInvoiceCount() + 1);
         }
 
         List<EmployeeSale> results = new ArrayList<>(empMap.values());
@@ -423,8 +441,10 @@ public class ExcelParserService {
             if (cellDocRef != null)  currentDocRef = cellDocRef;
             if (cellDate   != null)  currentDate   = cellDate;
 
-            // Build a transaction if we have a description with weight + amount
-            if (description != null && currentBranch != null) {
+            // Build a transaction ONLY if the current row itself has a branch code
+            // (cellBranch != null). This excludes the closing-balance summary row
+            // at the end of the Mothan file, which has no branch code in col7.
+            if (description != null && cellBranch != null) {
                 Matcher wm  = wtPat.matcher(description);
                 Matcher am  = amtPat.matcher(description);
                 if (wm.find() && am.find()) {
@@ -468,21 +488,20 @@ public class ExcelParserService {
     /**
      * A row is a data row if:
      *  col0 = numeric integer >= 1   (sequential row number)
-     *  col1 = 4-digit string         (branch code)
      *  col6 = numeric > 40000        (Excel serial date)
+     *
+     * col1 (branch code) is intentionally NOT required here — the ERP
+     * report paginates and some data rows have empty col1.  Branch code
+     * carry-forward is handled in each individual parser method.
      */
     private boolean isDataRow(Row row) {
         if (row == null) return false;
         Cell c0 = row.getCell(0, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
-        Cell c1 = row.getCell(1, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
         Cell c6 = row.getCell(6, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
-        if (c0 == null || c1 == null || c6 == null) return false;
+        if (c0 == null || c6 == null) return false;
         // col0: numeric integer >= 1
         if (c0.getCellType() != CellType.NUMERIC) return false;
         if (c0.getNumericCellValue() < 1) return false;
-        // col1: 4-digit branch code string
-        if (c1.getCellType() != CellType.STRING) return false;
-        if (!c1.getStringCellValue().trim().matches("^\\d{4}$")) return false;
         // col6: Excel serial date > 40000
         if (c6.getCellType() != CellType.NUMERIC) return false;
         if (c6.getNumericCellValue() < 40000) return false;

@@ -89,6 +89,7 @@ export const TRANSLATIONS: Record<string, { ar: string; en: string }> = {
   totalSales:       { ar: 'إجمالي المبيعات',         en: 'Total Sales' },
   totalPurchases:   { ar: 'إجمالي المشتريات',        en: 'Total Purchases' },
   netWeight:        { ar: 'الوزن الصافي',             en: 'Net Weight' },
+  netAmount:        { ar: 'الصافي',                   en: 'Net' },
   saleRate:         { ar: 'معدل البيع',              en: 'Sale Rate' },
   purchaseRate:     { ar: 'معدل الشراء',             en: 'Purchase Rate' },
   rateDiff:         { ar: 'فرق المعدل',              en: 'Rate Diff' },

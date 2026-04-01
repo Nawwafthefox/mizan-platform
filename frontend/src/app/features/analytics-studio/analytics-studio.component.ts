@@ -153,8 +153,9 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
     const branchPurchWt = n(raw.purchWt);
     const mothanAmt   = n(raw.mothan);
     const mothanWt    = n(raw.mothanWt);
-    const returns     = n(raw.ret);
-    const returnDays  = n(raw.retDays);
+    // Backend sends "returns" (BranchData record field name)
+    const returns     = Math.abs(n(raw.returns ?? raw.ret ?? 0));
+    const returnDays  = n(raw.retDays ?? 0);
 
     const combinedPurchases = branchPurch + mothanAmt;
     const combinedPurchWt   = branchPurchWt + mothanWt;
@@ -189,10 +190,11 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
       returns,
       returnDays,
       // karat fields
-      k18Sar:    n(raw.k18Sar),    k18Weight: n(raw.k18Weight),
-      k21Sar:    n(raw.k21Sar),    k21Weight: n(raw.k21Weight),
-      k22Sar:    n(raw.k22Sar),    k22Weight: n(raw.k22Weight),
-      k24Sar:    n(raw.k24Sar),    k24Weight: n(raw.k24Weight),
+      // Backend sends k18Wt, k21Wt, k22Wt, k24Wt (BranchData record)
+      k18Sar:    n(raw.k18Sar),    k18Weight: n(raw.k18Wt ?? raw.k18Weight),
+      k21Sar:    n(raw.k21Sar),    k21Weight: n(raw.k21Wt ?? raw.k21Weight),
+      k22Sar:    n(raw.k22Sar),    k22Weight: n(raw.k22Wt ?? raw.k22Weight),
+      k24Sar:    n(raw.k24Sar),    k24Weight: n(raw.k24Wt ?? raw.k24Weight),
       // computed
       combinedPurchases, combinedPurchWt,
       saleRate, purchRate, diffRate, net,
@@ -205,11 +207,12 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
 
   private enrichEmployee(raw: any, branches: any[]): any {
     const n = this.n.bind(this);
-    const sar      = n(raw.sar ?? raw.totalSarAmount ?? raw.totalRevenue);
-    const netWt    = n(raw.wn ?? raw.netWeight ?? raw.totalWeightSold);
-    const invoices = n(raw.pcs ?? raw.invoiceCount ?? raw.transactions);
-    const returns  = n(raw.ret ?? raw.returns);
-    const retDays  = n(raw.retDays ?? raw.returnDays);
+    // Employee endpoint sends: totalSar, totalWt, invoiceCount, saleRate
+    const sar      = n(raw.totalSar ?? raw.sar ?? raw.totalSarAmount ?? 0);
+    const netWt    = n(raw.totalWt  ?? raw.wn  ?? raw.netWeight ?? 0);
+    const invoices = n(raw.invoiceCount ?? raw.pcs ?? 0);
+    const returns  = Math.abs(n(raw.returns ?? raw.ret ?? 0));
+    const retDays  = n(raw.returnDays ?? raw.retDays ?? 0);
 
     const saleRate = n(raw.saleRate) > 0 ? n(raw.saleRate)
       : (netWt > 0 ? Math.round(sar / netWt * 10000) / 10000 : 0);
@@ -317,9 +320,9 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
       return;
     }
     const m = this.mothanData;
-    // MothanSummary: { totalGoldGrams, transactionCount, branches[] }
-    const weight = this.n(m.totalGoldGrams);
-    const count  = this.n(m.transactionCount);
+    // Mothan endpoint sends: totalWt, txnCount, totalSar, avgRate
+    const weight = this.n(m.totalWt ?? m.totalGoldGrams ?? 0);
+    const count  = this.n(m.txnCount ?? m.transactionCount ?? 0);
     // Compute total amount from branches aggregated on enriched branch data
     const total  = this.branches.reduce((s: number, b: any) => s + b.mothanAmount, 0);
     const avgRate = weight > 0 ? Math.round(total / weight * 100) / 100 : 0;
