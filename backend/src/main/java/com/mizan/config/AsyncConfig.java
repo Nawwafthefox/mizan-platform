@@ -9,6 +9,24 @@ import java.util.concurrent.Executor;
 @EnableAsync
 public class AsyncConfig {
 
+    /**
+     * Default @Async executor — used by UploadService.processAsync().
+     * Named "taskExecutor" so Spring picks it up as the default @Async executor.
+     * Must be a SEPARATE pool from uploadExecutor to avoid deadlock:
+     * processAsync() blocks waiting for CompletableFutures on uploadExecutor —
+     * if both share the same pool the blocking threads starve the parse tasks.
+     */
+    @Bean("taskExecutor")
+    public Executor taskExecutor() {
+        ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
+        ex.setCorePoolSize(20);
+        ex.setMaxPoolSize(50);
+        ex.setQueueCapacity(200);
+        ex.setThreadNamePrefix("async-");
+        ex.initialize();
+        return ex;
+    }
+
     /** Used for parallel file parsing inside UploadService.processAsync(). */
     @Bean("uploadExecutor")
     public Executor uploadExecutor() {

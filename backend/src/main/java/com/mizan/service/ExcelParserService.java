@@ -13,37 +13,39 @@ import java.util.regex.*;
 /**
  * Parses ERP Excel exports (BIFF8 / HSSF format).
  *
- * VERIFIED COLUMN MAP — cols 0-15 — identical for Branch Sales, Employee Sales, Purchases:
+ * ACTUAL COLUMN MAP — cols 0-15 — identical for Branch Sales, Employee Sales, Purchases:
+ * (RTL report: Sl.# is the rightmost column = col15 in 0-based indexing)
  *
- *   Col  0  Sl.#               — sequential integer  (ROW FILTER: >= 1)
- *   Col  1  Branch code        — 4-digit string       (ROW FILTER: matches \d{4})
- *   Col  2  CODE1              — transaction ref
- *   Col  3  CODE2 / EmployeeId — numeric integer (employee files only)
- *   Col  4  CODE3 / EmployeeId — same as col 3 (employee files only)
- *   Col  5  وصف / Name         — employee name string (employee files only)
- *   Col  6  تاريخ السند        — Excel serial date   (ROW FILTER: > 40000)
- *   Col  7  القطع              — invoice/piece count (negative = sale, positive = purchase)
- *   Col  8  بالوزن الإجمالي   — gross weight incl. stones (display only)
+ *   Col  0  Avg. Mkg           — computed ratio (display only)
+ *   Col  1  Pure Loss          — display only
+ *   Col  2  Wst Qty            — display only
+ *   Col  3  مجموع              — ★ TOTAL SAR (metal value + making charges) ★
+ *   Col  4  Mkg. Stn. Kun. Chg — making charges SAR
+ *   Col  5  قيمة المعادن       — metal value SAR
+ *   Col  6  الوزن النقي        — ★ PURE WEIGHT = gross×purity = RATE DENOMINATOR ★
+ *   Col  7  النقاوة            — purity ratio: 0.75=18K, 0.875=21K, 0.916=22K, 1.0=24K
+ *   Col  8  الوزن الصافي       — net weight excl. stones (display only)
  *   Col  9  وزن الحجر          — stone weight (display only)
- *   Col 10  الوزن الصافي       — net weight excl. stones (display only)
- *   Col 11  النقاوة            — purity ratio: 0.75=18K, 0.875=21K, 0.916=22K, 1.0=24K
- *   Col 12  الوزن النقي        — ★ PURE NET WEIGHT = gross×purity = RATE DENOMINATOR ★
- *   Col 13  قيمة المعادن       — metal value SAR (excl. making charges)
- *   Col 14  Mkg.Chgs           — making charges SAR
- *   Col 15  مجموع              — ★ TOTAL SAR = col13 + col14 ★
+ *   Col 10  بالوزن الإجمالي   — gross weight incl. stones (display only)
+ *   Col 11  القطع              — invoice/piece count
+ *   Col 12  وصف                — description: branch "XXXX - Name", karat "18"/"21"/"22"/"24", employee name
+ *   Col 13  الرمز              — reference code: karat string or employee ID
+ *   Col 14  (empty)
+ *   Col 15  Sl. #              — ★ ROW FILTER: numeric >= 1 ★
  *
  * SIGN convention (sales / employee sales):
- *   col15 negative in file → normal sale   → negate → positive SAR
- *   col15 positive in file → return/مرتجع → negate → negative SAR
- *   col12 always read as Math.abs(), sign follows SAR sign
+ *   col3 negative in file → normal sale   → negate → positive SAR
+ *   col3 positive in file → return/مرتجع → negate → negative SAR
+ *   col6 always read as Math.abs(), sign follows SAR sign
  *
  * SIGN convention (purchases):
- *   col15 always positive → Math.abs()
- *   col12 always positive → Math.abs()
+ *   col3 always positive → Math.abs()
+ *   col6 always positive → Math.abs()
  *
- * EXCEL SERIAL DATE:  LocalDate.of(1899, 12, 30).plusDays((long) serial)
- *   Excel epoch = 1899-12-30 (not 1900-01-01 — Excel leap year bug)
- *   Example: serial 46082 → 2026-03-01
+ * BRANCH CARRY-FORWARD:
+ *   Branch header rows: col12 = "XXXX - BranchName", col15 = '' (not a data row)
+ *   Data rows:          col12 = karat or employee name, col15 = Sl.# >= 1
+ *   Sub Total rows:     col12 = "Sub Total (XXXX)", col15 = '' (not a data row)
  */
 @Slf4j
 @Service
@@ -174,27 +176,33 @@ public class ExcelParserService {
         Map<String, BranchSale>           salesMap  = new LinkedHashMap<>();
         Map<String, Map<String, KaratRow>> karatMap  = new LinkedHashMap<>();
 
-        // Carry-forward: ERP paginates — branch code may be absent in some data rows
+        // All rows in a daily file share the same date (from filename/header)
+        LocalDate date = fallbackDate;
+
+        // Carry-forward: branch header rows ("XXXX - Name") precede data rows
         String lastBranchCode = null;
+        Pattern branchPat = Pattern.compile("^(\\d{4})\\s*-");
 
         for (Row row : sheet) {
-            // Update carry-forward from ANY row that has a 4-digit branch in col1
-            String rowCol1 = row == null ? "" : getStr(row, 1);
-            if (rowCol1.matches("^\\d{4}$")) lastBranchCode = rowCol1;
+            // Update carry-forward from any row whose col12 is a branch header
+            if (row != null) {
+                String col12 = getStr(row, 12);
+                Matcher bm = branchPat.matcher(col12);
+                if (bm.find()) lastBranchCode = bm.group(1);
+            }
 
             if (!isDataRow(row)) continue;
 
-            String    branchCode = rowCol1.matches("^\\d{4}$") ? rowCol1 : lastBranchCode;
+            String    branchCode = lastBranchCode;
             if (branchCode == null || branchCode.isBlank()) continue; // no branch context yet
 
-            LocalDate date       = parseSerialDate(getNum(row, 6), fallbackDate);
-            double    rawTotal   = getNumRaw(row, 15);   // signed: neg=sale, pos=return
+            double    rawTotal   = getNumRaw(row, 3);    // col3 = مجموع (total SAR), neg=sale
             if (rawTotal == 0) continue;                  // skip zero-amount rows
-            double    sar        = -rawTotal;             // negate
+            double    sar        = -rawTotal;             // negate: neg file value → positive SAR
             double    sign       = sar >= 0 ? 1.0 : -1.0;
-            double    pureWt     = sign * Math.abs(getNumRaw(row, 12)); // col12 = rate denominator
-            double    grossWt    = sign * Math.abs(getNumRaw(row, 10)); // col10 = display only
-            double    purity     = Math.abs(getNumRaw(row, 11));
+            double    pureWt     = sign * Math.abs(getNumRaw(row, 6));  // col6 = الوزن النقي
+            double    grossWt    = sign * Math.abs(getNumRaw(row, 10)); // col10 = بالوزن الإجمالي
+            double    purity     = Math.abs(getNumRaw(row, 7));          // col7 = النقاوة
             String    karat      = mapKarat(purity);
 
             String key = branchCode + "|" + date;
@@ -215,8 +223,7 @@ public class ExcelParserService {
             bs.setTotalSarAmount(bs.getTotalSarAmount() + sar);
             bs.setNetWeight(bs.getNetWeight() + pureWt);
             bs.setGrossWeight(bs.getGrossWeight() + grossWt);
-            // Invoice count = 1 per valid data row (not sum of col7 pieces)
-            bs.setInvoiceCount(bs.getInvoiceCount() + 1);
+            bs.setInvoiceCount(bs.getInvoiceCount() + (int) Math.abs(getNumRaw(row, 11))); // col11 = القطع
 
             if (karat != null) {
                 Map<String, KaratRow> km = karatMap.computeIfAbsent(key, k -> new LinkedHashMap<>());
@@ -258,28 +265,33 @@ public class ExcelParserService {
 
         Map<String, EmployeeSale> empMap = new LinkedHashMap<>();
 
-        // Carry-forward branch code (same pagination issue as branch sales)
+        LocalDate date = fallbackDate;
+
+        // Carry-forward branch code (branch header rows precede employee data rows)
         String lastBranchCode = null;
+        Pattern branchPat = Pattern.compile("^(\\d{4})\\s*-");
 
         for (Row row : sheet) {
-            String rowCol1 = row == null ? "" : getStr(row, 1);
-            if (rowCol1.matches("^\\d{4}$")) lastBranchCode = rowCol1;
+            if (row != null) {
+                String col12 = getStr(row, 12);
+                Matcher bm = branchPat.matcher(col12);
+                if (bm.find()) lastBranchCode = bm.group(1);
+            }
 
             if (!isDataRow(row)) continue;
 
-            String    branchCode = rowCol1.matches("^\\d{4}$") ? rowCol1 : lastBranchCode;
+            String    branchCode = lastBranchCode;
             if (branchCode == null || branchCode.isBlank()) continue;
 
-            String    empIdStr   = getStr(row, 3);   // col3 = Employee ID (numeric cell)
+            String    empIdStr   = getStr(row, 13);  // col13 = الرمز (employee ID)
             if (empIdStr.isBlank() || empIdStr.equals("0")) continue;
-            String    empName    = getStr(row, 5);   // col5 = Employee name
-            LocalDate date       = parseSerialDate(getNum(row, 6), fallbackDate);
-            double    rawTotal   = getNumRaw(row, 15);
+            String    empName    = getStr(row, 12);  // col12 = وصف (employee name)
+            double    rawTotal   = getNumRaw(row, 3);  // col3 = مجموع (total SAR)
             if (rawTotal == 0) continue;
             double    sar        = -rawTotal;
             double    sign       = sar >= 0 ? 1.0 : -1.0;
-            double    pureWt     = sign * Math.abs(getNumRaw(row, 12));
-            double    grossWt    = sign * Math.abs(getNumRaw(row, 10));
+            double    pureWt     = sign * Math.abs(getNumRaw(row, 6));  // col6 = الوزن النقي
+            double    grossWt    = sign * Math.abs(getNumRaw(row, 10)); // col10 = بالوزن الإجمالي
 
             String key = empIdStr + "|" + branchCode + "|" + date;
             EmployeeSale es = empMap.computeIfAbsent(key, k -> {
@@ -300,7 +312,7 @@ public class ExcelParserService {
             es.setTotalSarAmount(es.getTotalSarAmount() + sar);
             es.setNetWeight(es.getNetWeight() + pureWt);
             es.setGrossWeight(es.getGrossWeight() + grossWt);
-            es.setInvoiceCount(es.getInvoiceCount() + 1);
+            es.setInvoiceCount(es.getInvoiceCount() + (int) Math.abs(getNumRaw(row, 11)));
         }
 
         List<EmployeeSale> results = new ArrayList<>(empMap.values());
@@ -322,16 +334,28 @@ public class ExcelParserService {
 
         Map<String, BranchPurchase> purchMap = new LinkedHashMap<>();
 
+        LocalDate date = fallbackDate;
+
+        // Carry-forward branch from header rows
+        String lastBranchCode = null;
+        Pattern branchPat = Pattern.compile("^(\\d{4})\\s*-");
+
         for (Row row : sheet) {
+            if (row != null) {
+                String col12 = getStr(row, 12);
+                Matcher bm = branchPat.matcher(col12);
+                if (bm.find()) lastBranchCode = bm.group(1);
+            }
+
             if (!isDataRow(row)) continue;
 
-            String    branchCode = getStr(row, 1);
-            LocalDate date       = parseSerialDate(getNum(row, 6), fallbackDate);
-            double    sar        = Math.abs(getNumRaw(row, 15));  // purchases always positive
-            double    pureWt     = Math.abs(getNumRaw(row, 12));
-            double    grossWt    = Math.abs(getNumRaw(row, 10));
-            int       pieces     = (int) Math.abs(getNum(row, 7));
-            double    purity     = Math.abs(getNumRaw(row, 11));
+            String    branchCode = lastBranchCode;
+            if (branchCode == null || branchCode.isBlank()) continue;
+            double    sar        = Math.abs(getNumRaw(row, 3));   // col3 = مجموع (always positive for purchases)
+            double    pureWt     = Math.abs(getNumRaw(row, 6));   // col6 = الوزن النقي
+            double    grossWt    = Math.abs(getNumRaw(row, 10));  // col10 = بالوزن الإجمالي
+            int       pieces     = (int) Math.abs(getNum(row, 11)); // col11 = القطع
+            double    purity     = Math.abs(getNumRaw(row, 7));    // col7 = النقاوة
             String    karat      = mapKarat(purity);
 
             String key = branchCode + "|" + date;
@@ -372,10 +396,10 @@ public class ExcelParserService {
 
         List<MothanTransaction> results = new ArrayList<>();
 
-        // Patterns to extract data from description strings
-        Pattern wtPat   = Pattern.compile("وزن\\s*\\(\\s*([\\d.,]+)\\s*\\)");
-        Pattern amtPat  = Pattern.compile("بمبلغ\\s*\\(\\s*([\\d,]+(?:\\.[\\d]+)?)\\s*\\)");
-        Pattern ratePat = Pattern.compile("معدل\\s*\\(\\s*([\\d.,]+)\\s*\\)");
+        // Patterns to extract data from description strings — handle both "وزن ( X )" and "وزن X" formats
+        Pattern wtPat   = Pattern.compile("وزن\\s*(?:\\(\\s*)?([\\d.,]+)(?:\\s*\\))?\\s*(?:جرام)?");
+        Pattern amtPat  = Pattern.compile("(?:بمبلغ|مبلغ)\\s*(?:\\(\\s*)?([\\d,]+(?:\\.[\\d]+)?)(?:\\s*\\))?");
+        Pattern ratePat = Pattern.compile("(?:معدل|سعر\\s*الجرام)\\s*(?:\\(\\s*)?([\\d.,]+)(?:\\s*\\))?");
         Pattern datePat = Pattern.compile("(\\d{2})-(\\d{2})-(\\d{4})");
         Pattern branch4 = Pattern.compile("^\\d{4}$");
         Pattern docRef  = Pattern.compile("^[A-Z]{2,}[\\-/]\\d+|^\\d{6,}$");
@@ -441,23 +465,33 @@ public class ExcelParserService {
             if (cellDocRef != null)  currentDocRef = cellDocRef;
             if (cellDate   != null)  currentDate   = cellDate;
 
-            // Build a transaction ONLY if the current row itself has a branch code
-            // (cellBranch != null). This excludes the closing-balance summary row
-            // at the end of the Mothan file, which has no branch code in col7.
+            // Build a transaction when this row has a branch code and gold data in description.
+            // Row must have its own branch code (cellBranch != null) to avoid balance-summary rows.
             if (description != null && cellBranch != null) {
                 Matcher wm  = wtPat.matcher(description);
                 Matcher am  = amtPat.matcher(description);
-                if (wm.find() && am.find()) {
+                Matcher rm  = ratePat.matcher(description);
+                boolean hasWt   = wm.find();
+                boolean hasAmt  = am.find();
+                boolean hasRate = rm.find();
+                if (hasWt) {
                     try {
                         double weight = Double.parseDouble(wm.group(1).replace(",",""));
-                        double amount = Double.parseDouble(am.group(1).replace(",",""));
-                        if (weight > 0 && amount > 0) {
-                            double rate = 0;
-                            Matcher rm = ratePat.matcher(description);
-                            if (rm.find()) {
-                                try { rate = Double.parseDouble(rm.group(1).replace(",","")); }
-                                catch (Exception ignored) {}
+                        double rate   = hasRate ? Double.parseDouble(rm.group(1).replace(",","")) : 0;
+                        // amount from description; fallback: weight × rate
+                        double amount = 0;
+                        if (hasAmt) {
+                            double raw = Double.parseDouble(am.group(1).replace(",",""));
+                            // sanity check: if rate is known, amount should be ≈ weight × rate (±30%)
+                            if (rate > 0 && raw < weight * rate * 0.5) {
+                                amount = weight * rate; // use calculated amount
+                            } else {
+                                amount = raw;
                             }
+                        } else if (rate > 0) {
+                            amount = weight * rate;
+                        }
+                        if (weight > 0 && amount > 500) { // filter noise (< 500 SAR = not real gold purchase)
                             MothanTransaction mt = new MothanTransaction();
                             mt.setTenantId(tenantId);
                             mt.setTransactionDate(currentDate);
@@ -487,25 +521,17 @@ public class ExcelParserService {
 
     /**
      * A row is a data row if:
-     *  col0 = numeric integer >= 1   (sequential row number)
-     *  col6 = numeric > 40000        (Excel serial date)
+     *  col15 = Sl.# numeric integer >= 1
      *
-     * col1 (branch code) is intentionally NOT required here — the ERP
-     * report paginates and some data rows have empty col1.  Branch code
-     * carry-forward is handled in each individual parser method.
+     * Branch header rows ("XXXX - Name") and Sub Total rows have empty col15.
+     * Only actual transaction rows carry a sequential Sl.# in col15.
      */
     private boolean isDataRow(Row row) {
         if (row == null) return false;
-        Cell c0 = row.getCell(0, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
-        Cell c6 = row.getCell(6, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
-        if (c0 == null || c6 == null) return false;
-        // col0: numeric integer >= 1
-        if (c0.getCellType() != CellType.NUMERIC) return false;
-        if (c0.getNumericCellValue() < 1) return false;
-        // col6: Excel serial date > 40000
-        if (c6.getCellType() != CellType.NUMERIC) return false;
-        if (c6.getNumericCellValue() < 40000) return false;
-        return true;
+        Cell c15 = row.getCell(15, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+        if (c15 == null) return false;
+        if (c15.getCellType() != CellType.NUMERIC) return false;
+        return c15.getNumericCellValue() >= 1;
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
