@@ -687,19 +687,21 @@ public class ExcelParserService {
         for (Row row : sheet) {
             if (!isDataRowB(row)) continue;
 
-            String branchCode = getStr(row, 1);           // col1 = branch code
+            String branchCode = getStr(row, 1);             // col1 = branch code
             if (branchCode.isBlank()) continue;
 
-            double serial  = getNumRaw(row, 6);            // col6 = date (Excel serial)
+            double serial  = getNumRaw(row, 6);              // col6 = date (Excel serial)
             final LocalDate rowDate = parseSerialDate(serial, fallbackDate);
 
-            double sar     = getNumRaw(row, 15);           // col15 = total SAR
-            if (sar == 0) continue;
+            double rawTotal = getNumRaw(row, 15);            // col15 = total SAR (neg=sale, like Format A col3)
+            if (rawTotal == 0) continue;
+            double sar    = -rawTotal;                        // negate: neg file value → positive SAR for sales
+            double sign   = sar >= 0 ? 1.0 : -1.0;
 
-            double pureWt  = getNumRaw(row, 12);           // col12 = pure weight (signed)
-            double grossWt = getNumRaw(row, 8);            // col8  = gross weight
-            double purity  = Math.abs(getNumRaw(row, 11)); // col11 = purity ratio
-            int    pieces  = (int) Math.abs(getNumRaw(row, 7)); // col7 = invoice count
+            double pureWt  = sign * Math.abs(getNumRaw(row, 12)); // col12 = pure weight
+            double grossWt = sign * Math.abs(getNumRaw(row, 8));  // col8  = gross weight
+            double purity  = Math.abs(getNumRaw(row, 11));         // col11 = purity ratio
+            int    pieces  = (int) Math.abs(getNumRaw(row, 7));    // col7 = invoice count
             String karat   = mapKarat(purity);
 
             String key = branchCode + "|" + rowDate;
@@ -772,11 +774,13 @@ public class ExcelParserService {
             double serial = getNumRaw(row, 6);
             final LocalDate rowDate = parseSerialDate(serial, fallbackDate);
 
-            double sar    = getNumRaw(row, 15);
-            if (sar == 0) continue;
+            double rawTotal = getNumRaw(row, 15);       // neg=sale, same as Format A
+            if (rawTotal == 0) continue;
+            double sar  = -rawTotal;                     // negate → positive for sales
+            double sign = sar >= 0 ? 1.0 : -1.0;
 
-            double pureWt  = getNumRaw(row, 12);
-            double grossWt = getNumRaw(row, 8);
+            double pureWt  = sign * Math.abs(getNumRaw(row, 12));
+            double grossWt = sign * Math.abs(getNumRaw(row, 8));
             int    pieces  = (int) Math.abs(getNumRaw(row, 7));
 
             // Try to extract employee ID: col3 numeric (if integer, treat as employee ID)
