@@ -69,16 +69,17 @@ interface UploadCard {
           </div>
 
           <!-- Progress -->
-          @if (getProgress(card.type) as p) {
+          @let prog = getProgress(card.type);
+          @if (prog) {
             <div class="uc-progress-bar">
-              <div class="uc-fill" [style.width]="p.percent + '%'"
-                [class.fill-done]="p.status === 'success'" [class.fill-err]="p.status === 'error'">
+              <div class="uc-fill" [style.width]="prog.percent + '%'"
+                [class.fill-done]="prog.status === 'success'" [class.fill-err]="prog.status === 'error'">
               </div>
             </div>
             <div class="uc-status">
-              <span [class]="statusCls(p.status)">{{ p.phaseAr || statusLabel(p.status) }}</span>
-              @if (p.savedRecords && p.savedRecords > 0) {
-                <span class="text-success">✓ {{ p.savedRecords }} سجل</span>
+              <span [class]="statusCls(prog.status)">{{ prog.phaseAr || statusLabel(prog.status) }}</span>
+              @if (prog.savedRecords && prog.savedRecords > 0) {
+                <span class="text-success">✓ {{ prog.savedRecords }} سجل</span>
               }
             </div>
           }
