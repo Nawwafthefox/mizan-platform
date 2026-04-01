@@ -75,6 +75,9 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
   // Charts store
   charts: Record<string, Chart> = {};
 
+  // IntersectionObservers — tracked so ngOnDestroy can disconnect them
+  private _observers: IntersectionObserver[] = [];
+
   readonly REGION_COLORS: Record<string, string> = {
     'الرياض':          '#3b82f6',
     'الغربية':         '#ec4899',
@@ -102,6 +105,8 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
 
   ngOnDestroy(): void {
     Object.keys(this.charts).forEach(k => this.charts[k]?.destroy());
+    this._observers.forEach(o => o.disconnect());
+    this._observers = [];
   }
 
   // ── Helpers ────────────────────────────────────────────────────
@@ -138,7 +143,7 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
 
   // ── Data enrichment ────────────────────────────────────────────
   // The API returns: b.name, b.sar (totalSarAmount), b.wn (netWeight),
-  // b.gw (grossWeight), b.pcs (invoiceCount), b.purch (branchPurchases),
+  // b.wp (grossWeight), b.pcs (invoiceCount), b.purch (branchPurchases),
   // b.purchWt (branchPurchWeight), b.mothan (mothanAmount),
   // b.mothanWt (mothanWeight), b.ret (returns), b.retDays (returnDays),
   // b.region, b.code, b.saleRate, b.purchRate, b.diffRate
@@ -147,7 +152,7 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
     const n = this.n.bind(this);
     const sar         = n(raw.sar);
     const netWt       = n(raw.wn);
-    const grossWt     = n(raw.gw);
+    const grossWt     = n(raw.wp ?? raw.gw); // backend sends 'wp' (grossWeight field in BranchData)
     const invoices    = n(raw.pcs);
     const branchPurch = n(raw.purch);
     const branchPurchWt = n(raw.purchWt);
@@ -473,18 +478,39 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
 
   // ── Build all charts ───────────────────────────────────────────
   buildAllCharts(): void {
+    // Disconnect any leftover observers from a previous load
+    this._observers.forEach(o => o.disconnect());
+    this._observers = [];
+
+    // Charts 1–4: always visible above the fold — build immediately
     this.buildMainBar();
     this.buildRegionDoughnut();
     this.buildRateDiffChart();
     this.buildRegionBar();
-    this.buildEmpTop();
-    this.buildEmpDiff();
-    this.buildEmpProfit();
-    this.buildKaratDoughnut();
-    this.buildKaratBar();
-    this.buildHeatmap();
-    this.buildMothanChart();
-    this.buildExposureChart();
+
+    // Charts 5–12: below the fold — defer until scrolled into view
+    this.observeChart(this.cvEmpTop,        () => this.buildEmpTop());
+    this.observeChart(this.cvEmpDiff,       () => this.buildEmpDiff());
+    this.observeChart(this.cvEmpProfit,     () => this.buildEmpProfit());
+    this.observeChart(this.cvKaratDoughnut, () => this.buildKaratDoughnut());
+    this.observeChart(this.cvKaratBar,      () => this.buildKaratBar());
+    this.observeChart(this.cvHeatmap,       () => this.buildHeatmap());
+    this.observeChart(this.cvMothan,        () => this.buildMothanChart());
+    this.observeChart(this.cvExposure,      () => this.buildExposureChart());
+  }
+
+  /** Render `build` only when the canvas scrolls into the viewport. */
+  private observeChart(ref: ElementRef<HTMLCanvasElement> | undefined, build: () => void): void {
+    if (!ref?.nativeElement) return;
+    const obs = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) {
+        build();
+        obs.disconnect();
+        this._observers = this._observers.filter(o => o !== obs);
+      }
+    }, { threshold: 0.1 });
+    obs.observe(ref.nativeElement);
+    this._observers.push(obs);
   }
 
   // Chart 1 — Main Overview Bar (top 10 by SAR)

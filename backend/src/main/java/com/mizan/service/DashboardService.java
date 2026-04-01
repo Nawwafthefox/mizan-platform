@@ -5,6 +5,7 @@ import com.mizan.security.MizanUserDetails;
 import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Service
@@ -34,15 +35,34 @@ public class DashboardService {
 
     public List<BranchData> getBranchSummaries(String tenantId, LocalDate from, LocalDate to,
             List<String> scopedBranches) {
-        List<BranchSale> sales = scopedBranches == null
-            ? saleRepo.findByTenantAndRange(tenantId, from, to)
-            : saleRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scopedBranches);
-        List<BranchPurchase> purchases = scopedBranches == null
-            ? purchRepo.findByTenantAndRange(tenantId, from, to)
-            : purchRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scopedBranches);
-        List<MothanTransaction> mothan = mothanRepo.findByTenantAndRange(tenantId, from, to);
-        Map<String,Double> savedRates = rateRepo.findByTenantId(tenantId).stream()
-            .collect(Collectors.toMap(BranchPurchaseRate::getBranchCode, BranchPurchaseRate::getPurchaseRate, (a,b)->a));
+        // Run all 4 queries in parallel — total time ≈ slowest single query
+        CompletableFuture<List<BranchSale>> salesFuture = CompletableFuture.supplyAsync(() ->
+            scopedBranches == null
+                ? saleRepo.findByTenantAndRange(tenantId, from, to)
+                : saleRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scopedBranches));
+        CompletableFuture<List<BranchPurchase>> purchFuture = CompletableFuture.supplyAsync(() ->
+            scopedBranches == null
+                ? purchRepo.findByTenantAndRange(tenantId, from, to)
+                : purchRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scopedBranches));
+        CompletableFuture<List<MothanTransaction>> mothanFuture = CompletableFuture.supplyAsync(() ->
+            mothanRepo.findByTenantAndRange(tenantId, from, to));
+        CompletableFuture<Map<String,Double>> ratesFuture = CompletableFuture.supplyAsync(() ->
+            rateRepo.findByTenantId(tenantId).stream()
+                .collect(Collectors.toMap(BranchPurchaseRate::getBranchCode, BranchPurchaseRate::getPurchaseRate, (a,b_)->a)));
+
+        CompletableFuture.allOf(salesFuture, purchFuture, mothanFuture, ratesFuture).join();
+        List<BranchSale> sales;
+        List<BranchPurchase> purchases;
+        List<MothanTransaction> mothan;
+        Map<String,Double> savedRates;
+        try {
+            sales = salesFuture.get();
+            purchases = purchFuture.get();
+            mothan = mothanFuture.get();
+            savedRates = ratesFuture.get();
+        } catch (Exception e) {
+            throw new RuntimeException("Dashboard parallel query failed", e);
+        }
 
         // Aggregate
         Map<String,MutableBranch> bmap = new LinkedHashMap<>();
