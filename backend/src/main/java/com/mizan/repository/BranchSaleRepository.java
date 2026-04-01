@@ -14,5 +14,6 @@ public interface BranchSaleRepository extends MongoRepository<BranchSale, String
     List<SourceFileProjection> findByTenantId(String tenantId);
     void deleteByTenantId(String tenantId);
     long countByTenantId(String tenantId);
+    @Query(value = "{'tenantId':?0,'saleDate':{$gte:?1,$lte:?2}}", delete = true)
     void deleteByTenantIdAndSaleDateBetween(String tenantId, LocalDate from, LocalDate to);
 }
