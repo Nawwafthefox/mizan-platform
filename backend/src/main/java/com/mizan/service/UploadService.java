@@ -381,7 +381,7 @@ public class UploadService {
             for (com.mizan.model.EmployeeSale e : emps) {
                 e.setBranchPurchaseAvg(rate.getPurchaseRate());
                 double saleRate = e.getNetWeight() != 0 ? e.getTotalSarAmount() / e.getNetWeight() : 0;
-                double diff = Math.round((saleRate - rate.getPurchaseRate()) * 10) / 10.0;
+                double diff = Math.round((saleRate - rate.getPurchaseRate()) * 10000.0) / 10000.0;
                 double profitMargin = rate.getPurchaseRate() > 0
                     ? Math.round(e.getNetWeight() * diff * 100) / 100.0 : 0;
                 e.setDiffAvg(diff);

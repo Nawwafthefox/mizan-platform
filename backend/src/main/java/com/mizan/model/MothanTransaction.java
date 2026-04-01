@@ -17,6 +17,7 @@ public class MothanTransaction {
     private double debitSar;
     private double creditSar;
     private double runningBalance;
+    private double rateSarPerGram;
     private double goldWeightGrams;
     private String sourceFileName;
     private String uploadBatch;

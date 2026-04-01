@@ -582,6 +582,9 @@ public class DashboardController {
                         n.setTenantId(tenantId); n.setBranchCode(code); return n; });
                 bpr.setBranchName(meta[0]);
                 bpr.setPurchaseRate(rate);
+                bpr.setTotalSar(totalSar);
+                bpr.setTotalWeight(totalWt);
+                bpr.setSourceDate(from);
                 bpr.setUpdatedAt(java.time.LocalDateTime.now());
                 bpr.setUpdatedBy(principal.getUserId());
                 rateRepo.save(bpr);
@@ -672,11 +675,14 @@ public class DashboardController {
             row.put("branchCode", t.getBranchCode());
             row.put("branchName", t.getBranchName());
             row.put("targetDate", t.getTargetDate() != null ? t.getTargetDate().toString() : null);
-            row.put("monthlyTarget", t.getTargetNetWeightDaily() * 30);
+            // Use stored monthlyTarget if set, otherwise derive from daily × 30
+            double monthly = t.getMonthlyTarget() > 0 ? t.getMonthlyTarget()
+                : t.getTargetNetWeightDaily() * 30;
+            row.put("monthlyTarget", monthly);
             row.put("dailyTarget", t.getTargetNetWeightDaily());
             row.put("dailyPerEmp", t.getTargetNetWeightDaily());
             row.put("targetRateDiff", t.getTargetRateDifference());
-            row.put("empCount", 0);
+            row.put("empCount", t.getEmpCount());
             result.add(row);
         }
         return ResponseEntity.ok(Map.of("success",true,"data",result));

@@ -16,6 +16,7 @@ public class EmployeeSale {
     private String employeeId;
     private String employeeName;
     private double avgMakingCharge;
+    private double avgInvoiceSar;
     private double totalSarAmount;
     private double netWeight;
     private double grossWeight;

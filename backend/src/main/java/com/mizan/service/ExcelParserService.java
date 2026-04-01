@@ -398,6 +398,9 @@ public class ExcelParserService {
             double nw = es.getNetWeight();
             es.setSaleRate(nw != 0 ? round4(es.getTotalSarAmount() / nw) : 0);
             es.setReturn(es.getTotalSarAmount() < 0);
+            es.setAvgInvoiceSar(es.getInvoiceCount() > 0
+                ? Math.round(Math.abs(es.getTotalSarAmount()) / es.getInvoiceCount() * 100.0) / 100.0
+                : 0);
         }
         log.info("parseEmployeeSales: scanned {} rows, found {} records, date={}", sheet.getLastRowNum(), results.size(), fallbackDate);
         if (results.isEmpty()) {
@@ -430,7 +433,8 @@ public class ExcelParserService {
         log.info("parsePurchases: detected format={}", fmt);
         if (fmt == Format.B) return parsePurchasesB(sheet, fallbackDate, tenantId, batch, by);
 
-        Map<String, BranchPurchase> purchMap = new LinkedHashMap<>();
+        Map<String, BranchPurchase>            purchMap     = new LinkedHashMap<>();
+        Map<String, Map<String, KaratRow>>     karatPurchMap = new LinkedHashMap<>();
 
         LocalDate date = fallbackDate;
 
@@ -467,6 +471,7 @@ public class ExcelParserService {
                 b.setSourceFileName(date + "_" + branchCode);
                 b.setUploadBatch(batch);
                 b.setUploadedBy(by);
+                b.setKaratRows(new ArrayList<>());
                 return b;
             });
 
@@ -474,12 +479,30 @@ public class ExcelParserService {
             bp.setNetWeight(bp.getNetWeight() + pureWt);
             bp.setGrossWeight(bp.getGrossWeight() + grossWt);
             bp.setInvoiceCount(bp.getInvoiceCount() + pieces);
+
+            if (karat != null) {
+                Map<String, KaratRow> km = karatPurchMap.computeIfAbsent(key, k -> new LinkedHashMap<>());
+                KaratRow kr = km.computeIfAbsent(karat, k -> {
+                    KaratRow r = new KaratRow(); r.setKarat(karat); r.setPurity(purity); return r;
+                });
+                kr.setSarAmount(kr.getSarAmount() + sar);
+                kr.setNetWeight(kr.getNetWeight() + pureWt);
+                kr.setGrossWeight(kr.getGrossWeight() + grossWt);
+                kr.setInvoiceCount(kr.getInvoiceCount() + pieces);
+            }
         }
 
         List<BranchPurchase> results = new ArrayList<>(purchMap.values());
-        for (BranchPurchase bp : results) {
+        for (Map.Entry<String, BranchPurchase> e : purchMap.entrySet()) {
+            BranchPurchase bp = e.getValue();
             double nw = bp.getNetWeight();
             bp.setPurchaseRate(nw > 0 ? round4(bp.getTotalSarAmount() / nw) : 0);
+            Map<String, KaratRow> km = karatPurchMap.get(e.getKey());
+            if (km != null) {
+                for (KaratRow kr : km.values())
+                    kr.setSaleRate(kr.getNetWeight() > 0 ? kr.getSarAmount() / kr.getNetWeight() : 0);
+                bp.setKaratRows(new ArrayList<>(km.values()));
+            }
         }
         log.info("parsePurchases: scanned {} rows, found {} records, date={}", sheet.getLastRowNum(), results.size(), fallbackDate);
         if (results.isEmpty()) {
@@ -615,7 +638,8 @@ public class ExcelParserService {
                             mt.setDescription(description.length() > 250 ? description.substring(0, 250) : description);
                             mt.setCreditSar(amount);
                             mt.setGoldWeightGrams(weight);
-                            mt.setRunningBalance(rate); // store rate in runningBalance for now
+                            mt.setRateSarPerGram(rate);
+                            mt.setRunningBalance(rate); // keep for backward compat
                             mt.setSourceFileName(currentDate + "_" + currentBranch + "_" + mt.getDocReference());
                             mt.setUploadBatch(batch);
                             mt.setUploadedBy(by);
@@ -827,6 +851,9 @@ public class ExcelParserService {
             double nw = es.getNetWeight();
             es.setSaleRate(nw != 0 ? round4(es.getTotalSarAmount() / nw) : 0);
             es.setReturn(es.getTotalSarAmount() < 0);
+            es.setAvgInvoiceSar(es.getInvoiceCount() > 0
+                ? Math.round(Math.abs(es.getTotalSarAmount()) / es.getInvoiceCount() * 100.0) / 100.0
+                : 0);
         }
         log.info("parseEmployeeSalesB: {} records from {} rows", results.size(), sheet.getLastRowNum());
         return new ParseResult(FileType.EMPLOYEE_SALES, fallbackDate, List.of(), List.of(), results, List.of(), null);
@@ -835,7 +862,8 @@ public class ExcelParserService {
     private ParseResult parsePurchasesB(Sheet sheet, LocalDate fallbackDate,
             String tenantId, String batch, String by) {
 
-        Map<String, BranchPurchase> purchMap = new LinkedHashMap<>();
+        Map<String, BranchPurchase>        purchMap      = new LinkedHashMap<>();
+        Map<String, Map<String, KaratRow>> karatPurchMap = new LinkedHashMap<>();
 
         for (Row row : sheet) {
             if (!isDataRowB(row)) continue;
@@ -866,6 +894,7 @@ public class ExcelParserService {
                 b.setSourceFileName(rowDate + "_" + branchCode);
                 b.setUploadBatch(batch);
                 b.setUploadedBy(by);
+                b.setKaratRows(new ArrayList<>());
                 return b;
             });
 
@@ -873,12 +902,30 @@ public class ExcelParserService {
             bp.setNetWeight(bp.getNetWeight() + pureWt);
             bp.setGrossWeight(bp.getGrossWeight() + grossWt);
             bp.setInvoiceCount(bp.getInvoiceCount() + pieces);
+
+            if (karat != null) {
+                Map<String, KaratRow> km = karatPurchMap.computeIfAbsent(key, k -> new LinkedHashMap<>());
+                KaratRow kr = km.computeIfAbsent(karat, k -> {
+                    KaratRow r = new KaratRow(); r.setKarat(karat); r.setPurity(purity); return r;
+                });
+                kr.setSarAmount(kr.getSarAmount() + sar);
+                kr.setNetWeight(kr.getNetWeight() + pureWt);
+                kr.setGrossWeight(kr.getGrossWeight() + grossWt);
+                kr.setInvoiceCount(kr.getInvoiceCount() + pieces);
+            }
         }
 
         List<BranchPurchase> results = new ArrayList<>(purchMap.values());
-        for (BranchPurchase bp : results) {
+        for (Map.Entry<String, BranchPurchase> e : purchMap.entrySet()) {
+            BranchPurchase bp = e.getValue();
             double nw = bp.getNetWeight();
             bp.setPurchaseRate(nw > 0 ? round4(bp.getTotalSarAmount() / nw) : 0);
+            Map<String, KaratRow> km = karatPurchMap.get(e.getKey());
+            if (km != null) {
+                for (KaratRow kr : km.values())
+                    kr.setSaleRate(kr.getNetWeight() > 0 ? kr.getSarAmount() / kr.getNetWeight() : 0);
+                bp.setKaratRows(new ArrayList<>(km.values()));
+            }
         }
         log.info("parsePurchasesB: {} records from {} rows", results.size(), sheet.getLastRowNum());
         return new ParseResult(FileType.PURCHASES, fallbackDate, List.of(), results, List.of(), List.of(), null);

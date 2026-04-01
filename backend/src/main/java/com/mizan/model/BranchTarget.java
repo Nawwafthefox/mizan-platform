@@ -14,6 +14,8 @@ public class BranchTarget {
     private LocalDate targetDate;
     private double targetNetWeightDaily;
     private double targetRateDifference;
+    private double monthlyTarget;
+    private int empCount;
     private LocalDateTime updatedAt = LocalDateTime.now();
     private String updatedBy;
 }
