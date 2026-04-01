@@ -1,7 +1,6 @@
 package com.mizan.model;
 import lombok.Data;
 import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -10,7 +9,7 @@ import java.util.List;
 public class User {
     @Id private String userId;
     private String tenantId;
-    @Indexed(unique = true) private String email;
+    private String email;
     private String passwordHash;
     private String fullNameAr;
     private String fullNameEn;

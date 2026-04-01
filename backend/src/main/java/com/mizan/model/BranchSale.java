@@ -1,18 +1,12 @@
 package com.mizan.model;
 import lombok.Data;
 import org.springframework.data.annotation.Id;
-import org.springframework.data.mongodb.core.index.CompoundIndex;
-import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
 @Data @Document("branch_sales")
-@CompoundIndexes({
-    @CompoundIndex(def = "{'tenantId':1,'saleDate':1,'branchCode':1}"),
-    @CompoundIndex(def = "{'tenantId':1,'saleDate':1,'branchCode':1,'sourceFileName':1}", unique = true)
-})
 public class BranchSale {
     @Id private String id;
     private String tenantId;

@@ -3,7 +3,7 @@ spring:
     name: mizan-platform
   data:
     mongodb:
-      auto-index-creation: true
+      auto-index-creation: false
   servlet:
     multipart:
       max-file-size: 100MB
