@@ -227,6 +227,10 @@ public class ExcelParserService {
     private ParseResult parseBranchSales(Sheet sheet, LocalDate fallbackDate,
             String tenantId, String batch, String by) {
 
+        Format fmt = detectSheetFormat(sheet);
+        log.info("parseBranchSales: detected format={}", fmt);
+        if (fmt == Format.B) return parseBranchSalesB(sheet, fallbackDate, tenantId, batch, by);
+
         Map<String, BranchSale>           salesMap  = new LinkedHashMap<>();
         Map<String, Map<String, KaratRow>> karatMap  = new LinkedHashMap<>();
 
@@ -333,6 +337,10 @@ public class ExcelParserService {
     private ParseResult parseEmployeeSales(Sheet sheet, LocalDate fallbackDate,
             String tenantId, String batch, String by) {
 
+        Format fmt = detectSheetFormat(sheet);
+        log.info("parseEmployeeSales: detected format={}", fmt);
+        if (fmt == Format.B) return parseEmployeeSalesB(sheet, fallbackDate, tenantId, batch, by);
+
         Map<String, EmployeeSale> empMap = new LinkedHashMap<>();
 
         LocalDate date = fallbackDate;
@@ -417,6 +425,10 @@ public class ExcelParserService {
 
     private ParseResult parsePurchases(Sheet sheet, LocalDate fallbackDate,
             String tenantId, String batch, String by) {
+
+        Format fmt = detectSheetFormat(sheet);
+        log.info("parsePurchases: detected format={}", fmt);
+        if (fmt == Format.B) return parsePurchasesB(sheet, fallbackDate, tenantId, batch, by);
 
         Map<String, BranchPurchase> purchMap = new LinkedHashMap<>();
 
@@ -615,6 +627,257 @@ public class ExcelParserService {
         }
         log.info("Mothan: {} records", results.size());
         return new ParseResult(FileType.MOTHAN, fallbackDate, List.of(), List.of(), List.of(), results, null);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  FORMAT B — TRANSACTION-LEVEL PARSERS
+    //
+    //  Format B column layout (cols 0-15):
+    //   Col  0  Sl. #              — ★ ROW FILTER: integer >= 1 ★
+    //   Col  1  الرمز              — branch code (4-digit, stored as numeric "1404")
+    //   Col  2  CODE1              — invoice reference
+    //   Col  4  CODE3              — invoice reference (duplicate)
+    //   Col  5  وصف                — description (often blank)
+    //   Col  6  تاريخ السند        — ★ DATE as Excel serial (e.g. 46082 = 2026-02-28) ★
+    //   Col  7  القطع              — invoice/piece count (negative = return)
+    //   Col  8  بالوزن الإجمالي   — gross weight
+    //   Col 10  الوزن الصافي       — net weight
+    //   Col 11  النقاوة            — purity ratio (0.875=21K, 1.0=24K)
+    //   Col 12  الوزن النقي        — ★ PURE WEIGHT (negative = return) ★
+    //   Col 13  قيمة المعادن       — metal value SAR
+    //   Col 14  Mkg. Stn. Kun. Chgs — making charges SAR
+    //   Col 15  مجموع              — ★ TOTAL SAR (positive = sale, negative = return) ★
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /** Report format: A = summary (Sl.# in col15), B = transaction-level (Sl.# in col0). */
+    private enum Format { A, B }
+
+    /**
+     * Detect report format by scanning header rows.
+     * Format B: col0 header starts with "Sl"
+     * Format A: col15 header starts with "Sl"  (default)
+     */
+    private Format detectSheetFormat(Sheet sheet) {
+        for (int i = 0; i < 20; i++) {
+            Row row = sheet.getRow(i);
+            if (row == null) continue;
+            String c0  = getStr(row, 0).trim();
+            String c15 = getStr(row, 15).trim();
+            if (c0.startsWith("Sl"))  return Format.B;
+            if (c15.startsWith("Sl")) return Format.A;
+        }
+        return Format.A;
+    }
+
+    /** Format B data row: col0 is a numeric integer >= 1 (Sl.#). */
+    private boolean isDataRowB(Row row) {
+        if (row == null) return false;
+        Cell c0 = row.getCell(0, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+        if (c0 == null || c0.getCellType() != CellType.NUMERIC) return false;
+        double v = c0.getNumericCellValue();
+        return v >= 1 && v == Math.floor(v);
+    }
+
+    private ParseResult parseBranchSalesB(Sheet sheet, LocalDate fallbackDate,
+            String tenantId, String batch, String by) {
+
+        Map<String, BranchSale>            salesMap = new LinkedHashMap<>();
+        Map<String, Map<String, KaratRow>> karatMap = new LinkedHashMap<>();
+
+        for (Row row : sheet) {
+            if (!isDataRowB(row)) continue;
+
+            String branchCode = getStr(row, 1);           // col1 = branch code
+            if (branchCode.isBlank()) continue;
+
+            double serial  = getNumRaw(row, 6);            // col6 = date (Excel serial)
+            final LocalDate rowDate = parseSerialDate(serial, fallbackDate);
+
+            double sar     = getNumRaw(row, 15);           // col15 = total SAR
+            if (sar == 0) continue;
+
+            double pureWt  = getNumRaw(row, 12);           // col12 = pure weight (signed)
+            double grossWt = getNumRaw(row, 8);            // col8  = gross weight
+            double purity  = Math.abs(getNumRaw(row, 11)); // col11 = purity ratio
+            int    pieces  = (int) Math.abs(getNumRaw(row, 7)); // col7 = invoice count
+            String karat   = mapKarat(purity);
+
+            String key = branchCode + "|" + rowDate;
+            BranchSale bs = salesMap.computeIfAbsent(key, k -> {
+                BranchSale b = new BranchSale();
+                b.setTenantId(tenantId);
+                b.setSaleDate(rowDate);
+                b.setBranchCode(branchCode);
+                b.setBranchName(BranchMaps.getName(branchCode));
+                b.setRegion(BranchMaps.getRegion(branchCode));
+                b.setSourceFileName(rowDate + "_" + branchCode);
+                b.setUploadBatch(batch);
+                b.setUploadedBy(by);
+                b.setKaratRows(new ArrayList<>());
+                return b;
+            });
+
+            bs.setTotalSarAmount(bs.getTotalSarAmount() + sar);
+            bs.setNetWeight(bs.getNetWeight() + pureWt);
+            bs.setGrossWeight(bs.getGrossWeight() + grossWt);
+            bs.setInvoiceCount(bs.getInvoiceCount() + pieces);
+
+            if (karat != null) {
+                Map<String, KaratRow> km = karatMap.computeIfAbsent(key, k -> new LinkedHashMap<>());
+                KaratRow kr = km.computeIfAbsent(karat, k -> {
+                    KaratRow r = new KaratRow(); r.setKarat(karat); r.setPurity(purity); return r;
+                });
+                kr.setSarAmount(kr.getSarAmount() + Math.abs(sar));
+                kr.setNetWeight(kr.getNetWeight() + Math.abs(pureWt));
+                kr.setGrossWeight(kr.getGrossWeight() + Math.abs(grossWt));
+                kr.setInvoiceCount(kr.getInvoiceCount() + 1);
+            }
+        }
+
+        List<BranchSale> results = new ArrayList<>();
+        for (Map.Entry<String, BranchSale> e : salesMap.entrySet()) {
+            BranchSale bs = e.getValue();
+            double nw = bs.getNetWeight();
+            bs.setSaleRate(nw != 0 ? round4(bs.getTotalSarAmount() / nw) : 0);
+            bs.setReturn(bs.getTotalSarAmount() < 0);
+            Map<String, KaratRow> km = karatMap.get(e.getKey());
+            if (km != null) {
+                for (KaratRow kr : km.values())
+                    kr.setSaleRate(kr.getNetWeight() > 0 ? kr.getSarAmount() / kr.getNetWeight() : 0);
+                bs.setKaratRows(new ArrayList<>(km.values()));
+            }
+            results.add(bs);
+        }
+        log.info("parseBranchSalesB: {} records from {} rows, date range: {}–{}",
+            results.size(), sheet.getLastRowNum(),
+            results.stream().map(BranchSale::getSaleDate).min(LocalDate::compareTo).orElse(null),
+            results.stream().map(BranchSale::getSaleDate).max(LocalDate::compareTo).orElse(null));
+        return new ParseResult(FileType.BRANCH_SALES, fallbackDate, results, List.of(), List.of(), List.of(), null);
+    }
+
+    private ParseResult parseEmployeeSalesB(Sheet sheet, LocalDate fallbackDate,
+            String tenantId, String batch, String by) {
+
+        // Format B employee sales: same column layout as branch sales.
+        // Employee ID is taken from col2 (invoice CODE1 ref) if it looks like a numeric ID,
+        // otherwise we fall back to "BRANCH_" + branchCode so records are still saved.
+        Map<String, EmployeeSale> empMap = new LinkedHashMap<>();
+
+        for (Row row : sheet) {
+            if (!isDataRowB(row)) continue;
+
+            String branchCode = getStr(row, 1);
+            if (branchCode.isBlank()) continue;
+
+            double serial = getNumRaw(row, 6);
+            final LocalDate rowDate = parseSerialDate(serial, fallbackDate);
+
+            double sar    = getNumRaw(row, 15);
+            if (sar == 0) continue;
+
+            double pureWt  = getNumRaw(row, 12);
+            double grossWt = getNumRaw(row, 8);
+            int    pieces  = (int) Math.abs(getNumRaw(row, 7));
+
+            // Try to extract employee ID: col3 numeric (if integer, treat as employee ID)
+            String empId   = "";
+            double c3v = getNumRaw(row, 3);
+            if (c3v >= 1 && c3v == Math.floor(c3v)) empId = String.valueOf((long) c3v);
+            if (empId.isBlank()) {
+                String c2s = getStr(row, 2);
+                if (!c2s.isBlank() && c2s.matches("\\d+")) empId = c2s;
+            }
+            if (empId.isBlank()) empId = "BR_" + branchCode;
+
+            String empName = getStr(row, 5);
+            if (empName.isBlank()) empName = empId;
+
+            final String finalBranchCode = branchCode;
+            final String finalEmpId      = empId;
+            final String finalEmpName    = empName;
+
+            String key = finalEmpId + "|" + finalBranchCode + "|" + rowDate;
+            EmployeeSale es = empMap.computeIfAbsent(key, k -> {
+                EmployeeSale e2 = new EmployeeSale();
+                e2.setTenantId(tenantId);
+                e2.setSaleDate(rowDate);
+                e2.setBranchCode(finalBranchCode);
+                e2.setBranchName(BranchMaps.getName(finalBranchCode));
+                e2.setRegion(BranchMaps.getRegion(finalBranchCode));
+                e2.setEmployeeId(finalEmpId);
+                e2.setEmployeeName(finalEmpName);
+                e2.setSourceFileName(rowDate + "_" + finalEmpId);
+                e2.setUploadBatch(batch);
+                e2.setUploadedBy(by);
+                return e2;
+            });
+
+            es.setTotalSarAmount(es.getTotalSarAmount() + sar);
+            es.setNetWeight(es.getNetWeight() + pureWt);
+            es.setGrossWeight(es.getGrossWeight() + grossWt);
+            es.setInvoiceCount(es.getInvoiceCount() + pieces);
+        }
+
+        List<EmployeeSale> results = new ArrayList<>(empMap.values());
+        for (EmployeeSale es : results) {
+            double nw = es.getNetWeight();
+            es.setSaleRate(nw != 0 ? round4(es.getTotalSarAmount() / nw) : 0);
+            es.setReturn(es.getTotalSarAmount() < 0);
+        }
+        log.info("parseEmployeeSalesB: {} records from {} rows", results.size(), sheet.getLastRowNum());
+        return new ParseResult(FileType.EMPLOYEE_SALES, fallbackDate, List.of(), List.of(), results, List.of(), null);
+    }
+
+    private ParseResult parsePurchasesB(Sheet sheet, LocalDate fallbackDate,
+            String tenantId, String batch, String by) {
+
+        Map<String, BranchPurchase> purchMap = new LinkedHashMap<>();
+
+        for (Row row : sheet) {
+            if (!isDataRowB(row)) continue;
+
+            String branchCode = getStr(row, 1);
+            if (branchCode.isBlank()) continue;
+
+            double serial = getNumRaw(row, 6);
+            final LocalDate rowDate = parseSerialDate(serial, fallbackDate);
+
+            double sar    = Math.abs(getNumRaw(row, 15));
+            if (sar == 0) continue;
+
+            double pureWt  = Math.abs(getNumRaw(row, 12));
+            double grossWt = Math.abs(getNumRaw(row, 8));
+            int    pieces  = (int) Math.abs(getNumRaw(row, 7));
+            double purity  = Math.abs(getNumRaw(row, 11));
+            String karat   = mapKarat(purity);
+
+            String key = branchCode + "|" + rowDate;
+            BranchPurchase bp = purchMap.computeIfAbsent(key, k -> {
+                BranchPurchase b = new BranchPurchase();
+                b.setTenantId(tenantId);
+                b.setPurchaseDate(rowDate);
+                b.setBranchCode(branchCode);
+                b.setBranchName(BranchMaps.getName(branchCode));
+                b.setRegion(BranchMaps.getRegion(branchCode));
+                b.setSourceFileName(rowDate + "_" + branchCode);
+                b.setUploadBatch(batch);
+                b.setUploadedBy(by);
+                return b;
+            });
+
+            bp.setTotalSarAmount(bp.getTotalSarAmount() + sar);
+            bp.setNetWeight(bp.getNetWeight() + pureWt);
+            bp.setGrossWeight(bp.getGrossWeight() + grossWt);
+            bp.setInvoiceCount(bp.getInvoiceCount() + pieces);
+        }
+
+        List<BranchPurchase> results = new ArrayList<>(purchMap.values());
+        for (BranchPurchase bp : results) {
+            double nw = bp.getNetWeight();
+            bp.setPurchaseRate(nw > 0 ? round4(bp.getTotalSarAmount() / nw) : 0);
+        }
+        log.info("parsePurchasesB: {} records from {} rows", results.size(), sheet.getLastRowNum());
+        return new ParseResult(FileType.PURCHASES, fallbackDate, List.of(), results, List.of(), List.of(), null);
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

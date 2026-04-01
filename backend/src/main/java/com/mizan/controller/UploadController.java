@@ -161,6 +161,22 @@ public class UploadController {
             return ResponseEntity.ok(Map.of("success", false, "error", "Cannot read file: " + e.getMessage()));
         }
 
+        // Detect format (A=Sl.# in col15, B=Sl.# in col0)
+        try (org.apache.poi.hssf.usermodel.HSSFWorkbook wbPre =
+                new org.apache.poi.hssf.usermodel.HSSFWorkbook(new java.io.ByteArrayInputStream(fileBytes))) {
+            org.apache.poi.ss.usermodel.Sheet shPre = wbPre.getSheetAt(0);
+            String detectedFmt = "A";
+            outer: for (int i = 0; i < 20; i++) {
+                org.apache.poi.ss.usermodel.Row r = shPre.getRow(i);
+                if (r == null) continue;
+                org.apache.poi.ss.usermodel.Cell c0  = r.getCell(0,  org.apache.poi.ss.usermodel.Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                org.apache.poi.ss.usermodel.Cell c15 = r.getCell(15, org.apache.poi.ss.usermodel.Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                if (c0  != null && c0.getCellType()  == org.apache.poi.ss.usermodel.CellType.STRING && c0.getStringCellValue().startsWith("Sl"))  { detectedFmt = "B"; break outer; }
+                if (c15 != null && c15.getCellType() == org.apache.poi.ss.usermodel.CellType.STRING && c15.getStringCellValue().startsWith("Sl")) { detectedFmt = "A"; break outer; }
+            }
+            debug.put("detectedFormat", detectedFmt);
+        } catch (Exception ignored) {}
+
         // ── Phase 1: parser result ─────────────────────────────────────────────
         try {
             ExcelParserService.ParseResult result = parser.parseForced(
