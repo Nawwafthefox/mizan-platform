@@ -2,11 +2,18 @@ package com.mizan.config;
 
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.config.AbstractMongoClientConfiguration;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.index.Index;
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
 
+@Slf4j
 @Configuration
 @EnableMongoRepositories(basePackages = "com.mizan.repository")
 // Mongo auto-config excluded in MizanApplication — this class owns all MongoDB beans
@@ -31,5 +38,21 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
     @Override
     protected boolean autoIndexCreation() {
         return false;
+    }
+
+    /** Compound indexes on tenantId + date fields — speeds up delete + range queries. */
+    @Bean
+    CommandLineRunner ensureIndexes(MongoTemplate mt) {
+        return args -> {
+            mt.indexOps("branch_sales")
+                .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("saleDate", Sort.Direction.ASC));
+            mt.indexOps("employee_sales")
+                .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("saleDate", Sort.Direction.ASC));
+            mt.indexOps("branch_purchases")
+                .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("purchaseDate", Sort.Direction.ASC));
+            mt.indexOps("mothan_transactions")
+                .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("transactionDate", Sort.Direction.ASC));
+            log.info("MongoDB compound indexes ensured for upload collections");
+        };
     }
 }

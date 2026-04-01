@@ -208,6 +208,44 @@ public class UploadService {
         }
     }
 
+    /**
+     * Batched insert with SSE progress reporting.
+     * Splits items into 200-record batches to avoid MongoDB timeout / OOM on large files.
+     * Reports progress from 60% → 90% while saving.
+     */
+    private <T> int bulkSaveBatched(MongoRepository<T, String> repo, List<T> items, String uploadId) {
+        if (items.isEmpty()) return 0;
+        final int BATCH = 200;
+        int totalSaved = 0;
+        int total = items.size();
+        for (int i = 0; i < total; i += BATCH) {
+            List<T> batch = items.subList(i, Math.min(i + BATCH, total));
+            try {
+                repo.saveAll(batch);
+                totalSaved += batch.size();
+            } catch (Exception e) {
+                log.warn("Batch {}-{} failed, falling back to individual saves: {}", i, i + batch.size(), e.getMessage());
+                for (T item : batch) {
+                    try { repo.save(item); totalSaved++; }
+                    catch (Exception ignored) { log.debug("Individual save skipped: {}", ignored.getMessage()); }
+                }
+            }
+            int pct = 60 + (int)(30.0 * totalSaved / total);
+            try {
+                progress.send(uploadId, "progress", Map.of(
+                    "uploadId", uploadId,
+                    "phase", "saving",
+                    "phaseAr", "جاري الحفظ... " + totalSaved + " / " + total,
+                    "percentage", pct,
+                    "savedRecords", totalSaved,
+                    "status", "processing"
+                ));
+            } catch (Exception ignored) {}
+        }
+        log.info("bulkSaveBatched: {}/{} records saved", totalSaved, total);
+        return totalSaved;
+    }
+
     /** Send a single summary progress event (no per-file detail). */
     private void sendSummary(String uploadId, String phase, String phaseAr, int pct) {
         Map<String, Object> ev = new HashMap<>();
@@ -354,29 +392,46 @@ public class UploadService {
             log.info("Delete skipped: replace={}, minDate={}, maxDate={}", replace, minDate, maxDate);
         }
 
-        // ── Phase 4: INSERT all records (no deduplication) ───────────────────
+        // ── Phase 4: INSERT all records in batches ───────────────────────────
         sendSummary(uploadId, "saving", "جاري حفظ البيانات...", 60);
 
         int totalSaved = 0;
         List<FileResult> fileResults = new ArrayList<>();
 
+        // Collect all records first so we can report progress across files
+        List<BranchSale>        allSales   = new ArrayList<>();
+        List<EmployeeSale>      allEmp     = new ArrayList<>();
+        List<BranchPurchase>    allPurch   = new ArrayList<>();
+        List<MothanTransaction> allMothan  = new ArrayList<>();
+        List<String>            parseErrors = new ArrayList<>();
+
         for (ParsedFile pf : parsed) {
             if (pf.error() != null || pf.result() == null) {
-                fileResults.add(new FileResult(pf.filename(), fileType.name(), 0, 0,
-                    pf.error() != null ? pf.error() : "فشل التحليل"));
+                parseErrors.add(pf.filename() + ": " + (pf.error() != null ? pf.error() : "فشل التحليل"));
                 continue;
             }
             var r = pf.result();
-            int saved = switch (fileType) {
-                case BRANCH_SALES   -> bulkSave(saleRepo,   r.sales());
-                case EMPLOYEE_SALES -> bulkSave(empRepo,    r.empSales());
-                case PURCHASES      -> bulkSave(purchRepo,  r.purchases());
-                case MOTHAN         -> bulkSave(mothanRepo, r.mothan());
-                default -> 0;
-            };
-            totalSaved += saved;
-            fileResults.add(new FileResult(pf.filename(), fileType.name(), saved, 0, null));
+            allSales.addAll(r.sales());
+            allEmp.addAll(r.empSales());
+            allPurch.addAll(r.purchases());
+            allMothan.addAll(r.mothan());
         }
+
+        int saved = switch (fileType) {
+            case BRANCH_SALES   -> bulkSaveBatched(saleRepo,   allSales,   uploadId);
+            case EMPLOYEE_SALES -> bulkSaveBatched(empRepo,    allEmp,     uploadId);
+            case PURCHASES      -> bulkSaveBatched(purchRepo,  allPurch,   uploadId);
+            case MOTHAN         -> bulkSaveBatched(mothanRepo, allMothan,  uploadId);
+            default -> 0;
+        };
+        totalSaved = saved;
+
+        String firstFilename = parsed.isEmpty() ? "" : parsed.get(0).filename();
+        if (!parseErrors.isEmpty()) {
+            for (String err : parseErrors)
+                fileResults.add(new FileResult(err, fileType.name(), 0, 0, err));
+        }
+        fileResults.add(new FileResult(firstFilename, fileType.name(), saved, 0, null));
 
         // ── Phase 5: Logs + complete event ───────────────────────────────────
         sendSummary(uploadId, "complete", "جاري الانتهاء...", 90);

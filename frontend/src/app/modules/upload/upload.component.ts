@@ -312,7 +312,7 @@ export class UploadComponent implements OnDestroy {
   private progressMap = new Map<UploadType, UploadProgress>();
   private sseTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
-  private readonly SSE_TIMEOUT_MS = 30_000; // 30 s of silence → assume complete
+  private readonly SSE_TIMEOUT_MS = 120_000; // 120 s of silence → assume complete
 
   constructor() { this.loadHistory(); }
 
