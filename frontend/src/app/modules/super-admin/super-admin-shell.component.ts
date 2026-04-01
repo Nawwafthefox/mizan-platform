@@ -44,7 +44,7 @@ import { AuthService } from '../../core/services/auth.service';
   styles: [`
     .app-layout { display: flex; min-height: 100vh; }
     .sidebar {
-      width: var(--sidebar-w); height: 100vh; background: #0d1f17;
+      width: var(--sidebar-w); height: 100vh; background: #0b1a12;
       display: flex; flex-direction: column; position: fixed; top: 0; left: 0; z-index: 100; overflow-y: auto;
     }
     .sidebar__logo {

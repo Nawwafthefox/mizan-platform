@@ -1,29 +1,30 @@
 import { Component } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { SidebarComponent } from '../../shared/components/shell/sidebar.component';
+import { TopnavComponent } from '../../shared/components/shell/topnav.component';
 
 @Component({
   selector: 'app-dashboard-shell',
   standalone: true,
-  imports: [RouterOutlet, SidebarComponent],
+  imports: [RouterOutlet, TopnavComponent],
   template: `
-    <div class="app-layout">
-      <app-sidebar />
-      <main class="app-main">
-        <router-outlet />
-      </main>
-    </div>
+    <app-topnav />
+    <main class="app-main">
+      <router-outlet />
+    </main>
   `,
   styles: [`
-    .app-layout { display: flex; min-height: 100vh; }
+    :host { display: block; }
     .app-main {
-      flex: 1;
-      margin-inline-start: var(--sidebar-w);
-      padding: 1.75rem;
-      overflow-x: hidden;
+      padding-top: calc(var(--mz-nav-h, 56px) + 1.75rem);
+      padding-inline: 1.75rem;
+      padding-bottom: 2rem;
+      min-height: 100vh;
     }
     @media (max-width: 768px) {
-      .app-main { margin-inline-start: 0; padding: 1rem; }
+      .app-main {
+        padding-top: calc(var(--mz-nav-h, 56px) + 1rem);
+        padding-inline: 1rem;
+      }
     }
   `]
 })
