@@ -227,16 +227,14 @@ public class UploadController {
             rowStats.put("passedIsDataRow", passedFilter);
             debug.put("isDataRowStats", rowStats);
 
-            // Dump rows 5–30 (skip title rows) showing col12 and col15
+            // Dump rows 0–15: ALL 16 columns so we can see full structure + branch header
             List<Map<String, Object>> rawRows = new ArrayList<>();
-            for (int i = 5; i <= Math.min(30, sheet.getLastRowNum()); i++) {
+            for (int i = 0; i <= Math.min(15, sheet.getLastRowNum()); i++) {
                 Row row = sheet.getRow(i);
-                if (row == null) continue;
                 Map<String, Object> rr = new LinkedHashMap<>();
                 rr.put("rowIdx", i);
-                // Show cols 0, 3, 6, 11, 12, 13, 15 — the key columns
-                int[] cols = {0, 3, 6, 11, 12, 13, 15};
-                for (int c : cols) {
+                if (row == null) { rr.put("_empty", true); rawRows.add(rr); continue; }
+                for (int c = 0; c <= 15; c++) {
                     Cell cell = row.getCell(c, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
                     if (cell == null) { rr.put("c" + c, null); continue; }
                     rr.put("c" + c, switch (cell.getCellType()) {
@@ -248,7 +246,33 @@ public class UploadController {
                 }
                 rawRows.add(rr);
             }
-            debug.put("rawRows_5to30", rawRows);
+            debug.put("rawRows_0to15", rawRows);
+
+            // Also dump first 5 data rows (where col0 is numeric >= 1)
+            List<Map<String, Object>> dataRows = new ArrayList<>();
+            int found = 0;
+            for (int i = 0; i <= sheet.getLastRowNum() && found < 5; i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+                Cell c0 = row.getCell(0, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                if (c0 == null || c0.getCellType() != CellType.NUMERIC) continue;
+                double v = c0.getNumericCellValue();
+                if (v < 1 || v != Math.floor(v)) continue;
+                Map<String, Object> rr = new LinkedHashMap<>();
+                rr.put("rowIdx", i);
+                for (int c = 0; c <= 15; c++) {
+                    Cell cell = row.getCell(c, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                    if (cell == null) { rr.put("c" + c, null); continue; }
+                    rr.put("c" + c, switch (cell.getCellType()) {
+                        case NUMERIC -> cell.getNumericCellValue();
+                        case STRING  -> cell.getStringCellValue();
+                        case BOOLEAN -> cell.getBooleanCellValue();
+                        default -> cell.getCellType().name();
+                    });
+                }
+                dataRows.add(rr); found++;
+            }
+            debug.put("firstDataRows_allCols", dataRows);
 
         } catch (Exception e) {
             debug.put("sheetInspectException", e.getClass().getSimpleName() + ": " + e.getMessage());
