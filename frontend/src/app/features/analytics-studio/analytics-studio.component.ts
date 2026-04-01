@@ -279,7 +279,10 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
         setTimeout(() => this.buildAllCharts(), 50);
       },
       error: (err) => {
-        console.error('Analytics Studio load error:', err);
+        const status  = err?.status ?? 'unknown';
+        const url     = err?.url ?? '';
+        const message = err?.error?.message ?? err?.message ?? String(err);
+        console.error(`Analytics Studio load error — HTTP ${status} ${url}: ${message}`, err);
         this.isLoading = false;
         this.cdr.detectChanges();
       }
