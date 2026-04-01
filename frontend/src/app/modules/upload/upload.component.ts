@@ -310,10 +310,16 @@ export class UploadComponent implements OnDestroy {
 
   private eventSource?: EventSource;
   private progressMap = new Map<UploadType, UploadProgress>();
+  private sseTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  private readonly SSE_TIMEOUT_MS = 30_000; // 30 s of silence → assume complete
 
   constructor() { this.loadHistory(); }
 
-  ngOnDestroy() { this.eventSource?.close(); }
+  ngOnDestroy() {
+    this.eventSource?.close();
+    if (this.sseTimeoutId) clearTimeout(this.sseTimeoutId);
+  }
 
   getInput(type: UploadType): HTMLInputElement {
     return document.getElementById('fi-' + type) as HTMLInputElement;
@@ -348,7 +354,6 @@ export class UploadComponent implements OnDestroy {
           next: () => {
             card.uploading = false;
             card.files = [];
-            setTimeout(() => this.loadHistory(), 1500);
           },
           error: err => {
             card.uploading = false;
@@ -365,11 +370,26 @@ export class UploadComponent implements OnDestroy {
 
   private subscribeToProgress(uploadId: string, token: string, card: UploadCard): void {
     this.eventSource?.close();
+    if (this.sseTimeoutId) clearTimeout(this.sseTimeoutId);
     this.allDone.set(false);
     const url = this.svc.getProgressUrl(uploadId, token);
     this.eventSource = new EventSource(url);
 
+    const resetTimeout = () => {
+      if (this.sseTimeoutId) clearTimeout(this.sseTimeoutId);
+      this.sseTimeoutId = setTimeout(() => {
+        // No SSE event received for 30 s — assume backend completed or died
+        const current = this.progressMap.get(card.type);
+        if (current && current.status !== 'success' && current.status !== 'error') {
+          this.markComplete(card, uploadId, current.savedRecords ?? 0, true);
+        }
+      }, this.SSE_TIMEOUT_MS);
+    };
+
+    resetTimeout(); // start timer immediately when SSE connection opens
+
     this.eventSource.addEventListener('progress', (evt: MessageEvent) => {
+      resetTimeout();
       const raw = JSON.parse(evt.data);
       const p: UploadProgress = {
         uploadId,
@@ -391,24 +411,45 @@ export class UploadComponent implements OnDestroy {
     });
 
     this.eventSource.addEventListener('complete', (evt: MessageEvent) => {
+      if (this.sseTimeoutId) clearTimeout(this.sseTimeoutId);
       const raw = JSON.parse(evt.data);
-      card.done = true;
-      card.savedCount = raw.totalSaved ?? 0;
-      const p: UploadProgress = {
-        uploadId,
-        fileName: '',
-        fileType: card.type.toUpperCase().replace('-', '_'),
-        status: 'success',
-        percent: 100,
-        savedRecords: raw.totalSaved,
-        phaseAr: 'اكتمل'
-      };
-      this.progressMap.set(card.type, p);
-      this.allDone.set(true);
-      this.eventSource?.close();
+      const isError = raw.status === 'error';
+      this.markComplete(card, uploadId, raw.totalSaved ?? 0, false, isError, raw.error);
     });
 
-    this.eventSource.onerror = () => this.eventSource?.close();
+    this.eventSource.onerror = () => {
+      if (this.sseTimeoutId) clearTimeout(this.sseTimeoutId);
+      this.eventSource?.close();
+    };
+  }
+
+  private markComplete(card: UploadCard, uploadId: string, savedCount: number,
+      timedOut: boolean, isError = false, errorMsg?: string): void {
+    if (isError) {
+      card.error = errorMsg || 'فشل الرفع';
+    } else {
+      card.done = true;
+      card.savedCount = savedCount;
+    }
+    const p: UploadProgress = {
+      uploadId,
+      fileName: '',
+      fileType: card.type.toUpperCase().replace('-', '_'),
+      status: isError ? 'error' : 'success',
+      percent: 100,
+      savedRecords: savedCount,
+      phaseAr: isError ? 'خطأ' : timedOut ? 'اكتمل (انتهت المهلة)' : 'اكتمل'
+    };
+    this.progressMap.set(card.type, p);
+    this.progresses.update(list => {
+      const idx = list.findIndex(x => x.uploadId === uploadId);
+      const copy = [...list];
+      if (idx >= 0) copy[idx] = p; else copy.push(p);
+      return copy;
+    });
+    this.allDone.set(true);
+    this.eventSource?.close();
+    setTimeout(() => this.loadHistory(), 1000);
   }
 
   exportCsv(type: UploadType): void {

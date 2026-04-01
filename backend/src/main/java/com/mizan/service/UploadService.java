@@ -256,6 +256,26 @@ public class UploadService {
         int total = files.size();
         long t0 = System.currentTimeMillis();
 
+        try {
+        processTypedAsyncInternal(files, uploadId, tenantId, userId, fileType, replace, total, t0);
+        } catch (Exception e) {
+            log.error("processTypedAsync uncaught exception for uploadId={} type={}: {}",
+                uploadId, fileType, e.getMessage(), e);
+            progress.send(uploadId, "complete", Map.of(
+                "uploadId",   uploadId,
+                "totalSaved", 0,
+                "totalFiles", total,
+                "status",     "error",
+                "error",      e.getMessage() != null ? e.getMessage() : "Upload failed"
+            ));
+            progress.complete(uploadId);
+        }
+    }
+
+    private void processTypedAsyncInternal(List<FileBytes> files, String uploadId,
+            String tenantId, String userId, FileType fileType, boolean replace,
+            int total, long t0) {
+
         sendSummary(uploadId, "parsing", "جاري تحليل الملفات...", 10);
 
         // ── Phase 1: Parse all files sequentially with forced type ────────────
@@ -308,22 +328,30 @@ public class UploadService {
         sendSummary(uploadId, "deleting", "جاري حذف البيانات القديمة...", 40);
         if (replace && minDate != null && maxDate != null) {
             log.info("Typed upload ({}): deleting tenant={} records from {} to {}", fileType, tenantId, minDate, maxDate);
-            Criteria baseCriteria = Criteria.where("tenantId").is(tenantId);
-            switch (fileType) {
-                case BRANCH_SALES -> mongoTemplate.remove(
-                    Query.query(baseCriteria.and("saleDate").gte(minDate).lte(maxDate)),
-                    BranchSale.class);
-                case EMPLOYEE_SALES -> mongoTemplate.remove(
-                    Query.query(baseCriteria.and("saleDate").gte(minDate).lte(maxDate)),
-                    EmployeeSale.class);
-                case PURCHASES -> mongoTemplate.remove(
-                    Query.query(baseCriteria.and("purchaseDate").gte(minDate).lte(maxDate)),
-                    BranchPurchase.class);
-                case MOTHAN -> mongoTemplate.remove(
-                    Query.query(baseCriteria.and("transactionDate").gte(minDate).lte(maxDate)),
-                    MothanTransaction.class);
-                default -> {}
+            try {
+                long deleted = 0;
+                switch (fileType) {
+                    case BRANCH_SALES -> deleted = mongoTemplate.remove(
+                        Query.query(Criteria.where("tenantId").is(tenantId).and("saleDate").gte(minDate).lte(maxDate)),
+                        BranchSale.class).getDeletedCount();
+                    case EMPLOYEE_SALES -> deleted = mongoTemplate.remove(
+                        Query.query(Criteria.where("tenantId").is(tenantId).and("saleDate").gte(minDate).lte(maxDate)),
+                        EmployeeSale.class).getDeletedCount();
+                    case PURCHASES -> deleted = mongoTemplate.remove(
+                        Query.query(Criteria.where("tenantId").is(tenantId).and("purchaseDate").gte(minDate).lte(maxDate)),
+                        BranchPurchase.class).getDeletedCount();
+                    case MOTHAN -> deleted = mongoTemplate.remove(
+                        Query.query(Criteria.where("tenantId").is(tenantId).and("transactionDate").gte(minDate).lte(maxDate)),
+                        MothanTransaction.class).getDeletedCount();
+                    default -> {}
+                }
+                log.info("Deleted {} existing {} records for tenant={}", deleted, fileType, tenantId);
+            } catch (Exception e) {
+                log.error("Delete step failed for {} uploadId={}: {} — continuing with insert", fileType, uploadId, e.getMessage(), e);
+                // Don't abort — proceed to insert even if delete failed
             }
+        } else {
+            log.info("Delete skipped: replace={}, minDate={}, maxDate={}", replace, minDate, maxDate);
         }
 
         // ── Phase 4: INSERT all records (no deduplication) ───────────────────
