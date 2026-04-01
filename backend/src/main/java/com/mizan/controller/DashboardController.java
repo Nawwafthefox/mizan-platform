@@ -1,6 +1,9 @@
 package com.mizan.controller;
+import com.mizan.model.BranchSale;
 import com.mizan.model.EmployeeSale;
 import com.mizan.model.MothanTransaction;
+import com.mizan.repository.BranchSaleRepository;
+import com.mizan.repository.BranchTargetRepository;
 import com.mizan.repository.EmployeeSaleRepository;
 import com.mizan.repository.MothanTransactionRepository;
 import com.mizan.security.MizanUserDetails;
@@ -21,13 +24,19 @@ public class DashboardController {
     private final DashboardService dashSvc;
     private final EmployeeSaleRepository empRepo;
     private final MothanTransactionRepository mothanRepo;
+    private final BranchSaleRepository saleRepo;
+    private final BranchTargetRepository targetRepo;
 
     public DashboardController(DashboardService dashSvc,
             EmployeeSaleRepository empRepo,
-            MothanTransactionRepository mothanRepo) {
+            MothanTransactionRepository mothanRepo,
+            BranchSaleRepository saleRepo,
+            BranchTargetRepository targetRepo) {
         this.dashSvc = dashSvc;
         this.empRepo = empRepo;
         this.mothanRepo = mothanRepo;
+        this.saleRepo = saleRepo;
+        this.targetRepo = targetRepo;
     }
 
     @GetMapping("/summary")
@@ -411,5 +420,63 @@ public class DashboardController {
         m.put("profitableBranches",0); m.put("lossBranches",0);
         m.put("dateRange",Map.of("from",from.toString(),"to",to.toString()));
         return m;
+    }
+
+    @GetMapping("/daily-trend")
+    public ResponseEntity<?> dailyTrend(
+            @RequestParam @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
+        List<String> scoped = dashSvc.resolveScopedBranches(principal);
+        List<BranchSale> rawSales = scoped == null
+            ? saleRepo.findByTenantAndRange(tenantId, from, to)
+            : saleRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scoped);
+        Map<String, double[]> byDate = new java.util.TreeMap<>();
+        for (BranchSale s : rawSales) {
+            String d = s.getSaleDate().toString();
+            byDate.computeIfAbsent(d, k -> new double[2]);
+            byDate.get(d)[0] += s.getTotalSarAmount();
+            byDate.get(d)[1] += s.getNetWeight();
+        }
+        List<Map<String,Object>> trend = new ArrayList<>();
+        for (Map.Entry<String,double[]> e : byDate.entrySet()) {
+            trend.add(Map.of("date", e.getKey(), "sar", e.getValue()[0], "wt", e.getValue()[1]));
+        }
+        return ResponseEntity.ok(Map.of("success",true,"data",trend));
+    }
+
+    @GetMapping("/targets")
+    public ResponseEntity<?> targets(
+            @RequestParam(required=false) String month,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
+        List<com.mizan.model.BranchTarget> targets;
+        if (month != null && month.matches("\\d{4}-\\d{2}")) {
+            int year = Integer.parseInt(month.substring(0, 4));
+            int mon = Integer.parseInt(month.substring(5, 7));
+            LocalDate startOfMonth = LocalDate.of(year, mon, 1);
+            LocalDate endOfMonth = startOfMonth.withDayOfMonth(startOfMonth.lengthOfMonth());
+            targets = targetRepo.findByTenantIdAndTargetDateBetween(tenantId, startOfMonth, endOfMonth);
+        } else {
+            targets = targetRepo.findByTenantId(tenantId);
+        }
+        // Map targets to a response with computed fields
+        List<Map<String,Object>> result = new ArrayList<>();
+        for (com.mizan.model.BranchTarget t : targets) {
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("branchCode", t.getBranchCode());
+            row.put("branchName", t.getBranchName());
+            row.put("targetDate", t.getTargetDate() != null ? t.getTargetDate().toString() : null);
+            row.put("monthlyTarget", t.getTargetNetWeightDaily() * 30);
+            row.put("dailyTarget", t.getTargetNetWeightDaily());
+            row.put("dailyPerEmp", t.getTargetNetWeightDaily());
+            row.put("targetRateDiff", t.getTargetRateDifference());
+            row.put("empCount", 0);
+            result.add(row);
+        }
+        return ResponseEntity.ok(Map.of("success",true,"data",result));
     }
 }

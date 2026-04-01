@@ -7,6 +7,10 @@ import { DashboardService } from '../../../core/services/dashboard.service';
 import { AnalyticsService } from '../../../core/services/analytics.service';
 import { DateRangeService } from '../../../core/services/date-range.service';
 import { DateFilterComponent } from '../../../shared/components/date-filter/date-filter.component';
+import { KpiRingCardComponent } from '../../../shared/components/kpi-ring-card/kpi-ring-card.component';
+import { SaudiMapComponent } from '../../../shared/components/saudi-map/saudi-map.component';
+import { MizanPipe } from '../../../shared/pipes/mizan.pipe';
+import { fmtN, fmtSar, fmtWt } from '../../../shared/utils/format.utils';
 import { Chart, registerables } from 'chart.js';
 
 Chart.register(...registerables);
@@ -21,12 +25,14 @@ interface KpiCard {
   pct: number;      // 0–100, controls gauge fill
   color: string;    // stroke color
   sub?: string;     // optional subtitle
+  icon: string;
+  valueClass?: string;
 }
 
 @Component({
   selector: 'app-overview',
   standalone: true,
-  imports: [CommonModule, DateFilterComponent],
+  imports: [CommonModule, DateFilterComponent, KpiRingCardComponent, SaudiMapComponent, MizanPipe],
   template: `
     <div class="page-header">
       <div>
@@ -41,32 +47,18 @@ interface KpiCard {
       <div class="empty-state"><span class="spinner spinner--green"></span></div>
     } @else {
 
-      <!-- KPI Gauge Grid -->
-      <div class="kpi-gauge-grid">
+      <!-- KPI Ring Card Grid -->
+      <div class="kpi-grid" style="margin-bottom:1.5rem">
         @for (k of kpiCards(); track k.label) {
-          <div class="kpi-gauge-card">
-            <div class="gauge-wrap">
-              <svg class="gauge-svg" viewBox="0 0 100 100" fill="none">
-                <!-- track ring -->
-                <circle cx="50" cy="50" r="38"
-                        stroke="rgba(201,168,76,0.10)" stroke-width="5"/>
-                <!-- fill ring -->
-                <circle cx="50" cy="50" r="38"
-                        [attr.stroke]="k.color"
-                        stroke-width="5"
-                        stroke-linecap="round"
-                        [attr.stroke-dasharray]="CIRC"
-                        [attr.stroke-dashoffset]="CIRC * (1 - k.pct / 100)"
-                        transform="rotate(-90 50 50)"/>
-              </svg>
-              <div class="gauge-center">
-                <span class="gauge-value">{{ k.value }}</span>
-                @if (k.unit) { <span class="gauge-unit">{{ k.unit }}</span> }
-              </div>
-            </div>
-            <div class="gauge-label">{{ k.label }}</div>
-            @if (k.sub) { <div class="gauge-sub">{{ k.sub }}</div> }
-          </div>
+          <app-kpi-ring-card
+            [icon]="k.icon"
+            [label]="k.label"
+            [value]="k.value"
+            [sub]="k.sub ?? ''"
+            [ringColor]="k.color"
+            [ringPct]="k.pct"
+            [valueClass]="k.valueClass ?? ''">
+          </app-kpi-ring-card>
         }
       </div>
 
@@ -81,6 +73,19 @@ interface KpiCard {
             <div class="card__header"><h3>المبيعات بالمناطق</h3></div>
             <canvas #doughnutChart style="max-height:300px"></canvas>
           </div>
+        </div>
+
+        <!-- Daily Trend Chart -->
+        <div class="card chart-card" style="margin-bottom:1.5rem">
+          <div class="card__header"><h3>{{ 'الحركة اليومية' | mizan }}</h3></div>
+          <div style="height:200px;position:relative">
+            <canvas #cvTrend></canvas>
+          </div>
+        </div>
+
+        <!-- Saudi Map -->
+        <div style="margin-bottom:1.5rem">
+          <app-saudi-map [branches]="branches()"></app-saudi-map>
         </div>
 
         <!-- Top / Bottom Tables -->
@@ -160,14 +165,13 @@ interface KpiCard {
     }
   `,
   styles: [`
-    .kpi-gauge-grid {
+    .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-      gap: .85rem;
-      margin-bottom: 1.5rem;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: .75rem;
     }
     @media (max-width: 600px) {
-      .kpi-gauge-grid { grid-template-columns: repeat(3, 1fr); gap: .6rem; }
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: .5rem; }
     }
 
     .charts-row {
@@ -234,6 +238,7 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
 
   @ViewChild('barChart')      barChartRef!: ElementRef<HTMLCanvasElement>;
   @ViewChild('doughnutChart') doughnutChartRef!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('cvTrend')       cvTrend?: ElementRef<HTMLCanvasElement>;
 
   summary  = signal<any>(null);
   branches = signal<any[]>([]);
@@ -246,6 +251,7 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
 
   private barChart: Chart | null = null;
   private doughnutChart: Chart | null = null;
+  private trendChart: Chart | null = null;
   private viewReady = false;
 
   top5    = () => [...this.branches()].sort((a, b) => b.sar - a.sar).slice(0, 5);
@@ -259,38 +265,44 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
 
     return [
       {
+        icon: '💰',
         label: 'إجمالي المبيعات',
-        value: this.fmtShort(s.totalSalesAmount ?? 0),
+        value: fmtN(s.totalSalesAmount ?? 0),
         unit: 'ر.س',
         pct: 100,
         color: '#c9a84c',
-        sub: this.fmt(s.totalSalesAmount)
+        sub: fmtSar(s.totalSalesAmount)
       },
       {
+        icon: '🛒',
         label: 'إجمالي المشتريات',
-        value: this.fmtShort(s.totalPurchasesAmount ?? 0),
+        value: fmtN(s.totalPurchasesAmount ?? 0),
         unit: 'ر.س',
         pct: Math.min(100, ((s.totalPurchasesAmount ?? 0) / totalSales) * 100),
         color: '#34d399',
-        sub: this.fmt(s.totalPurchasesAmount)
+        sub: fmtSar(s.totalPurchasesAmount)
       },
       {
+        icon: '📈',
         label: 'الصافي',
-        value: this.fmtShort(s.netAmount ?? 0),
+        value: fmtN(s.netAmount ?? 0),
         unit: 'ر.س',
         pct: Math.min(100, Math.max(0, ((s.netAmount ?? 0) / totalSales) * 100)),
         color: (s.netAmount ?? 0) >= 0 ? '#34d399' : '#f87171',
+        valueClass: (s.netAmount ?? 0) >= 0 ? 'pos' : 'neg',
         sub: ''
       },
       {
+        icon: '⚖️',
         label: 'الوزن الصافي',
-        value: this.fmtWt(s.totalNetWeight ?? 0),
+        value: fmtWt(s.totalNetWeight ?? 0),
         unit: 'جم',
         pct: 72,
         color: '#c9a84c',
         sub: ''
       },
       {
+        icon: '🧾',
         label: 'عدد الفواتير',
         value: String(s.totalInvoices ?? 0),
         unit: 'فاتورة',
@@ -299,14 +311,16 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
         sub: ''
       },
       {
+        icon: '📊',
         label: 'متوسط الفاتورة',
-        value: this.fmtShort(s.avgInvoice ?? 0),
+        value: fmtN(s.avgInvoice ?? 0),
         unit: 'ر.س',
         pct: 60,
         color: '#c9a84c',
-        sub: this.fmt(s.avgInvoice)
+        sub: fmtSar(s.avgInvoice)
       },
       {
+        icon: '💹',
         label: 'سعر البيع',
         value: this.fmtRate(s.saleRate),
         unit: 'ر.س/جم',
@@ -315,6 +329,7 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
         sub: ''
       },
       {
+        icon: '🏷️',
         label: 'سعر الشراء',
         value: this.fmtRate(s.purchaseRate),
         unit: 'ر.س/جم',
@@ -323,14 +338,17 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
         sub: ''
       },
       {
+        icon: '↔️',
         label: 'فرق المعدل',
         value: this.fmtRate(s.rateDifference),
         unit: 'ر.س/جم',
         pct: Math.min(100, Math.max(0, ((s.rateDifference ?? 0) / 150) * 100)),
         color: (s.rateDifference ?? 0) >= 0 ? '#34d399' : '#f87171',
+        valueClass: (s.rateDifference ?? 0) >= 0 ? 'pos' : 'neg',
         sub: ''
       },
       {
+        icon: '🏪',
         label: 'الفروع',
         value: String(branchCt),
         unit: 'فرع',
@@ -339,12 +357,13 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
         sub: `${s.profitableBranches ?? 0} رابح · ${s.lossBranches ?? 0} خاسر`
       },
       {
+        icon: '🥇',
         label: 'أفضل فرع',
         value: s.topBranchName || '—',
         unit: '',
         pct: 100,
         color: '#c9a84c',
-        sub: s.topBranchSar ? this.fmtShort(s.topBranchSar) + ' ر.س' : ''
+        sub: s.topBranchSar ? fmtN(s.topBranchSar) + ' ر.س' : ''
       },
     ];
   });
@@ -361,13 +380,14 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
   ngOnDestroy(): void {
     this.barChart?.destroy();
     this.doughnutChart?.destroy();
+    this.trendChart?.destroy();
   }
 
   load(): void {
     this.loading.set(true);
     const from = this.dr.getFrom(), to = this.dr.getTo();
     let done = 0;
-    const check = () => { if (++done === 3) this.loading.set(false); };
+    const check = () => { if (++done === 4) this.loading.set(false); };
 
     this.svc.getSummary(from, to).subscribe({
       next: r => { this.summary.set(r.data ?? null); check(); },
@@ -386,6 +406,63 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
     this.svc.getAlerts(from, to).subscribe({
       next: r => { this.alerts.set(r.data ?? []); check(); },
       error: () => check()
+    });
+
+    this.svc.getDailyTrend(from, to).subscribe({
+      next: r => {
+        if (this.viewReady) setTimeout(() => this.buildTrendChart(r.data ?? []), 0);
+        check();
+      },
+      error: () => check()
+    });
+  }
+
+  buildTrendChart(trend: any[]): void {
+    if (!this.cvTrend?.nativeElement) return;
+    if (this.trendChart) { this.trendChart.destroy(); this.trendChart = null; }
+    if (!trend.length) return;
+    const labels = trend.map(d => (d.date as string).slice(5)); // MM-DD
+    const sarVals = trend.map(d => d.sar as number);
+    const s = this.summary();
+    const purchRatio = s?.totalPurchasesAmount && s?.totalSalesAmount
+      ? s.totalPurchasesAmount / s.totalSalesAmount : 0.5;
+    const purchVals = sarVals.map(v => Math.round(v * purchRatio));
+    this.trendChart = new Chart(this.cvTrend.nativeElement, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'المبيعات / Sales',
+            data: sarVals,
+            borderColor: 'rgba(255,255,255,0.8)',
+            backgroundColor: 'rgba(255,255,255,0.06)',
+            fill: true, tension: 0.4,
+            pointRadius: labels.length > 15 ? 0 : 3,
+            pointBackgroundColor: '#fff', borderWidth: 2,
+          },
+          {
+            label: 'المشتريات / Purch',
+            data: purchVals,
+            borderColor: 'rgba(201,168,76,0.7)',
+            backgroundColor: 'rgba(201,168,76,0.05)',
+            fill: true, tension: 0.4,
+            borderDash: [5, 3],
+            pointRadius: labels.length > 15 ? 0 : 3,
+            pointBackgroundColor: '#c9a84c', borderWidth: 2,
+          } as any,
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top', labels: { boxWidth: 12, font: { size: 10 }, color: 'rgba(255,255,255,0.6)' } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { maxTicksLimit: 10, maxRotation: 0, font: { size: 9 }, color: 'rgba(255,255,255,0.5)' } },
+          y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: (v: any) => fmtN(+v), font: { size: 9 }, color: 'rgba(255,255,255,0.5)' } }
+        }
+      }
     });
   }
 
@@ -429,14 +506,6 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
     return (n ?? 0).toLocaleString('ar-SA', { maximumFractionDigits: 0 });
   }
 
-  fmtShort(n: number): string {
-    const abs = Math.abs(n);
-    const sign = n < 0 ? '-' : '';
-    if (abs >= 1_000_000) return sign + (abs / 1_000_000).toFixed(1) + 'M';
-    if (abs >= 1_000)     return sign + (abs / 1_000).toFixed(0) + 'K';
-    return sign + abs.toFixed(0);
-  }
-
-  fmtWt(n?: number): string   { return (n ?? 0).toFixed(1); }
+  fmtWtLocal(n?: number): string { return (n ?? 0).toFixed(1); }
   fmtRate(n?: number): string { return (n ?? 0).toFixed(2); }
 }

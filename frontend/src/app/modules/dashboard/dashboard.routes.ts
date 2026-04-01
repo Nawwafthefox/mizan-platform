@@ -20,6 +20,7 @@ export const DASHBOARD_ROUTES: Routes = [
       { path: 'my-performance',loadComponent: () => import('./pages/my-performance.component').then(m => m.MyPerformanceComponent) },
       { path: 'rates',         loadComponent: () => import('./pages/rates.component').then(m => m.RatesComponent) },
       { path: 'analytics-studio', loadComponent: () => import('../../features/analytics-studio/analytics-studio.component').then(m => m.AnalyticsStudioComponent) },
+      { path: 'targets',          loadComponent: () => import('./pages/targets.component').then(m => m.TargetsComponent) },
     ]
   }
 ];

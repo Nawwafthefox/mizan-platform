@@ -86,4 +86,12 @@ public class UploadController {
         return ResponseEntity.ok(Map.of("success",true,"data",
             logRepo.findByTenantIdOrderByUploadedAtDesc(tenantId)));
     }
+
+    @PostMapping("/sync-rates")
+    public ResponseEntity<?> syncRates(@AuthenticationPrincipal MizanUserDetails principal) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.status(403).body(Map.of("success",false));
+        int updated = uploadSvc.syncEmployeePurchaseRates(tenantId);
+        return ResponseEntity.ok(Map.of("success",true,"updatedBranches",updated));
+    }
 }

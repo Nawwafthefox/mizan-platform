@@ -5,6 +5,8 @@ import { DashboardService } from '../../../core/services/dashboard.service';
 import { AnalyticsService } from '../../../core/services/analytics.service';
 import { DateRangeService } from '../../../core/services/date-range.service';
 import { DateFilterComponent } from '../../../shared/components/date-filter/date-filter.component';
+import { MizanPipe } from '../../../shared/pipes/mizan.pipe';
+import { fmtSar } from '../../../shared/utils/format.utils';
 import { Chart, registerables } from 'chart.js';
 
 Chart.register(...registerables);
@@ -12,7 +14,7 @@ Chart.register(...registerables);
 @Component({
   selector: 'app-branches',
   standalone: true,
-  imports: [CommonModule, FormsModule, DateFilterComponent],
+  imports: [CommonModule, FormsModule, DateFilterComponent, MizanPipe],
   template: `
     <div class="page-header">
       <div><h2>الفروع</h2><p>تفاصيل أداء الفروع</p></div>
@@ -27,6 +29,12 @@ Chart.register(...registerables);
         @for (r of regions(); track r) {
           <option [value]="r">{{ r }}</option>
         }
+      </select>
+      <select [(ngModel)]="sortKey" class="region-select">
+        <option value="sar">ترتيب: المبيعات</option>
+        <option value="region">ترتيب: المنطقة</option>
+        <option value="diffRate">ترتيب: فرق المعدل</option>
+        <option value="net">ترتيب: الصافي</option>
       </select>
     </div>
 
@@ -55,19 +63,29 @@ Chart.register(...registerables);
               </tr>
             </thead>
             <tbody>
-              @for (b of filtered(); track b.code) {
-                <tr>
-                  <td><strong>{{ b.name }}</strong></td>
-                  <td><span class="region-dot" [style.background]="ana.getRegionColor(b.region)"></span>{{ b.region }}</td>
-                  <td>{{ fmt(b.sar) }}</td>
-                  <td>{{ b.wn?.toFixed(2) }}</td>
-                  <td>{{ b.pcs }}</td>
-                  <td>{{ fmt(b.purch + b.mothan) }}</td>
-                  <td [class]="ana.getDiffClass(b.net)">{{ fmt(b.net) }}</td>
-                  <td>{{ b.saleRate?.toFixed(2) }}</td>
-                  <td>{{ b.purchRate?.toFixed(2) }}</td>
-                  <td [class]="ana.getDiffClass(b.diffRate)">{{ b.diffRate?.toFixed(2) }}</td>
-                </tr>
+              @for (row of groupedRows; track $index) {
+                @if (row.type === 'header') {
+                  <tr class="region-header">
+                    <td [colSpan]="10">
+                      🗺 {{ row.region }}
+                      <span style="opacity:.6">({{ row.count }} {{ 'فرع' | mizan }}) · {{ fmtSarFn(row.sar) }}</span>
+                      <span [style.color]="row.net >= 0 ? '#22c55e' : '#ef4444'"> · {{ 'صافي' | mizan }}: {{ fmtSarFn(row.net) }}</span>
+                    </td>
+                  </tr>
+                } @else {
+                  <tr>
+                    <td><strong>{{ row.branch.name }}</strong></td>
+                    <td><span class="region-dot" [style.background]="ana.getRegionColor(row.branch.region)"></span>{{ row.branch.region }}</td>
+                    <td>{{ fmt(row.branch.sar) }}</td>
+                    <td>{{ row.branch.wn?.toFixed(2) }}</td>
+                    <td>{{ row.branch.pcs }}</td>
+                    <td>{{ fmt(row.branch.purch + row.branch.mothan) }}</td>
+                    <td [class]="ana.getDiffClass(row.branch.net)">{{ fmt(row.branch.net) }}</td>
+                    <td>{{ row.branch.saleRate?.toFixed(2) }}</td>
+                    <td>{{ row.branch.purchRate?.toFixed(2) }}</td>
+                    <td [class]="ana.getDiffClass(row.branch.diffRate)">{{ row.branch.diffRate?.toFixed(2) }}</td>
+                  </tr>
+                }
               }
             </tbody>
           </table>
@@ -89,6 +107,13 @@ Chart.register(...registerables);
     .card__header { display: flex; align-items: center; justify-content: space-between; padding: .75rem 1rem; border-bottom: 1px solid var(--mizan-border); }
     .card__header h3 { font-size: .95rem; font-weight: 600; margin: 0; }
     .chart-card { padding: 1rem; }
+    .region-header td {
+      background: rgba(255,255,255,0.06);
+      font-weight: 700; font-size: 13px;
+      color: var(--mz-gold);
+      border-bottom: 2px solid rgba(255,255,255,0.1);
+      padding: 10px 16px;
+    }
   `]
 })
 export class BranchesComponent implements OnInit, OnDestroy, AfterViewInit {
@@ -103,6 +128,9 @@ export class BranchesComponent implements OnInit, OnDestroy, AfterViewInit {
   loading = signal(false);
   search = '';
   regionFilter = '';
+  sortKey = 'sar';
+
+  fmtSarFn = fmtSar;
 
   private chart: Chart | null = null;
   private viewReady = false;
@@ -113,6 +141,48 @@ export class BranchesComponent implements OnInit, OnDestroy, AfterViewInit {
       !s || b.name?.toLowerCase().includes(s) || b.code?.toLowerCase().includes(s)
     );
   };
+
+  get sortedBranches(): any[] {
+    const list = [...this.filtered()];
+    if (this.sortKey === 'region') {
+      list.sort((a, b) => {
+        const rc = (a.region ?? '').localeCompare(b.region ?? '');
+        if (rc !== 0) return rc;
+        return (b.sar ?? 0) - (a.sar ?? 0);
+      });
+    } else if (this.sortKey === 'diffRate') {
+      list.sort((a, b) => (b.diffRate ?? 0) - (a.diffRate ?? 0));
+    } else if (this.sortKey === 'net') {
+      list.sort((a, b) => (b.net ?? 0) - (a.net ?? 0));
+    } else {
+      list.sort((a, b) => (b.sar ?? 0) - (a.sar ?? 0));
+    }
+    return list;
+  }
+
+  get groupedRows(): Array<{type: 'header', region: string, count: number, sar: number, net: number} | {type: 'row', branch: any}> {
+    if (this.sortKey !== 'region') {
+      return this.sortedBranches.map(b => ({ type: 'row' as const, branch: b }));
+    }
+    const rows: any[] = [];
+    let lastRegion = '';
+    for (const b of this.sortedBranches) {
+      const region = b.region ?? 'غير محدد';
+      if (region !== lastRegion) {
+        const rBranches = this.sortedBranches.filter(x => (x.region ?? 'غير محدد') === region);
+        rows.push({
+          type: 'header',
+          region,
+          count: rBranches.length,
+          sar: rBranches.reduce((s: number, x: any) => s + (x.totalSarAmount ?? x.sar ?? 0), 0),
+          net: rBranches.reduce((s: number, x: any) => s + (x.net ?? 0), 0),
+        });
+        lastRegion = region;
+      }
+      rows.push({ type: 'row', branch: b });
+    }
+    return rows;
+  }
 
   ngOnInit(): void { this.load(); }
 

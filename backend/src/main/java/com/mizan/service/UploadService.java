@@ -25,16 +25,19 @@ public class UploadService {
     private final MothanTransactionRepository mothanRepo;
     private final UploadLogRepository logRepo;
     private final Executor uploadExecutor;
+    private final com.mizan.repository.BranchPurchaseRateRepository rateRepo;
 
     public UploadService(ExcelParserService parser, UploadProgressService progress,
             BranchSaleRepository saleRepo, BranchPurchaseRepository purchRepo,
             EmployeeSaleRepository empRepo, MothanTransactionRepository mothanRepo,
             UploadLogRepository logRepo,
-            @Qualifier("uploadExecutor") Executor uploadExecutor) {
+            @Qualifier("uploadExecutor") Executor uploadExecutor,
+            com.mizan.repository.BranchPurchaseRateRepository rateRepo) {
         this.parser = parser; this.progress = progress;
         this.saleRepo = saleRepo; this.purchRepo = purchRepo;
         this.empRepo = empRepo; this.mothanRepo = mothanRepo;
         this.logRepo = logRepo; this.uploadExecutor = uploadExecutor;
+        this.rateRepo = rateRepo;
     }
 
     // ─── Internal data holders ────────────────────────────────────────────────
@@ -233,5 +236,23 @@ public class UploadService {
         ul.setStatus(status); ul.setErrorMessage(error);
         ul.setUploadedBy(by); ul.setUploadedAt(LocalDateTime.now());
         logRepo.save(ul);
+    }
+
+    public int syncEmployeePurchaseRates(String tenantId) {
+        List<com.mizan.model.BranchPurchaseRate> rates = rateRepo.findByTenantId(tenantId);
+        if (rates.isEmpty()) return 0;
+        int count = 0;
+        for (com.mizan.model.BranchPurchaseRate rate : rates) {
+            if (rate.getPurchaseRate() <= 0) continue;
+            List<com.mizan.model.EmployeeSale> emps = empRepo.findByTenantAndBranch(tenantId, rate.getBranchCode());
+            for (com.mizan.model.EmployeeSale e : emps) {
+                e.setBranchPurchaseAvg(rate.getPurchaseRate());
+            }
+            if (!emps.isEmpty()) {
+                empRepo.saveAll(emps);
+                count++;
+            }
+        }
+        return count;
     }
 }

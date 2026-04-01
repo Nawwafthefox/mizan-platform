@@ -5,6 +5,7 @@ import { DashboardService } from '../../../core/services/dashboard.service';
 import { AnalyticsService } from '../../../core/services/analytics.service';
 import { DateRangeService } from '../../../core/services/date-range.service';
 import { DateFilterComponent } from '../../../shared/components/date-filter/date-filter.component';
+import { MizanPipe } from '../../../shared/pipes/mizan.pipe';
 import { Chart, registerables } from 'chart.js';
 
 Chart.register(...registerables);
@@ -12,7 +13,7 @@ Chart.register(...registerables);
 @Component({
   selector: 'app-employees',
   standalone: true,
-  imports: [CommonModule, FormsModule, DateFilterComponent],
+  imports: [CommonModule, FormsModule, DateFilterComponent, MizanPipe],
   template: `
     <div class="page-header">
       <div><h2>الموظفون</h2><p>أداء الموظفين خلال الفترة</p></div>
@@ -41,7 +42,9 @@ Chart.register(...registerables);
             <thead>
               <tr>
                 <th>#</th><th>الاسم</th><th>رمز الموظف</th><th>الفرع</th><th>المنطقة</th>
-                <th>المبيعات</th><th>الوزن</th><th>الفواتير</th><th>سعر البيع</th><th>التصنيف</th>
+                <th>المبيعات</th><th>الوزن</th><th>الفواتير</th><th>سعر البيع</th>
+                <th>{{ 'الهدف %' | mizan }}</th>
+                <th>التصنيف</th>
               </tr>
             </thead>
             <tbody>
@@ -56,6 +59,22 @@ Chart.register(...registerables);
                   <td>{{ e.totalWt?.toFixed(2) }}</td>
                   <td>{{ e.invoiceCount }}</td>
                   <td>{{ e.saleRate?.toFixed(2) }}</td>
+                  <td>
+                    @let pct = getTargetPct(e);
+                    @if (pct < 0) {
+                      <span style="color:rgba(255,255,255,0.3)">—</span>
+                    } @else {
+                      <div style="display:flex;align-items:center;gap:4px;min-width:80px">
+                        <div style="flex:1;height:5px;background:rgba(255,255,255,0.1);border-radius:3px">
+                          <div [style.width.%]="Math.min(pct, 100)"
+                               [style.background]="pct >= 100 ? '#22c55e' : pct >= 70 ? '#f59e0b' : '#ef4444'"
+                               style="height:100%;border-radius:3px;transition:width 600ms ease"></div>
+                        </div>
+                        <span [style.color]="pct >= 100 ? '#22c55e' : pct >= 70 ? '#f59e0b' : '#ef4444'"
+                              style="font-size:9px;font-weight:700">{{ pct }}%</span>
+                      </div>
+                    }
+                  </td>
                   <td>
                     <span class="badge" [class]="ana.classifyEmployee(e.saleRate).css">
                       {{ ana.classifyEmployee(e.saleRate).label }}
@@ -98,6 +117,9 @@ export class EmployeesComponent implements OnInit, OnDestroy, AfterViewInit {
   employees = signal<any[]>([]);
   loading = signal(false);
   search = '';
+  Math = Math;
+
+  targetMap: Record<string, any> = {};
 
   private chart: Chart | null = null;
   private viewReady = false;
@@ -109,7 +131,12 @@ export class EmployeesComponent implements OnInit, OnDestroy, AfterViewInit {
     );
   };
 
-  ngOnInit(): void { this.load(); }
+  ngOnInit(): void {
+    this.load();
+    const d = new Date();
+    const currentMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    this.loadTargets(currentMonth);
+  }
 
   ngAfterViewInit(): void {
     this.viewReady = true;
@@ -117,6 +144,28 @@ export class EmployeesComponent implements OnInit, OnDestroy, AfterViewInit {
   }
 
   ngOnDestroy(): void { this.chart?.destroy(); }
+
+  loadTargets(month: string): void {
+    this.svc.getTargets(month).subscribe({
+      next: (res: any) => {
+        this.targetMap = {};
+        for (const t of (res?.data ?? [])) {
+          this.targetMap[t.branchCode] = t;
+          this.targetMap['name:' + t.branchName] = t;
+        }
+      },
+      error: () => {}
+    });
+  }
+
+  getTargetPct(emp: any): number {
+    const tgt = this.targetMap[emp.branchCode] ?? this.targetMap['name:' + emp.branchName];
+    if (!tgt?.dailyPerEmp) return -1;
+    const days = emp.days ?? 1;
+    const targetWt = tgt.dailyPerEmp * days;
+    const actualWt = Math.abs(emp.totalWt ?? emp.netWeight ?? 0);
+    return targetWt > 0 ? Math.round(actualWt / targetWt * 100) : -1;
+  }
 
   load(): void {
     this.loading.set(true);

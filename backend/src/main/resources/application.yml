@@ -16,9 +16,10 @@ server:
     connection-timeout: 120000
     max-swallow-size: -1
 
+cors:
+  allowed-origins: ${CORS_ORIGINS:http://localhost:4200}
+
 mizan:
   jwt:
     secret: ${JWT_SECRET:mizan-super-secret-key-change-in-production-2026-very-long-string}
     expiration: 86400000
-  cors:
-    allowed-origins: ${CORS_ORIGINS:http://localhost:4200}

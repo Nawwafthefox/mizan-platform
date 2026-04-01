@@ -22,6 +22,7 @@ public class EmployeeSale {
     private int invoiceCount;
     private double saleRate;
     private boolean isReturn = false;
+    private double branchPurchaseAvg;
     private String sourceFileName;
     private String uploadBatch;
     private String uploadedBy;

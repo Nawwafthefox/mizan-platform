@@ -84,4 +84,15 @@ export class DashboardService {
   upsertPurchaseRate(data: { branchCode: string; branchName: string; purchaseRate: number }): Observable<ApiResponse<BranchPurchaseRate>> {
     return this.http.post<ApiResponse<BranchPurchaseRate>>(`${environment.apiUrl}/dashboard/purchase-rates`, data);
   }
+
+  getDailyTrend(from: string, to: string): Observable<ApiResponse<any[]>> {
+    const params = new HttpParams().set('from', from).set('to', to);
+    return this.cached(`daily-trend:${from}:${to}`,
+      this.http.get<ApiResponse<any[]>>(`${environment.apiUrl}/dashboard/daily-trend`, { params }));
+  }
+
+  getTargets(month: string): Observable<ApiResponse<any[]>> {
+    const params = new HttpParams().set('month', month);
+    return this.http.get<ApiResponse<any[]>>(`${environment.apiUrl}/dashboard/targets`, { params });
+  }
 }
