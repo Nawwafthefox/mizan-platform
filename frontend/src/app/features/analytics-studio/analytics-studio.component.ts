@@ -160,7 +160,7 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
     const mothanWt    = n(raw.mothanWt);
     // Backend sends "returns" (BranchData record field name)
     const returns     = Math.abs(n(raw.returns ?? raw.ret ?? 0));
-    const returnDays  = n(raw.retDays ?? 0);
+    const returnDays  = n(raw.returnDays ?? raw.retDays ?? 0);
 
     const combinedPurchases = branchPurch + mothanAmt;
     const combinedPurchWt   = branchPurchWt + mothanWt;
@@ -224,10 +224,11 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
 
     const branchCode = raw.branchCode ?? raw.code ?? '';
     const branch = branches.find((b: any) => b.branchCode === branchCode || b.code === branchCode);
-    const purchRate = branch?.purchRate ?? 0;
-    const diffRate  = Math.round((saleRate - purchRate) * 10) / 10;
-    const profitMargin = purchRate > 0
-      ? Math.round(netWt * (saleRate - purchRate) * 100) / 100 : 0;
+    const purchRate = n(raw.purchRate) > 0 ? n(raw.purchRate) : (branch?.purchRate ?? 0);
+    const diffRate  = n(raw.diffRate) !== 0 ? n(raw.diffRate)
+      : (purchRate > 0 ? Math.round((saleRate - purchRate) * 10000) / 10000 : 0);
+    const profitMargin = n(raw.profitMargin) !== 0 ? n(raw.profitMargin)
+      : (purchRate > 0 ? Math.round(netWt * diffRate * 100) / 100 : 0);
     const classification =
       saleRate >= 700 ? 'excellent' :
       saleRate >= 600 ? 'good' :
@@ -246,7 +247,9 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
       saleRate, purchRate, diffRate, profitMargin,
       avgInvoice: invoices > 0 ? Math.round(sar / invoices) : 0,
       returnsPct: sar > 0 ? Math.round(returns / sar * 1000) / 10 : 0,
-      achievedTarget: saleRate > purchRate,
+      achievementPct:    n(raw.achievementPct ?? 0),
+      achievementStatus: raw.achievementStatus ?? (saleRate > purchRate ? 'onTrack' : 'behind'),
+      achievedTarget:    raw.achieved ?? raw.achievedTarget ?? (saleRate > purchRate),
       classification,
     };
   }
@@ -317,7 +320,7 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
       .map((r: any) => ({
         ...r,
         net:      r.totalSar - r.totalPurch,
-        saleRate: r.totalWt > 0 ? Math.round(r.totalSar / r.totalWt * 100) / 100 : 0,
+        saleRate: r.totalWt > 0 ? Math.round(r.totalSar / r.totalWt * 10000) / 10000 : 0,
       }))
       .sort((a: any, b: any) => b.totalSar - a.totalSar);
   }
@@ -333,7 +336,9 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
     const count  = this.n(m.txnCount ?? m.transactionCount ?? 0);
     // Compute total amount from branches aggregated on enriched branch data
     const total  = this.branches.reduce((s: number, b: any) => s + b.mothanAmount, 0);
-    const avgRate = weight > 0 ? Math.round(total / weight * 100) / 100 : 0;
+    const apiAvgRate = this.n(m.avgRate ?? 0);
+    const avgRate = apiAvgRate > 0 ? apiAvgRate
+      : (weight > 0 ? Math.round(total / weight * 10000) / 10000 : 0);
     this.mothanSummary = { total, weight, count, avgRate };
   }
 
@@ -347,9 +352,9 @@ export class AnalyticsStudioComponent implements OnInit, AfterViewInit, OnDestro
     const totalPurchWeight     = b.reduce((s: number, x: any) => s + x.combinedPurchWt, 0);
     const totalInvoices        = b.reduce((s: number, x: any) => s + x.invoiceCount, 0);
     const totalReturns         = b.reduce((s: number, x: any) => s + x.returns, 0);
-    const globalSaleRate       = totalNetWeight > 0 ? Math.round(totalSalesAmount / totalNetWeight * 100) / 100 : 0;
-    const globalPurchRate      = totalPurchWeight > 0 ? Math.round(totalPurchasesAmount / totalPurchWeight * 100) / 100 : 0;
-    const weightedDiffRate     = Math.round((globalSaleRate - globalPurchRate) * 100) / 100;
+    const globalSaleRate       = totalNetWeight > 0 ? Math.round(totalSalesAmount / totalNetWeight * 10000) / 10000 : 0;
+    const globalPurchRate      = totalPurchWeight > 0 ? Math.round(totalPurchasesAmount / totalPurchWeight * 10000) / 10000 : 0;
+    const weightedDiffRate     = Math.round((globalSaleRate - globalPurchRate) * 10000) / 10000;
     const returnBranches       = b.filter((x: any) => x.returns > 0);
     const totalSellWeight      = b.reduce((s: number, x: any) => s + x.sellWeight, 0);
     const totalPurchWeightAll  = b.reduce((s: number, x: any) => s + x.purchWeight, 0);

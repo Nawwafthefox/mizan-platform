@@ -23,6 +23,9 @@ public class EmployeeSale {
     private double saleRate;
     private boolean isReturn = false;
     private double branchPurchaseAvg;
+    private double diffAvg;
+    private double profitMargin;
+    private boolean achievedTarget;
     private String sourceFileName;
     private String uploadBatch;
     private String uploadedBy;

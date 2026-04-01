@@ -2,6 +2,7 @@ package com.mizan.controller;
 import com.mizan.dto.FileBytes;
 import com.mizan.security.MizanUserDetails;
 import com.mizan.security.TenantContext;
+import com.mizan.service.ExcelParserService.FileType;
 import com.mizan.service.UploadProgressService;
 import com.mizan.service.UploadService;
 import com.mizan.repository.UploadLogRepository;
@@ -93,5 +94,67 @@ public class UploadController {
         if (tenantId == null) return ResponseEntity.status(403).body(Map.of("success",false));
         int updated = uploadSvc.syncEmployeePurchaseRates(tenantId);
         return ResponseEntity.ok(Map.of("success",true,"updatedBranches",updated));
+    }
+
+    // ── Typed upload endpoints ────────────────────────────────────────────────
+
+    @PostMapping("/branch-sales")
+    public ResponseEntity<?> uploadBranchSales(
+            @RequestParam("files") List<MultipartFile> files,
+            @RequestParam("uploadId") String uploadId,
+            @RequestParam(value="replace", defaultValue="true") boolean replace,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        return handleTyped(files, uploadId, replace, FileType.BRANCH_SALES, principal);
+    }
+
+    @PostMapping("/employee-sales")
+    public ResponseEntity<?> uploadEmployeeSales(
+            @RequestParam("files") List<MultipartFile> files,
+            @RequestParam("uploadId") String uploadId,
+            @RequestParam(value="replace", defaultValue="true") boolean replace,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        return handleTyped(files, uploadId, replace, FileType.EMPLOYEE_SALES, principal);
+    }
+
+    @PostMapping("/purchases")
+    public ResponseEntity<?> uploadPurchases(
+            @RequestParam("files") List<MultipartFile> files,
+            @RequestParam("uploadId") String uploadId,
+            @RequestParam(value="replace", defaultValue="true") boolean replace,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        return handleTyped(files, uploadId, replace, FileType.PURCHASES, principal);
+    }
+
+    @PostMapping("/mothan")
+    public ResponseEntity<?> uploadMothan(
+            @RequestParam("files") List<MultipartFile> files,
+            @RequestParam("uploadId") String uploadId,
+            @RequestParam(value="replace", defaultValue="true") boolean replace,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        return handleTyped(files, uploadId, replace, FileType.MOTHAN, principal);
+    }
+
+    private ResponseEntity<?> handleTyped(List<MultipartFile> files, String uploadId,
+            boolean replace, FileType fileType, MizanUserDetails principal) {
+        List<FileBytes> fileBytesList = new ArrayList<>();
+        List<String> readErrors = new ArrayList<>();
+        for (MultipartFile file : files) {
+            try {
+                fileBytesList.add(new FileBytes(file.getOriginalFilename(), file.getBytes()));
+            } catch (Exception e) {
+                readErrors.add((file.getOriginalFilename() != null ? file.getOriginalFilename() : "unknown")
+                    + ": " + e.getMessage());
+            }
+        }
+        if (fileBytesList.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false, "message", "تعذّر قراءة الملفات المرفوعة", "details", readErrors));
+        }
+        String tenantId = TenantContext.getTenantId();
+        uploadSvc.processTypedAsync(fileBytesList, uploadId, tenantId, principal.getUserId(), fileType, replace);
+        return ResponseEntity.accepted().body(Map.of(
+            "success", true, "message", "Processing started",
+            "fileType", fileType.name(), "replace", replace,
+            "filesRead", fileBytesList.size(), "readErrors", readErrors));
     }
 }

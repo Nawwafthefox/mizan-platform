@@ -64,6 +64,9 @@ public class ExcelParserService {
         String error
     ) {}
 
+    /** Date range extracted from "From YYYY-MM-DD To YYYY-MM-DD" file header. */
+    public record DateRange(LocalDate from, LocalDate to) {}
+
     // ─────────────────────────────────────────────────────────────────────────────
     //  MAIN ENTRY POINT
     // ─────────────────────────────────────────────────────────────────────────────
@@ -94,6 +97,35 @@ public class ExcelParserService {
             if (msg == null || msg.isBlank() || msg.contains("/tmp") || msg.length() > 150)
                 msg = "تعذّر قراءة الملف — تأكد أنه بصيغة Excel .xls صحيحة";
             return fail(FileType.UNKNOWN, LocalDate.now(), msg);
+        }
+    }
+
+    /**
+     * Parse with a forced FileType — skips auto-detection.
+     * Used by typed upload endpoints (/upload/branch-sales, etc.)
+     */
+    public ParseResult parseForced(InputStream is, String filename,
+            String tenantId, String uploadBatch, String uploadedBy,
+            FileType forcedType) {
+
+        try (HSSFWorkbook wb = new HSSFWorkbook(is)) {
+            Sheet sheet = wb.getSheetAt(0);
+            LocalDate fileDate = extractDateFromHeader(sheet, filename);
+            log.info("Parsing '{}' forced as {}, date={}", filename, forcedType, fileDate);
+
+            return switch (forcedType) {
+                case BRANCH_SALES   -> parseBranchSales  (sheet, fileDate, tenantId, uploadBatch, uploadedBy);
+                case EMPLOYEE_SALES -> parseEmployeeSales(sheet, fileDate, tenantId, uploadBatch, uploadedBy);
+                case PURCHASES      -> parsePurchases     (sheet, fileDate, tenantId, uploadBatch, uploadedBy);
+                case MOTHAN         -> parseMothan        (sheet, fileDate, tenantId, uploadBatch, uploadedBy);
+                default -> fail(forcedType, fileDate, "نوع ملف غير معروف: " + forcedType);
+            };
+        } catch (Exception e) {
+            log.error("parseForced failed for '{}': {}", filename, e.getMessage(), e);
+            String msg = e.getMessage();
+            if (msg == null || msg.isBlank() || msg.contains("/tmp") || msg.length() > 150)
+                msg = "تعذّر قراءة الملف — تأكد أنه بصيغة Excel .xls صحيحة";
+            return fail(forcedType, LocalDate.now(), msg);
         }
     }
 
@@ -139,17 +171,33 @@ public class ExcelParserService {
         return FileType.UNKNOWN;
     }
 
-    private LocalDate extractDateFromHeader(Sheet sheet, String filename) {
-        // Try: header contains "From YYYY-MM-DD To YYYY-MM-DD"
-        Pattern fromTo = Pattern.compile("From\\s+(\\d{4}-\\d{2}-\\d{2})\\s+To");
+    /**
+     * Extract date range from the file header.
+     * Looks for "From YYYY-MM-DD To YYYY-MM-DD"; falls back to single date from filename.
+     */
+    public DateRange extractDateRangeFromHeader(Sheet sheet, String filename) {
+        Pattern fromTo = Pattern.compile("From\\s+(\\d{4}-\\d{2}-\\d{2})\\s+To\\s+(\\d{4}-\\d{2}-\\d{2})");
+        Pattern fromOnly = Pattern.compile("From\\s+(\\d{4}-\\d{2}-\\d{2})\\s+To");
         for (int i = 0; i < 8; i++) {
             Row row = sheet.getRow(i);
             if (row == null) continue;
             for (Cell cell : row) {
                 if (cell.getCellType() != CellType.STRING) continue;
-                Matcher m = fromTo.matcher(cell.getStringCellValue());
+                String val = cell.getStringCellValue();
+                Matcher m = fromTo.matcher(val);
                 if (m.find()) {
-                    try { return LocalDate.parse(m.group(1)); } catch (Exception ignored) {}
+                    try {
+                        LocalDate from = LocalDate.parse(m.group(1));
+                        LocalDate to   = LocalDate.parse(m.group(2));
+                        return new DateRange(from, to);
+                    } catch (Exception ignored) {}
+                }
+                Matcher m2 = fromOnly.matcher(val);
+                if (m2.find()) {
+                    try {
+                        LocalDate from = LocalDate.parse(m2.group(1));
+                        return new DateRange(from, from);
+                    } catch (Exception ignored) {}
                 }
             }
         }
@@ -157,13 +205,19 @@ public class ExcelParserService {
         Matcher fm = Pattern.compile("(\\d{2})-(\\d{2})-(\\d{4})").matcher(filename != null ? filename : "");
         if (fm.find()) {
             try {
-                return LocalDate.of(
+                LocalDate d = LocalDate.of(
                     Integer.parseInt(fm.group(3)),
                     Integer.parseInt(fm.group(2)),
                     Integer.parseInt(fm.group(1)));
+                return new DateRange(d, d);
             } catch (Exception ignored) {}
         }
-        return LocalDate.now();
+        LocalDate today = LocalDate.now();
+        return new DateRange(today, today);
+    }
+
+    private LocalDate extractDateFromHeader(Sheet sheet, String filename) {
+        return extractDateRangeFromHeader(sheet, filename).from();
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -521,17 +575,26 @@ public class ExcelParserService {
 
     /**
      * A row is a data row if:
-     *  col15 = Sl.# numeric integer >= 1
+     *  1. col15 = Sl.# numeric integer >= 1
+     *  2. col12 (description) does NOT contain aggregate-row keywords
+     *     (Sub Total / Grand Total / مجموع فرعي / الإجمالي)
      *
-     * Branch header rows ("XXXX - Name") and Sub Total rows have empty col15.
-     * Only actual transaction rows carry a sequential Sl.# in col15.
+     * Branch header rows ("XXXX - Name") and Sub Total rows normally have empty col15,
+     * but some aggregate ERP exports incorrectly place a numeric in col15 for total rows.
      */
     private boolean isDataRow(Row row) {
         if (row == null) return false;
         Cell c15 = row.getCell(15, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
         if (c15 == null) return false;
         if (c15.getCellType() != CellType.NUMERIC) return false;
-        return c15.getNumericCellValue() >= 1;
+        if (c15.getNumericCellValue() < 1) return false;
+        // Guard: skip aggregate / sub-total rows
+        String desc = getStr(row, 12);
+        if (desc.contains("Sub Total") || desc.contains("Grand Total")
+                || desc.contains("مجموع فرعي") || desc.contains("الإجمالي")) {
+            return false;
+        }
+        return true;
     }
 
     // ─────────────────────────────────────────────────────────────────────────────

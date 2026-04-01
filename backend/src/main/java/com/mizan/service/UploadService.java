@@ -2,6 +2,7 @@ package com.mizan.service;
 import com.mizan.dto.FileBytes;
 import com.mizan.model.*;
 import com.mizan.repository.*;
+import com.mizan.service.ExcelParserService.FileType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DuplicateKeyException;
@@ -9,6 +10,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
@@ -238,6 +240,114 @@ public class UploadService {
         logRepo.save(ul);
     }
 
+    /**
+     * Typed upload pipeline — forces a specific FileType, optionally deletes existing data
+     * for the file's date range before inserting. Skips sourceFileName deduplication.
+     */
+    @Async
+    public void processTypedAsync(List<FileBytes> files, String uploadId,
+            String tenantId, String userId, FileType fileType, boolean replace) {
+
+        int total = files.size();
+        long t0 = System.currentTimeMillis();
+
+        sendSummary(uploadId, "parsing", "جاري تحليل " + total + " ملفات...", 10);
+
+        // Parse all files in parallel using forced type
+        List<CompletableFuture<ParsedFile>> futures = files.stream().map(fb ->
+            CompletableFuture.supplyAsync(() -> {
+                try {
+                    var r = parser.parseForced(new ByteArrayInputStream(fb.bytes()),
+                        fb.originalFilename(), tenantId, uploadId, userId, fileType);
+                    return new ParsedFile(fb.originalFilename(), r, r.error());
+                } catch (Exception e) {
+                    return new ParsedFile(fb.originalFilename(), null, e.getMessage());
+                }
+            }, uploadExecutor)
+        ).toList();
+
+        List<ParsedFile> parsed = futures.stream()
+            .map(f -> { try { return f.get(90, TimeUnit.SECONDS); }
+                        catch (Exception e) { return null; } })
+            .filter(Objects::nonNull)
+            .toList();
+
+        sendSummary(uploadId, "replace", "جاري حذف البيانات القديمة إن وجدت...", 40);
+
+        // Collect all records and determine date ranges for replace
+        List<BranchSale>        allSales  = new ArrayList<>();
+        List<BranchPurchase>    allPurch  = new ArrayList<>();
+        List<EmployeeSale>      allEmp    = new ArrayList<>();
+        List<MothanTransaction> allMothan = new ArrayList<>();
+        List<FileResult>        fileResults = new ArrayList<>();
+
+        // Collect date range across all parsed files for bulk delete
+        LocalDate minDate = null, maxDate = null;
+
+        for (ParsedFile pf : parsed) {
+            if (pf.error() != null || pf.result() == null) {
+                fileResults.add(new FileResult(pf.filename(), fileType.name(), 0, 0,
+                    pf.error() != null ? pf.error() : "فشل التحليل"));
+                continue;
+            }
+            var r = pf.result();
+            LocalDate fd = r.fileDate();
+            if (fd != null) {
+                if (minDate == null || fd.isBefore(minDate)) minDate = fd;
+                if (maxDate == null || fd.isAfter(maxDate)) maxDate = fd;
+            }
+            switch (fileType) {
+                case BRANCH_SALES   -> { allSales.addAll(r.sales());       fileResults.add(new FileResult(pf.filename(), fileType.name(), r.sales().size(), 0, null)); }
+                case EMPLOYEE_SALES -> { allEmp.addAll(r.empSales());      fileResults.add(new FileResult(pf.filename(), fileType.name(), r.empSales().size(), 0, null)); }
+                case PURCHASES      -> { allPurch.addAll(r.purchases());   fileResults.add(new FileResult(pf.filename(), fileType.name(), r.purchases().size(), 0, null)); }
+                case MOTHAN         -> { allMothan.addAll(r.mothan());     fileResults.add(new FileResult(pf.filename(), fileType.name(), r.mothan().size(), 0, null)); }
+                default             -> fileResults.add(new FileResult(pf.filename(), fileType.name(), 0, 0, "نوع ملف غير معروف"));
+            }
+        }
+
+        // Delete existing records in the date range before inserting
+        if (replace && minDate != null && maxDate != null) {
+            switch (fileType) {
+                case BRANCH_SALES   -> saleRepo.deleteByTenantIdAndSaleDateBetween(tenantId, minDate, maxDate);
+                case EMPLOYEE_SALES -> empRepo.deleteByTenantIdAndSaleDateBetween(tenantId, minDate, maxDate);
+                case PURCHASES      -> purchRepo.deleteByTenantIdAndPurchaseDateBetween(tenantId, minDate, maxDate);
+                case MOTHAN         -> mothanRepo.deleteByTenantIdAndTransactionDateBetween(tenantId, minDate, maxDate);
+                default -> {}
+            }
+            log.info("Typed upload ({}): deleted records for tenant={} range={} to {}", fileType, tenantId, minDate, maxDate);
+        }
+
+        sendSummary(uploadId, "saving", "جاري الحفظ في قاعدة البيانات...", 70);
+
+        int savedSales  = bulkSave(saleRepo,   allSales);
+        int savedPurch  = bulkSave(purchRepo,  allPurch);
+        int savedEmp    = bulkSave(empRepo,    allEmp);
+        int savedMothan = bulkSave(mothanRepo, allMothan);
+        int totalSaved  = savedSales + savedPurch + savedEmp + savedMothan;
+
+        sendSummary(uploadId, "complete", "جاري الانتهاء...", 90);
+
+        for (FileResult fr : fileResults) {
+            if (fr.error() != null) {
+                saveLog(tenantId, uploadId, fr.filename(), fr.fileType(), 0, 0, "ERROR", fr.error(), userId);
+            } else {
+                saveLog(tenantId, uploadId, fr.filename(), fr.fileType(), fr.saved(), fr.skipped(), "SUCCESS", null, userId);
+            }
+        }
+
+        long elapsed = System.currentTimeMillis() - t0;
+        log.info("Typed upload {} ({}) done in {}ms — saved={}", uploadId, fileType, elapsed, totalSaved);
+
+        progress.send(uploadId, "complete", Map.of(
+            "uploadId",   uploadId,
+            "totalFiles", total,
+            "totalSaved", totalSaved,
+            "elapsedMs",  elapsed,
+            "status",     "complete"
+        ));
+        progress.complete(uploadId);
+    }
+
     public int syncEmployeePurchaseRates(String tenantId) {
         List<com.mizan.model.BranchPurchaseRate> rates = rateRepo.findByTenantId(tenantId);
         if (rates.isEmpty()) return 0;
@@ -247,6 +357,13 @@ public class UploadService {
             List<com.mizan.model.EmployeeSale> emps = empRepo.findByTenantAndBranch(tenantId, rate.getBranchCode());
             for (com.mizan.model.EmployeeSale e : emps) {
                 e.setBranchPurchaseAvg(rate.getPurchaseRate());
+                double saleRate = e.getNetWeight() != 0 ? e.getTotalSarAmount() / e.getNetWeight() : 0;
+                double diff = Math.round((saleRate - rate.getPurchaseRate()) * 10) / 10.0;
+                double profitMargin = rate.getPurchaseRate() > 0
+                    ? Math.round(e.getNetWeight() * diff * 100) / 100.0 : 0;
+                e.setDiffAvg(diff);
+                e.setProfitMargin(profitMargin);
+                e.setAchievedTarget(saleRate > rate.getPurchaseRate());
             }
             if (!emps.isEmpty()) {
                 empRepo.saveAll(emps);

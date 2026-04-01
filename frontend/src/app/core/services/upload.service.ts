@@ -20,6 +20,13 @@ export class UploadService {
     return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/upload/files`, formData, { params });
   }
 
+  uploadTyped(files: File[], uploadId: string, type: 'branch-sales' | 'employee-sales' | 'purchases' | 'mothan', replace = true): Observable<ApiResponse<any>> {
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f, f.name));
+    const params = new HttpParams().set('uploadId', uploadId).set('replace', replace);
+    return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/upload/${type}`, formData, { params });
+  }
+
   getProgressUrl(uploadId: string, token: string): string {
     return `${environment.apiUrl}/upload/progress/${uploadId}?token=${token}`;
   }
@@ -27,5 +34,9 @@ export class UploadService {
   getHistory(page = 0, size = 20): Observable<ApiResponse<UploadLog[]>> {
     const params = new HttpParams().set('page', page).set('size', size);
     return this.http.get<ApiResponse<UploadLog[]>>(`${environment.apiUrl}/upload/history`, { params });
+  }
+
+  exportCsv(type: 'branch-sales' | 'employee-sales' | 'purchases' | 'mothan' | 'summary', from: string, to: string): void {
+    window.open(`${environment.apiUrl}/export/${type}?from=${from}&to=${to}`, '_blank');
   }
 }

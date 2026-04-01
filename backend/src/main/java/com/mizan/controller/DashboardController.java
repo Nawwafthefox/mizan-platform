@@ -1,15 +1,20 @@
 package com.mizan.controller;
+import com.mizan.model.BranchPurchase;
 import com.mizan.model.BranchSale;
 import com.mizan.model.EmployeeSale;
 import com.mizan.model.MothanTransaction;
+import com.mizan.model.BranchPurchaseRate;
+import com.mizan.repository.BranchPurchaseRateRepository;
 import com.mizan.repository.BranchSaleRepository;
 import com.mizan.repository.BranchTargetRepository;
 import com.mizan.repository.EmployeeSaleRepository;
 import com.mizan.repository.MothanTransactionRepository;
 import com.mizan.security.MizanUserDetails;
 import com.mizan.security.TenantContext;
+import com.mizan.repository.BranchPurchaseRepository;
 import com.mizan.service.DashboardService;
 import com.mizan.service.DashboardService.BranchData;
+import com.mizan.service.UploadService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,17 +31,26 @@ public class DashboardController {
     private final MothanTransactionRepository mothanRepo;
     private final BranchSaleRepository saleRepo;
     private final BranchTargetRepository targetRepo;
+    private final BranchPurchaseRateRepository rateRepo;
+    private final BranchPurchaseRepository purchRepo;
+    private final UploadService uploadSvc;
 
     public DashboardController(DashboardService dashSvc,
             EmployeeSaleRepository empRepo,
             MothanTransactionRepository mothanRepo,
             BranchSaleRepository saleRepo,
-            BranchTargetRepository targetRepo) {
+            BranchTargetRepository targetRepo,
+            BranchPurchaseRateRepository rateRepo,
+            BranchPurchaseRepository purchRepo,
+            UploadService uploadSvc) {
         this.dashSvc = dashSvc;
         this.empRepo = empRepo;
         this.mothanRepo = mothanRepo;
         this.saleRepo = saleRepo;
         this.targetRepo = targetRepo;
+        this.rateRepo = rateRepo;
+        this.purchRepo = purchRepo;
+        this.uploadSvc = uploadSvc;
     }
 
     @GetMapping("/summary")
@@ -63,6 +77,17 @@ public class DashboardController {
         double overallPurchRate = r4(totalPurchWt > 0 ? totalPurch / totalPurchWt : 0);
         BranchData top = branches.stream().max(Comparator.comparingDouble(BranchData::sar)).orElse(null);
 
+        double totalBranchPurch   = branches.stream().mapToDouble(BranchData::purch).sum();
+        double totalBranchPurchWt = branches.stream().mapToDouble(BranchData::purchWt).sum();
+        double totalMothanSar     = branches.stream().mapToDouble(BranchData::mothan).sum();
+        double totalMothanWt      = branches.stream().mapToDouble(BranchData::mothanWt).sum();
+        long   mothanTxnCount     = mothanRepo.findByTenantAndRange(tenantId, from, to).size();
+        double totalReturns       = branches.stream().mapToDouble(BranchData::returns).sum();
+        long   returnBranchCount  = branches.stream().filter(b -> b.returns() > 0).count();
+        long   negativeBranches   = branches.stream().filter(b -> b.diffRate() < 0).count();
+        BranchData topReturn = branches.stream().filter(b -> b.returns() > 0)
+            .max(Comparator.comparingDouble(BranchData::returns)).orElse(null);
+
         Map<String,Object> kpi = new LinkedHashMap<>();
         kpi.put("totalSalesAmount", totalSar);
         kpi.put("totalPurchasesAmount", totalPurch);
@@ -78,6 +103,17 @@ public class DashboardController {
         kpi.put("lossBranches", loss);
         kpi.put("topBranchName", top != null ? top.name() : "");
         kpi.put("topBranchSar", top != null ? top.sar() : 0);
+        kpi.put("totalBranchPurchases", totalBranchPurch);
+        kpi.put("totalBranchPurchaseWeight", totalBranchPurchWt);
+        kpi.put("totalMothan", totalMothanSar);
+        kpi.put("totalMothanWeight", totalMothanWt);
+        kpi.put("mothanTxnCount", mothanTxnCount);
+        kpi.put("totalReturns", totalReturns);
+        kpi.put("returnBranchCount", returnBranchCount);
+        kpi.put("topReturnBranchName", topReturn != null ? topReturn.name() : "");
+        kpi.put("topReturnBranchSar", topReturn != null ? topReturn.returns() : 0);
+        kpi.put("topReturnBranchDays", topReturn != null ? topReturn.returnDays() : 0);
+        kpi.put("negativeBranches", negativeBranches);
         kpi.put("dateRange", Map.of("from", from.toString(), "to", to.toString()));
 
         return ResponseEntity.ok(Map.of("success",true,"data",kpi));
@@ -110,6 +146,22 @@ public class DashboardController {
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
 
         List<String> scoped = dashSvc.resolveScopedBranches(principal);
+
+        // Load targets for the month of `from`
+        Map<String, com.mizan.model.BranchTarget> targetByBranch =
+            targetRepo.findByTenantIdAndTargetDateBetween(tenantId,
+                from.withDayOfMonth(1), from.withDayOfMonth(from.lengthOfMonth()))
+            .stream().collect(Collectors.toMap(
+                com.mizan.model.BranchTarget::getBranchCode,
+                t -> t, (a, b_) -> a));
+
+        // Build branch purchase rate map: period-actual rate first, fallback to saved rate
+        List<BranchData> branchSummaries = dashSvc.getBranchSummaries(tenantId, from, to, scoped);
+        Map<String,Double> branchPurchRates = branchSummaries.stream()
+            .collect(Collectors.toMap(BranchData::code, BranchData::purchRate, (a,b_)->a));
+        Map<String,Double> savedRates = rateRepo.findByTenantId(tenantId).stream()
+            .collect(Collectors.toMap(BranchPurchaseRate::getBranchCode, BranchPurchaseRate::getPurchaseRate, (a,b_)->a));
+
         List<EmployeeSale> sales = scoped == null
             ? empRepo.findByTenantAndRange(tenantId, from, to)
             : empRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scoped);
@@ -133,17 +185,48 @@ public class DashboardController {
             double totalWt = empSales.stream().mapToDouble(EmployeeSale::getNetWeight).sum();
             int invoiceCount = empSales.stream().mapToInt(EmployeeSale::getInvoiceCount).sum();
             double saleRate = totalWt > 0 ? totalSar / totalWt : 0;
+            double returns = empSales.stream()
+                .filter(s -> s.isReturn() || s.getTotalSarAmount() < 0)
+                .mapToDouble(s -> Math.abs(s.getTotalSarAmount())).sum();
+            long returnDays = empSales.stream()
+                .filter(s -> s.isReturn() || s.getTotalSarAmount() < 0).count();
+            com.mizan.model.BranchTarget target = targetByBranch.get(first.getBranchCode());
+            double targetWeight = target != null ? target.getTargetNetWeightDaily() * empSales.size() : 0;
+            double actualWeight = Math.abs(totalWt);
+            double achievementPct = targetWeight > 0 ? (actualWeight / targetWeight) * 100 : 0;
+            String achievementStatus = achievementPct >= 100 ? "exceeded" : achievementPct >= 70 ? "onTrack" : "behind";
+
+            String bCode = first.getBranchCode();
+            double purchRate = branchPurchRates.getOrDefault(bCode,
+                savedRates.getOrDefault(bCode, 0.0));
+            double diffRate = Math.round((saleRate - purchRate) * 10) / 10.0;
+            double profitMargin = purchRate > 0 ? Math.round(totalWt * diffRate * 100) / 100.0 : 0;
+            double avgInvoice = invoiceCount > 0 ? Math.round(totalSar / invoiceCount * 100) / 100.0 : 0;
 
             Map<String,Object> row = new LinkedHashMap<>();
             row.put("employeeId", entry.getKey());
             row.put("employeeName", first.getEmployeeName());
-            row.put("branchCode", first.getBranchCode());
+            row.put("branchCode", bCode);
             row.put("branchName", first.getBranchName());
             row.put("region", first.getRegion());
             row.put("totalSar", totalSar);
             row.put("totalWt", totalWt);
             row.put("invoiceCount", invoiceCount);
             row.put("saleRate", saleRate);
+            row.put("purchRate", purchRate);
+            row.put("diffRate", diffRate);
+            row.put("profitMargin", profitMargin);
+            row.put("avgInvoice", avgInvoice);
+            String rating = saleRate >= 700 ? "excellent" : saleRate >= 600 ? "good" : saleRate >= 500 ? "average" : "weak";
+            row.put("achieved", saleRate > purchRate);
+            row.put("rating", rating);
+            row.put("days", empSales.size());
+            row.put("returns", returns);
+            row.put("returnDays", returnDays);
+            row.put("targetWeight", targetWeight);
+            row.put("actualWeight", actualWeight);
+            row.put("achievementPct", achievementPct);
+            row.put("achievementStatus", achievementStatus);
             result.add(row);
         }
 
@@ -325,6 +408,7 @@ public class DashboardController {
         delta.put("totalPurch", purch2 - purch1);
         delta.put("net", net2 - net1);
         delta.put("totalSarPct", sar1 != 0 ? (sar2-sar1)/sar1*100 : 0);
+        delta.put("totalPurchPct", purch1 != 0 ? (purch2-purch1)/purch1*100 : 0);
         delta.put("netPct", net1 != 0 ? (net2-net1)/net1*100 : 0);
 
         // Merge branch data
@@ -347,8 +431,14 @@ public class DashboardController {
         }
         for (Map<String,Object> m : mergedByBranch.values()) {
             double s1 = (double) m.get("sar1"), s2 = (double) m.get("sar2");
+            double p1 = (double) m.get("purch1"), p2 = (double) m.get("purch2");
+            double n1 = (double) m.get("net1"), n2 = (double) m.get("net2");
             m.put("sarDelta", s2 - s1);
             m.put("sarDeltaPct", s1 != 0 ? (s2-s1)/s1*100 : 0);
+            m.put("purchDelta", p2 - p1);
+            m.put("purchDeltaPct", p1 != 0 ? (p2-p1)/p1*100 : 0);
+            m.put("netDelta", n2 - n1);
+            m.put("netDeltaPct", n1 != 0 ? (n2-n1)/n1*100 : 0);
         }
 
         Map<String,Object> result = new LinkedHashMap<>();
@@ -391,11 +481,36 @@ public class DashboardController {
         List<BranchData> branches = dashSvc.getBranchSummaries(tenantId, from, to, dashSvc.resolveScopedBranches(principal));
         List<Map<String,Object>> alerts = new ArrayList<>();
         for (BranchData b : branches) {
-            if (b.purchRate() > 0) {
-                if (b.diffRate() < 0) alerts.add(alert(b,"CRITICAL","فرق معدل سلبي","Negative rate difference"));
-                else if (b.diffRate() < 5) alerts.add(alert(b,"WARNING","فرق معدل منخفض","Low rate difference"));
+            if (b.purchRate() > 0 && b.diffRate() < 0)
+                alerts.add(alert(b,"CRITICAL","فرق معدل سلبي","Negative rate difference"));
+            if (b.purch() == 0 && b.mothan() == 0)
+                alerts.add(alert(b,"INFO","لا توجد مشتريات","No purchases recorded"));
+            if (b.returns() > 0) {
+                double returnPct = b.sar() > 0 ? (b.returns() / b.sar()) * 100 : 0;
+                long pctRounded = Math.round(returnPct);
+                long returnsRounded = Math.round(b.returns());
+                if (returnPct >= 10) {
+                    alerts.add(alertWithReturns(b,"CRITICAL",
+                        "حرج: مرتجعات " + pctRounded + "% من المبيعات (" + returnsRounded + " ر.س)",
+                        "Critical: returns " + pctRounded + "% of sales",
+                        returnPct));
+                } else if (returnPct >= 5) {
+                    alerts.add(alertWithReturns(b,"WARNING",
+                        "تحذير: مرتجعات " + pctRounded + "% من المبيعات",
+                        "Warning: returns " + pctRounded + "% of sales",
+                        returnPct));
+                } else {
+                    alerts.add(alertWithReturns(b,"INFO",
+                        "مرتجعات " + returnsRounded + " ر.س (" + b.returnDays() + " يوم)",
+                        "Returns " + returnsRounded + " SAR (" + b.returnDays() + " days)",
+                        returnPct));
+                }
             }
-            if (b.purch() == 0 && b.mothan() == 0) alerts.add(alert(b,"INFO","لا توجد مشتريات","No purchases recorded"));
+            if (b.returnDays() >= 3)
+                alerts.add(alertWithReturns(b,"CRITICAL",
+                    "مرتجعات لمدة " + b.returnDays() + " أيام متتالية — يحتاج تحقيق",
+                    "Returns for " + b.returnDays() + " days — requires investigation",
+                    b.sar() > 0 ? (b.returns() / b.sar()) * 100 : 0));
         }
         return ResponseEntity.ok(Map.of("success",true,"data",alerts));
     }
@@ -407,11 +522,96 @@ public class DashboardController {
         return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
     }
 
+    @PostMapping("/merge-rates")
+    public ResponseEntity<?> mergeRates(
+            @RequestParam @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue="false") boolean save,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.status(403).body(Map.of("success",false));
+
+        List<BranchPurchase> purchases = purchRepo.findByTenantAndRange(tenantId, from, to);
+        List<MothanTransaction> mothans = mothanRepo.findByTenantAndRange(tenantId, from, to);
+
+        // Accumulate per branch
+        Map<String, double[]> bmap = new LinkedHashMap<>();
+        // slot: [0]=purchSar [1]=purchWt [2]=mothanSar [3]=mothanWt
+        Map<String, String[]> bmeta = new LinkedHashMap<>(); // [0]=branchName [1]=region
+
+        for (BranchPurchase p : purchases) {
+            bmap.computeIfAbsent(p.getBranchCode(), k -> new double[4]);
+            bmeta.putIfAbsent(p.getBranchCode(), new String[]{p.getBranchName(), p.getRegion()});
+            bmap.get(p.getBranchCode())[0] += p.getTotalSarAmount();
+            bmap.get(p.getBranchCode())[1] += p.getNetWeight();
+        }
+        for (MothanTransaction m : mothans) {
+            if (m.getGoldWeightGrams() <= 0) continue;
+            bmap.computeIfAbsent(m.getBranchCode(), k -> new double[4]);
+            bmeta.putIfAbsent(m.getBranchCode(), new String[]{m.getBranchName(), "غير محدد"});
+            bmap.get(m.getBranchCode())[2] += m.getCreditSar();
+            bmap.get(m.getBranchCode())[3] += m.getGoldWeightGrams();
+        }
+
+        List<Map<String,Object>> result = new ArrayList<>();
+        for (Map.Entry<String, double[]> entry : bmap.entrySet()) {
+            String code = entry.getKey();
+            double[] v = entry.getValue();
+            String[] meta = bmeta.get(code);
+            double totalSar = v[0] + v[2];
+            double totalWt  = v[1] + v[3];
+            double rate = totalWt > 0 ? Math.round(totalSar / totalWt * 10000) / 10000.0 : 0;
+
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("branchCode", code);
+            row.put("branchName", meta[0]);
+            row.put("region", meta[1]);
+            row.put("purchSar", v[0]);
+            row.put("purchWt", v[1]);
+            row.put("mothanSar", v[2]);
+            row.put("mothanWt", v[3]);
+            row.put("totalSar", totalSar);
+            row.put("totalWt", totalWt);
+            row.put("purchaseRate", rate);
+            result.add(row);
+
+            if (save && rate > 0) {
+                BranchPurchaseRate bpr = rateRepo
+                    .findByTenantIdAndBranchCode(tenantId, code)
+                    .orElseGet(() -> { BranchPurchaseRate n = new BranchPurchaseRate();
+                        n.setTenantId(tenantId); n.setBranchCode(code); return n; });
+                bpr.setBranchName(meta[0]);
+                bpr.setPurchaseRate(rate);
+                bpr.setUpdatedAt(java.time.LocalDateTime.now());
+                bpr.setUpdatedBy(principal.getUserId());
+                rateRepo.save(bpr);
+            }
+        }
+
+        if (save) uploadSvc.syncEmployeePurchaseRates(tenantId);
+
+        result.sort((a,b_) -> Double.compare((double)b_.get("totalSar"), (double)a.get("totalSar")));
+        return ResponseEntity.ok(Map.of("success",true,"data",result,
+            "saved", save, "branchCount", result.size()));
+    }
+
     private static double r4(double v) { return Math.round(v * 10000.0) / 10000.0; }
 
     private Map<String,Object> alert(BranchData b, String severity, String msgAr, String msgEn) {
         return Map.of("branchCode",b.code(),"branchName",b.name(),"severity",severity,
             "messageAr",msgAr,"messageEn",msgEn,"diffRate",b.diffRate());
+    }
+
+    private Map<String,Object> alertWithReturns(BranchData b, String severity, String msgAr, String msgEn, double returnPct) {
+        Map<String,Object> m = new LinkedHashMap<>();
+        m.put("branchCode", b.code()); m.put("branchName", b.name());
+        m.put("severity", severity);
+        m.put("messageAr", msgAr); m.put("messageEn", msgEn);
+        m.put("diffRate", b.diffRate());
+        m.put("returns", b.returns());
+        m.put("returnPct", Math.round(returnPct * 10) / 10.0);
+        m.put("returnDays", b.returnDays());
+        return m;
     }
 
     private Map<String,Object> emptyKpi(LocalDate from, LocalDate to) {

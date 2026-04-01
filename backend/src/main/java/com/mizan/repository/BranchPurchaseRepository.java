@@ -13,4 +13,5 @@ public interface BranchPurchaseRepository extends MongoRepository<BranchPurchase
     boolean existsByTenantIdAndPurchaseDateAndBranchCodeAndSourceFileName(String t, LocalDate d, String b, String f);
     List<SourceFileProjection> findByTenantId(String tenantId);
     void deleteByTenantId(String tenantId);
+    void deleteByTenantIdAndPurchaseDateBetween(String tenantId, LocalDate from, LocalDate to);
 }

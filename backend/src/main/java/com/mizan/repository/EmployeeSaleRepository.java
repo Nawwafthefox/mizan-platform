@@ -15,6 +15,7 @@ public interface EmployeeSaleRepository extends MongoRepository<EmployeeSale, St
     boolean existsByTenantIdAndSaleDateAndEmployeeIdAndSourceFileName(String t, LocalDate d, String e, String f);
     List<SourceFileProjection> findByTenantId(String tenantId);
     void deleteByTenantId(String tenantId);
+    void deleteByTenantIdAndSaleDateBetween(String tenantId, LocalDate from, LocalDate to);
     @Query("{'tenantId':?0,'branchCode':?1}")
     List<EmployeeSale> findByTenantAndBranch(String tenantId, String branchCode);
 }

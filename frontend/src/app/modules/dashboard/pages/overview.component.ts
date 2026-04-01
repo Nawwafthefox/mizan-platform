@@ -11,6 +11,7 @@ import { KpiRingCardComponent } from '../../../shared/components/kpi-ring-card/k
 import { SaudiMapComponent } from '../../../shared/components/saudi-map/saudi-map.component';
 import { MizanPipe } from '../../../shared/pipes/mizan.pipe';
 import { fmtN, fmtSar, fmtWt } from '../../../shared/utils/format.utils';
+import { UploadService } from '../../../core/services/upload.service';
 import { Chart, registerables } from 'chart.js';
 
 Chart.register(...registerables);
@@ -39,6 +40,7 @@ interface KpiCard {
         <h2>نظرة عامة</h2>
         <p>لوحة التحكم الرئيسية</p>
       </div>
+      <button class="export-btn" (click)="exportCsv()">⬇ تصدير</button>
     </div>
 
     <app-date-filter (dateChange)="load()"></app-date-filter>
@@ -229,12 +231,19 @@ interface KpiCard {
       padding: .75rem 1rem; border-bottom: 1px solid var(--mz-border, rgba(201,168,76,.14));
     }
     .card__header h3 { font-size: .95rem; font-weight: 600; margin: 0; }
+    .export-btn {
+      padding: .3rem .85rem; border-radius: 20px; font-size: .78rem; font-weight: 600; cursor: pointer;
+      background: rgba(201,168,76,.12); color: var(--mz-gold, #c9a84c);
+      border: 1px solid rgba(201,168,76,.3);
+    }
+    .export-btn:hover { background: rgba(201,168,76,.22); }
   `]
 })
 export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
   private svc = inject(DashboardService);
   ana = inject(AnalyticsService);
   private dr = inject(DateRangeService);
+  private uploadSvc = inject(UploadService);
 
   @ViewChild('barChart')      barChartRef!: ElementRef<HTMLCanvasElement>;
   @ViewChild('doughnutChart') doughnutChartRef!: ElementRef<HTMLCanvasElement>;
@@ -365,10 +374,52 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
         color: '#c9a84c',
         sub: s.topBranchSar ? fmtN(s.topBranchSar) + ' ر.س' : ''
       },
+      {
+        icon: '🏬',
+        label: 'مشتريات الفروع',
+        value: fmtN(s.totalBranchPurchases ?? 0),
+        unit: 'ر.س',
+        pct: Math.min(100, ((s.totalBranchPurchases ?? 0) / Math.max(s.totalPurchasesAmount ?? 1, 1)) * 100),
+        color: '#34d399',
+        sub: fmtWt(s.totalBranchPurchaseWeight ?? 0)
+      },
+      {
+        icon: '🪙',
+        label: 'موطن الذهب',
+        value: fmtN(s.totalMothan ?? 0),
+        unit: 'ر.س',
+        pct: Math.min(100, ((s.totalMothan ?? 0) / Math.max(s.totalPurchasesAmount ?? 1, 1)) * 100),
+        color: '#c9a84c',
+        sub: fmtWt(s.totalMothanWeight ?? 0) + ' · ' + (s.mothanTxnCount ?? 0) + ' عملية'
+      },
+      {
+        icon: '↩️',
+        label: 'إجمالي المرتجعات',
+        value: fmtN(s.totalReturns ?? 0),
+        unit: 'ر.س',
+        pct: Math.min(100, ((s.totalReturns ?? 0) / Math.max(s.totalSalesAmount ?? 1, 1)) * 100),
+        color: '#f87171',
+        valueClass: (s.totalReturns ?? 0) > 0 ? 'neg' : '',
+        sub: (s.returnBranchCount ?? 0) + ' فرع · ' +
+             (((s.totalReturns ?? 0) / Math.max(s.totalSalesAmount ?? 1, 1)) * 100).toFixed(1) + '%'
+      },
+      {
+        icon: '⚠️',
+        label: 'أعلى فرع مرتجعات',
+        value: s.topReturnBranchName || '—',
+        unit: '',
+        pct: s.topReturnBranchSar && s.totalReturns
+               ? Math.min(100, (s.topReturnBranchSar / s.totalReturns) * 100) : 0,
+        color: '#f87171',
+        sub: s.topReturnBranchSar
+               ? fmtN(s.topReturnBranchSar) + ' ر.س · ' + (s.topReturnBranchDays ?? 0) + ' يوم' : ''
+      },
     ];
   });
 
   ngOnInit(): void { this.load(); }
+
+  exportCsv(): void { this.uploadSvc.exportCsv('summary', this.dr.getFrom(), this.dr.getTo()); }
 
   ngAfterViewInit(): void {
     this.viewReady = true;
