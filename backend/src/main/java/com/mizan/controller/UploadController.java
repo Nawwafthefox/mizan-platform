@@ -102,40 +102,36 @@ public class UploadController {
     public ResponseEntity<?> uploadBranchSales(
             @RequestParam("files") List<MultipartFile> files,
             @RequestParam("uploadId") String uploadId,
-            @RequestParam(value="replace", defaultValue="true") boolean replace,
             @AuthenticationPrincipal MizanUserDetails principal) {
-        return handleTyped(files, uploadId, replace, FileType.BRANCH_SALES, principal);
+        return handleTyped(files, uploadId, FileType.BRANCH_SALES, principal);
     }
 
     @PostMapping("/employee-sales")
     public ResponseEntity<?> uploadEmployeeSales(
             @RequestParam("files") List<MultipartFile> files,
             @RequestParam("uploadId") String uploadId,
-            @RequestParam(value="replace", defaultValue="true") boolean replace,
             @AuthenticationPrincipal MizanUserDetails principal) {
-        return handleTyped(files, uploadId, replace, FileType.EMPLOYEE_SALES, principal);
+        return handleTyped(files, uploadId, FileType.EMPLOYEE_SALES, principal);
     }
 
     @PostMapping("/purchases")
     public ResponseEntity<?> uploadPurchases(
             @RequestParam("files") List<MultipartFile> files,
             @RequestParam("uploadId") String uploadId,
-            @RequestParam(value="replace", defaultValue="true") boolean replace,
             @AuthenticationPrincipal MizanUserDetails principal) {
-        return handleTyped(files, uploadId, replace, FileType.PURCHASES, principal);
+        return handleTyped(files, uploadId, FileType.PURCHASES, principal);
     }
 
     @PostMapping("/mothan")
     public ResponseEntity<?> uploadMothan(
             @RequestParam("files") List<MultipartFile> files,
             @RequestParam("uploadId") String uploadId,
-            @RequestParam(value="replace", defaultValue="true") boolean replace,
             @AuthenticationPrincipal MizanUserDetails principal) {
-        return handleTyped(files, uploadId, replace, FileType.MOTHAN, principal);
+        return handleTyped(files, uploadId, FileType.MOTHAN, principal);
     }
 
     private ResponseEntity<?> handleTyped(List<MultipartFile> files, String uploadId,
-            boolean replace, FileType fileType, MizanUserDetails principal) {
+            FileType fileType, MizanUserDetails principal) {
         List<FileBytes> fileBytesList = new ArrayList<>();
         List<String> readErrors = new ArrayList<>();
         for (MultipartFile file : files) {
@@ -151,10 +147,10 @@ public class UploadController {
                 "success", false, "message", "تعذّر قراءة الملفات المرفوعة", "details", readErrors));
         }
         String tenantId = TenantContext.getTenantId();
-        uploadSvc.processTypedAsync(fileBytesList, uploadId, tenantId, principal.getUserId(), fileType, replace);
+        uploadSvc.processTypedAsync(fileBytesList, uploadId, tenantId, principal.getUserId(), fileType, true);
         return ResponseEntity.accepted().body(Map.of(
             "success", true, "message", "Processing started",
-            "fileType", fileType.name(), "replace", replace,
+            "fileType", fileType.name(),
             "filesRead", fileBytesList.size(), "readErrors", readErrors));
     }
 }

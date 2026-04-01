@@ -306,7 +306,23 @@ public class ExcelParserService {
             }
             results.add(bs);
         }
-        log.info("Branch sales: {} records", results.size());
+        log.info("parseBranchSales: scanned {} rows, found {} records, date={}", sheet.getLastRowNum(), results.size(), fallbackDate);
+        if (results.isEmpty()) {
+            int nullRows = 0, nonNumericC15 = 0, belowOne = 0, aggSkipped = 0, validDataRows = 0;
+            for (Row row : sheet) {
+                if (row == null) { nullRows++; continue; }
+                Cell c15 = row.getCell(15, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                if (c15 == null) continue;
+                if (c15.getCellType() != CellType.NUMERIC) { nonNumericC15++; continue; }
+                if (c15.getNumericCellValue() < 1) { belowOne++; continue; }
+                String desc = getStr(row, 12);
+                if (desc.contains("Sub Total") || desc.contains("Grand Total")
+                        || desc.contains("مجموع فرعي") || desc.contains("الإجمالي")) { aggSkipped++; continue; }
+                validDataRows++;
+            }
+            log.warn("ZERO RECORDS DIAGNOSTIC (branch-sales): totalRows={}, nullRows={}, nonNumericC15={}, belowOne={}, aggSkipped={}, validDataRows={}",
+                sheet.getLastRowNum(), nullRows, nonNumericC15, belowOne, aggSkipped, validDataRows);
+        }
         return new ParseResult(FileType.BRANCH_SALES, fallbackDate, results, List.of(), List.of(), List.of(), null);
     }
 
@@ -375,7 +391,23 @@ public class ExcelParserService {
             es.setSaleRate(nw != 0 ? round4(es.getTotalSarAmount() / nw) : 0);
             es.setReturn(es.getTotalSarAmount() < 0);
         }
-        log.info("Employee sales: {} records", results.size());
+        log.info("parseEmployeeSales: scanned {} rows, found {} records, date={}", sheet.getLastRowNum(), results.size(), fallbackDate);
+        if (results.isEmpty()) {
+            int nullRows = 0, nonNumericC15 = 0, belowOne = 0, aggSkipped = 0, validDataRows = 0;
+            for (Row row : sheet) {
+                if (row == null) { nullRows++; continue; }
+                Cell c15 = row.getCell(15, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                if (c15 == null) continue;
+                if (c15.getCellType() != CellType.NUMERIC) { nonNumericC15++; continue; }
+                if (c15.getNumericCellValue() < 1) { belowOne++; continue; }
+                String desc = getStr(row, 12);
+                if (desc.contains("Sub Total") || desc.contains("Grand Total")
+                        || desc.contains("مجموع فرعي") || desc.contains("الإجمالي")) { aggSkipped++; continue; }
+                validDataRows++;
+            }
+            log.warn("ZERO RECORDS DIAGNOSTIC (employee-sales): totalRows={}, nullRows={}, nonNumericC15={}, belowOne={}, aggSkipped={}, validDataRows={}",
+                sheet.getLastRowNum(), nullRows, nonNumericC15, belowOne, aggSkipped, validDataRows);
+        }
         return new ParseResult(FileType.EMPLOYEE_SALES, fallbackDate, List.of(), List.of(), results, List.of(), null);
     }
 
@@ -437,7 +469,23 @@ public class ExcelParserService {
             double nw = bp.getNetWeight();
             bp.setPurchaseRate(nw > 0 ? round4(bp.getTotalSarAmount() / nw) : 0);
         }
-        log.info("Purchases: {} records", results.size());
+        log.info("parsePurchases: scanned {} rows, found {} records, date={}", sheet.getLastRowNum(), results.size(), fallbackDate);
+        if (results.isEmpty()) {
+            int nullRows = 0, nonNumericC15 = 0, belowOne = 0, aggSkipped = 0, validDataRows = 0;
+            for (Row row : sheet) {
+                if (row == null) { nullRows++; continue; }
+                Cell c15 = row.getCell(15, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                if (c15 == null) continue;
+                if (c15.getCellType() != CellType.NUMERIC) { nonNumericC15++; continue; }
+                if (c15.getNumericCellValue() < 1) { belowOne++; continue; }
+                String desc = getStr(row, 12);
+                if (desc.contains("Sub Total") || desc.contains("Grand Total")
+                        || desc.contains("مجموع فرعي") || desc.contains("الإجمالي")) { aggSkipped++; continue; }
+                validDataRows++;
+            }
+            log.warn("ZERO RECORDS DIAGNOSTIC (purchases): totalRows={}, nullRows={}, nonNumericC15={}, belowOne={}, aggSkipped={}, validDataRows={}",
+                sheet.getLastRowNum(), nullRows, nonNumericC15, belowOne, aggSkipped, validDataRows);
+        }
         return new ParseResult(FileType.PURCHASES, fallbackDate, List.of(), results, List.of(), List.of(), null);
     }
 

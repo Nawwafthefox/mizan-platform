@@ -6,6 +6,9 @@ import com.mizan.service.ExcelParserService.FileType;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -28,18 +31,20 @@ public class UploadService {
     private final UploadLogRepository logRepo;
     private final Executor uploadExecutor;
     private final com.mizan.repository.BranchPurchaseRateRepository rateRepo;
+    private final MongoTemplate mongoTemplate;
 
     public UploadService(ExcelParserService parser, UploadProgressService progress,
             BranchSaleRepository saleRepo, BranchPurchaseRepository purchRepo,
             EmployeeSaleRepository empRepo, MothanTransactionRepository mothanRepo,
             UploadLogRepository logRepo,
             @Qualifier("uploadExecutor") Executor uploadExecutor,
-            com.mizan.repository.BranchPurchaseRateRepository rateRepo) {
+            com.mizan.repository.BranchPurchaseRateRepository rateRepo,
+            MongoTemplate mongoTemplate) {
         this.parser = parser; this.progress = progress;
         this.saleRepo = saleRepo; this.purchRepo = purchRepo;
         this.empRepo = empRepo; this.mothanRepo = mothanRepo;
         this.logRepo = logRepo; this.uploadExecutor = uploadExecutor;
-        this.rateRepo = rateRepo;
+        this.rateRepo = rateRepo; this.mongoTemplate = mongoTemplate;
     }
 
     // ─── Internal data holders ────────────────────────────────────────────────
@@ -241,8 +246,8 @@ public class UploadService {
     }
 
     /**
-     * Typed upload pipeline — forces a specific FileType, optionally deletes existing data
-     * for the file's date range before inserting. Skips sourceFileName deduplication.
+     * Typed upload pipeline — DELETE-then-INSERT, no sourceFileName deduplication.
+     * Uses MongoTemplate.remove() for reliable inclusive date-range deletes.
      */
     @Async
     public void processTypedAsync(List<FileBytes> files, String uploadId,
@@ -251,38 +256,81 @@ public class UploadService {
         int total = files.size();
         long t0 = System.currentTimeMillis();
 
-        sendSummary(uploadId, "parsing", "جاري تحليل " + total + " ملفات...", 10);
+        sendSummary(uploadId, "parsing", "جاري تحليل الملفات...", 10);
 
-        // Parse all files in parallel using forced type
-        List<CompletableFuture<ParsedFile>> futures = files.stream().map(fb ->
-            CompletableFuture.supplyAsync(() -> {
-                try {
-                    var r = parser.parseForced(new ByteArrayInputStream(fb.bytes()),
-                        fb.originalFilename(), tenantId, uploadId, userId, fileType);
-                    return new ParsedFile(fb.originalFilename(), r, r.error());
-                } catch (Exception e) {
-                    return new ParsedFile(fb.originalFilename(), null, e.getMessage());
-                }
-            }, uploadExecutor)
-        ).toList();
+        // ── Phase 1: Parse all files sequentially with forced type ────────────
+        List<ParsedFile> parsed = new ArrayList<>();
+        for (FileBytes fb : files) {
+            try {
+                var r = parser.parseForced(new ByteArrayInputStream(fb.bytes()),
+                    fb.originalFilename(), tenantId, uploadId, userId, fileType);
+                parsed.add(new ParsedFile(fb.originalFilename(), r, r.error()));
+            } catch (Exception e) {
+                parsed.add(new ParsedFile(fb.originalFilename(), null, e.getMessage()));
+            }
+        }
 
-        List<ParsedFile> parsed = futures.stream()
-            .map(f -> { try { return f.get(90, TimeUnit.SECONDS); }
-                        catch (Exception e) { return null; } })
-            .filter(Objects::nonNull)
-            .toList();
-
-        sendSummary(uploadId, "replace", "جاري حذف البيانات القديمة إن وجدت...", 40);
-
-        // Collect all records and determine date ranges for replace
-        List<BranchSale>        allSales  = new ArrayList<>();
-        List<BranchPurchase>    allPurch  = new ArrayList<>();
-        List<EmployeeSale>      allEmp    = new ArrayList<>();
-        List<MothanTransaction> allMothan = new ArrayList<>();
-        List<FileResult>        fileResults = new ArrayList<>();
-
-        // Collect date range across all parsed files for bulk delete
+        // ── Phase 2: Determine date range from actual record dates ────────────
         LocalDate minDate = null, maxDate = null;
+        for (ParsedFile pf : parsed) {
+            if (pf.result() == null) continue;
+            var r = pf.result();
+            // Use file-level date
+            LocalDate fd = r.fileDate();
+            if (fd != null) {
+                if (minDate == null || fd.isBefore(minDate)) minDate = fd;
+                if (maxDate == null || fd.isAfter(maxDate))  maxDate = fd;
+            }
+            // Also scan actual record dates for accuracy
+            for (BranchSale s : r.sales()) {
+                if (s.getSaleDate() == null) continue;
+                if (minDate == null || s.getSaleDate().isBefore(minDate)) minDate = s.getSaleDate();
+                if (maxDate == null || s.getSaleDate().isAfter(maxDate))  maxDate = s.getSaleDate();
+            }
+            for (EmployeeSale s : r.empSales()) {
+                if (s.getSaleDate() == null) continue;
+                if (minDate == null || s.getSaleDate().isBefore(minDate)) minDate = s.getSaleDate();
+                if (maxDate == null || s.getSaleDate().isAfter(maxDate))  maxDate = s.getSaleDate();
+            }
+            for (BranchPurchase p : r.purchases()) {
+                if (p.getPurchaseDate() == null) continue;
+                if (minDate == null || p.getPurchaseDate().isBefore(minDate)) minDate = p.getPurchaseDate();
+                if (maxDate == null || p.getPurchaseDate().isAfter(maxDate))  maxDate = p.getPurchaseDate();
+            }
+            for (MothanTransaction m : r.mothan()) {
+                if (m.getTransactionDate() == null) continue;
+                if (minDate == null || m.getTransactionDate().isBefore(minDate)) minDate = m.getTransactionDate();
+                if (maxDate == null || m.getTransactionDate().isAfter(maxDate))  maxDate = m.getTransactionDate();
+            }
+        }
+
+        // ── Phase 3: DELETE existing records via MongoTemplate (reliable >=/<= bounds) ─
+        sendSummary(uploadId, "deleting", "جاري حذف البيانات القديمة...", 40);
+        if (replace && minDate != null && maxDate != null) {
+            log.info("Typed upload ({}): deleting tenant={} records from {} to {}", fileType, tenantId, minDate, maxDate);
+            Criteria baseCriteria = Criteria.where("tenantId").is(tenantId);
+            switch (fileType) {
+                case BRANCH_SALES -> mongoTemplate.remove(
+                    Query.query(baseCriteria.and("saleDate").gte(minDate).lte(maxDate)),
+                    BranchSale.class);
+                case EMPLOYEE_SALES -> mongoTemplate.remove(
+                    Query.query(baseCriteria.and("saleDate").gte(minDate).lte(maxDate)),
+                    EmployeeSale.class);
+                case PURCHASES -> mongoTemplate.remove(
+                    Query.query(baseCriteria.and("purchaseDate").gte(minDate).lte(maxDate)),
+                    BranchPurchase.class);
+                case MOTHAN -> mongoTemplate.remove(
+                    Query.query(baseCriteria.and("transactionDate").gte(minDate).lte(maxDate)),
+                    MothanTransaction.class);
+                default -> {}
+            }
+        }
+
+        // ── Phase 4: INSERT all records (no deduplication) ───────────────────
+        sendSummary(uploadId, "saving", "جاري حفظ البيانات...", 60);
+
+        int totalSaved = 0;
+        List<FileResult> fileResults = new ArrayList<>();
 
         for (ParsedFile pf : parsed) {
             if (pf.error() != null || pf.result() == null) {
@@ -291,48 +339,22 @@ public class UploadService {
                 continue;
             }
             var r = pf.result();
-            LocalDate fd = r.fileDate();
-            if (fd != null) {
-                if (minDate == null || fd.isBefore(minDate)) minDate = fd;
-                if (maxDate == null || fd.isAfter(maxDate)) maxDate = fd;
-            }
-            switch (fileType) {
-                case BRANCH_SALES   -> { allSales.addAll(r.sales());       fileResults.add(new FileResult(pf.filename(), fileType.name(), r.sales().size(), 0, null)); }
-                case EMPLOYEE_SALES -> { allEmp.addAll(r.empSales());      fileResults.add(new FileResult(pf.filename(), fileType.name(), r.empSales().size(), 0, null)); }
-                case PURCHASES      -> { allPurch.addAll(r.purchases());   fileResults.add(new FileResult(pf.filename(), fileType.name(), r.purchases().size(), 0, null)); }
-                case MOTHAN         -> { allMothan.addAll(r.mothan());     fileResults.add(new FileResult(pf.filename(), fileType.name(), r.mothan().size(), 0, null)); }
-                default             -> fileResults.add(new FileResult(pf.filename(), fileType.name(), 0, 0, "نوع ملف غير معروف"));
-            }
+            int saved = switch (fileType) {
+                case BRANCH_SALES   -> bulkSave(saleRepo,   r.sales());
+                case EMPLOYEE_SALES -> bulkSave(empRepo,    r.empSales());
+                case PURCHASES      -> bulkSave(purchRepo,  r.purchases());
+                case MOTHAN         -> bulkSave(mothanRepo, r.mothan());
+                default -> 0;
+            };
+            totalSaved += saved;
+            fileResults.add(new FileResult(pf.filename(), fileType.name(), saved, 0, null));
         }
 
-        // Delete existing records in the date range before inserting
-        if (replace && minDate != null && maxDate != null) {
-            switch (fileType) {
-                case BRANCH_SALES   -> saleRepo.deleteByTenantIdAndSaleDateBetween(tenantId, minDate, maxDate);
-                case EMPLOYEE_SALES -> empRepo.deleteByTenantIdAndSaleDateBetween(tenantId, minDate, maxDate);
-                case PURCHASES      -> purchRepo.deleteByTenantIdAndPurchaseDateBetween(tenantId, minDate, maxDate);
-                case MOTHAN         -> mothanRepo.deleteByTenantIdAndTransactionDateBetween(tenantId, minDate, maxDate);
-                default -> {}
-            }
-            log.info("Typed upload ({}): deleted records for tenant={} range={} to {}", fileType, tenantId, minDate, maxDate);
-        }
-
-        sendSummary(uploadId, "saving", "جاري الحفظ في قاعدة البيانات...", 70);
-
-        int savedSales  = bulkSave(saleRepo,   allSales);
-        int savedPurch  = bulkSave(purchRepo,  allPurch);
-        int savedEmp    = bulkSave(empRepo,    allEmp);
-        int savedMothan = bulkSave(mothanRepo, allMothan);
-        int totalSaved  = savedSales + savedPurch + savedEmp + savedMothan;
-
+        // ── Phase 5: Logs + complete event ───────────────────────────────────
         sendSummary(uploadId, "complete", "جاري الانتهاء...", 90);
-
         for (FileResult fr : fileResults) {
-            if (fr.error() != null) {
-                saveLog(tenantId, uploadId, fr.filename(), fr.fileType(), 0, 0, "ERROR", fr.error(), userId);
-            } else {
-                saveLog(tenantId, uploadId, fr.filename(), fr.fileType(), fr.saved(), fr.skipped(), "SUCCESS", null, userId);
-            }
+            saveLog(tenantId, uploadId, fr.filename(), fr.fileType(), fr.saved(), 0,
+                fr.error() != null ? "ERROR" : "SUCCESS", fr.error(), userId);
         }
 
         long elapsed = System.currentTimeMillis() - t0;
@@ -342,6 +364,7 @@ public class UploadService {
             "uploadId",   uploadId,
             "totalFiles", total,
             "totalSaved", totalSaved,
+            "totalSkipped", 0,
             "elapsedMs",  elapsed,
             "status",     "complete"
         ));
