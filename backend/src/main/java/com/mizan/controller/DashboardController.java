@@ -58,9 +58,9 @@ public class DashboardController {
         int totalPcs = branches.stream().mapToInt(BranchData::pcs).sum();
         long profitable = branches.stream().filter(b->b.diffRate()>0).count();
         long loss = branches.stream().filter(b->b.diffRate()<0 && b.purchRate()>0).count();
-        double overallSaleRate = totalWn > 0 ? totalSar / totalWn : 0;
+        double overallSaleRate = r4(totalWn > 0 ? totalSar / totalWn : 0);
         double totalPurchWt = branches.stream().mapToDouble(b->b.purchWt()+b.mothanWt()).sum();
-        double overallPurchRate = totalPurchWt > 0 ? totalPurch / totalPurchWt : 0;
+        double overallPurchRate = r4(totalPurchWt > 0 ? totalPurch / totalPurchWt : 0);
         BranchData top = branches.stream().max(Comparator.comparingDouble(BranchData::sar)).orElse(null);
 
         Map<String,Object> kpi = new LinkedHashMap<>();
@@ -72,7 +72,7 @@ public class DashboardController {
         kpi.put("avgInvoice", totalPcs > 0 ? totalSar / totalPcs : 0);
         kpi.put("saleRate", overallSaleRate);
         kpi.put("purchaseRate", overallPurchRate);
-        kpi.put("rateDifference", overallPurchRate > 0 ? overallSaleRate - overallPurchRate : 0);
+        kpi.put("rateDifference", overallPurchRate > 0 ? r4(overallSaleRate - overallPurchRate) : 0);
         kpi.put("branchCount", branches.size());
         kpi.put("profitableBranches", profitable);
         kpi.put("lossBranches", loss);
@@ -406,6 +406,8 @@ public class DashboardController {
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
         return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
     }
+
+    private static double r4(double v) { return Math.round(v * 10000.0) / 10000.0; }
 
     private Map<String,Object> alert(BranchData b, String severity, String msgAr, String msgEn) {
         return Map.of("branchCode",b.code(),"branchName",b.name(),"severity",severity,

@@ -96,14 +96,14 @@ public class DashboardService {
         }
 
         return bmap.values().stream().map(b -> {
-            double saleRate = b.wn > 0 ? b.sar / b.wn : 0;
+            double saleRate = r4(b.wn > 0 ? b.sar / b.wn : 0);
             double combinedWt = b.purchWt + b.mothanWt;
-            double purchRate = combinedWt > 0
+            double purchRate = r4(combinedWt > 0
                 ? (b.purch + b.mothan) / combinedWt
-                : savedRates.getOrDefault(b.code, 0.0);
-            double diffRate = purchRate > 0 ? saleRate - purchRate : 0;
+                : savedRates.getOrDefault(b.code, 0.0));
+            double diffRate = r4(purchRate > 0 ? saleRate - purchRate : 0);
             double net = b.sar - (b.purch + b.mothan);
-            double avgInvoice = b.pcs > 0 ? b.sar / b.pcs : 0;
+            double avgInvoice = r2(b.pcs > 0 ? b.sar / b.pcs : 0);
             return new BranchData(b.code, b.name, b.region,
                 b.sar, b.wn, b.wp, b.pcs, b.purch, b.purchWt, b.mothan, b.mothanWt,
                 b.k18Sar, b.k18Wt, b.k21Sar, b.k21Wt, b.k22Sar, b.k22Wt, b.k24Sar, b.k24Wt,
@@ -122,6 +122,9 @@ public class DashboardService {
             default -> user.getAllowedBranches();
         };
     }
+
+    private static double r4(double v) { return Math.round(v * 10000.0) / 10000.0; }
+    private static double r2(double v) { return Math.round(v * 100.0)   / 100.0; }
 
     private static class MutableBranch {
         String code,name,region;
