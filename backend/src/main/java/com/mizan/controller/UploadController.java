@@ -9,6 +9,8 @@ import com.mizan.service.ExcelParserService.FileType;
 import com.mizan.service.UploadProgressService;
 import com.mizan.service.UploadService;
 import com.mizan.repository.UploadLogRepository;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.ss.usermodel.*;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -154,9 +156,15 @@ public class UploadController {
         debug.put("forcedType", type.name());
         debug.put("tenantId", tenantId);
 
+        byte[] fileBytes;
+        try { fileBytes = file.getBytes(); } catch (Exception e) {
+            return ResponseEntity.ok(Map.of("success", false, "error", "Cannot read file: " + e.getMessage()));
+        }
+
+        // ── Phase 1: parser result ─────────────────────────────────────────────
         try {
             ExcelParserService.ParseResult result = parser.parseForced(
-                file.getInputStream(), file.getOriginalFilename(),
+                new java.io.ByteArrayInputStream(fileBytes), file.getOriginalFilename(),
                 tenantId, "debug", principal.getUserId(), type);
 
             debug.put("parseError", result.error());
@@ -166,63 +174,84 @@ public class UploadController {
             debug.put("empSalesCount", result.empSales().size());
             debug.put("mothanCount", result.mothan().size());
 
-            List<Map<String, Object>> samples = new ArrayList<>();
-            result.sales().stream().limit(3).forEach(s -> samples.add(new LinkedHashMap<>(Map.of(
-                "type", "BRANCH_SALE",
-                "branchCode", s.getBranchCode() != null ? s.getBranchCode() : "null",
-                "branchName", s.getBranchName() != null ? s.getBranchName() : "null",
-                "date", s.getSaleDate() != null ? s.getSaleDate().toString() : "null",
-                "sar", s.getTotalSarAmount(),
-                "weight", s.getNetWeight(),
-                "invoices", s.getInvoiceCount(),
-                "sourceFileName", s.getSourceFileName() != null ? s.getSourceFileName() : "null"
-            ))));
-            result.empSales().stream().limit(3).forEach(e -> samples.add(new LinkedHashMap<>(Map.of(
-                "type", "EMPLOYEE_SALE",
-                "empId", e.getEmployeeId() != null ? e.getEmployeeId() : "null",
-                "empName", e.getEmployeeName() != null ? e.getEmployeeName() : "null",
-                "branchCode", e.getBranchCode() != null ? e.getBranchCode() : "null",
-                "date", e.getSaleDate() != null ? e.getSaleDate().toString() : "null",
-                "sar", e.getTotalSarAmount(),
-                "weight", e.getNetWeight()
-            ))));
-            result.purchases().stream().limit(3).forEach(p -> samples.add(new LinkedHashMap<>(Map.of(
-                "type", "PURCHASE",
-                "branchCode", p.getBranchCode() != null ? p.getBranchCode() : "null",
-                "date", p.getPurchaseDate() != null ? p.getPurchaseDate().toString() : "null",
-                "sar", p.getTotalSarAmount(),
-                "weight", p.getNetWeight()
-            ))));
-            result.mothan().stream().limit(3).forEach(m -> samples.add(new LinkedHashMap<>(Map.of(
-                "type", "MOTHAN",
-                "branchCode", m.getBranchCode() != null ? m.getBranchCode() : "null",
-                "date", m.getTransactionDate() != null ? m.getTransactionDate().toString() : "null",
-                "sar", m.getCreditSar(),
-                "weight", m.getGoldWeightGrams()
-            ))));
-            debug.put("samples", samples);
-
-            // Dedup analysis for BRANCH_SALES
-            if (type == FileType.BRANCH_SALES && !result.sales().isEmpty()) {
+            if (!result.sales().isEmpty()) {
+                List<Map<String, Object>> samples = new ArrayList<>();
+                result.sales().stream().limit(3).forEach(s -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("branchCode", s.getBranchCode()); m.put("date", String.valueOf(s.getSaleDate()));
+                    m.put("sar", s.getTotalSarAmount()); m.put("weight", s.getNetWeight());
+                    m.put("invoices", s.getInvoiceCount()); m.put("sourceFileName", s.getSourceFileName());
+                    samples.add(m);
+                });
+                debug.put("samples", samples);
+                // Dedup check
                 Set<String> existingKeys = saleRepo.findByTenantId(tenantId).stream()
-                    .map(SourceFileProjection::getSourceFileName)
-                    .filter(Objects::nonNull)
+                    .map(SourceFileProjection::getSourceFileName).filter(Objects::nonNull)
                     .collect(Collectors.toSet());
                 long wouldSkip = result.sales().stream()
                     .filter(s -> existingKeys.contains(s.getSourceFileName())).count();
                 debug.put("existingRecordsInDB", existingKeys.size());
                 debug.put("wouldBeSkippedByDedup", wouldSkip);
                 debug.put("wouldBeInserted", result.sales().size() - wouldSkip);
-                debug.put("conflictingSampleKeys", result.sales().stream()
-                    .filter(s -> existingKeys.contains(s.getSourceFileName()))
-                    .limit(5).map(s -> s.getSourceFileName()).collect(Collectors.toList()));
             }
+        } catch (Exception e) {
+            debug.put("parseException", e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+
+        // ── Phase 2: raw sheet inspection (always runs, independent of parser) ─
+        try (HSSFWorkbook wb = new HSSFWorkbook(new java.io.ByteArrayInputStream(fileBytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+            debug.put("totalRows", sheet.getLastRowNum());
+            debug.put("physicalRows", sheet.getPhysicalNumberOfRows());
+
+            // isDataRow stats
+            int nullRows = 0, c15Null = 0, c15NonNumeric = 0, c15BelowOne = 0, subTotalSkipped = 0, passedFilter = 0;
+            for (Row row : sheet) {
+                if (row == null) { nullRows++; continue; }
+                Cell c15 = row.getCell(15, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                if (c15 == null) { c15Null++; continue; }
+                if (c15.getCellType() != CellType.NUMERIC) { c15NonNumeric++; continue; }
+                if (c15.getNumericCellValue() < 1) { c15BelowOne++; continue; }
+                String desc = "";
+                Cell c12 = row.getCell(12, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                if (c12 != null && c12.getCellType() == CellType.STRING) desc = c12.getStringCellValue();
+                if (desc.startsWith("Sub Total") || desc.startsWith("Grand Total")) { subTotalSkipped++; continue; }
+                passedFilter++;
+            }
+            Map<String, Object> rowStats = new LinkedHashMap<>();
+            rowStats.put("nullRows", nullRows);
+            rowStats.put("col15_null", c15Null);
+            rowStats.put("col15_nonNumeric", c15NonNumeric);
+            rowStats.put("col15_belowOne", c15BelowOne);
+            rowStats.put("subTotalSkipped", subTotalSkipped);
+            rowStats.put("passedIsDataRow", passedFilter);
+            debug.put("isDataRowStats", rowStats);
+
+            // Dump rows 5–30 (skip title rows) showing col12 and col15
+            List<Map<String, Object>> rawRows = new ArrayList<>();
+            for (int i = 5; i <= Math.min(30, sheet.getLastRowNum()); i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+                Map<String, Object> rr = new LinkedHashMap<>();
+                rr.put("rowIdx", i);
+                // Show cols 0, 3, 6, 11, 12, 13, 15 — the key columns
+                int[] cols = {0, 3, 6, 11, 12, 13, 15};
+                for (int c : cols) {
+                    Cell cell = row.getCell(c, Row.MissingCellPolicy.RETURN_BLANK_AS_NULL);
+                    if (cell == null) { rr.put("c" + c, null); continue; }
+                    rr.put("c" + c, switch (cell.getCellType()) {
+                        case NUMERIC -> cell.getNumericCellValue();
+                        case STRING  -> cell.getStringCellValue();
+                        case BOOLEAN -> cell.getBooleanCellValue();
+                        default -> cell.getCellType().name();
+                    });
+                }
+                rawRows.add(rr);
+            }
+            debug.put("rawRows_5to30", rawRows);
 
         } catch (Exception e) {
-            debug.put("exception", e.getClass().getSimpleName() + ": " + e.getMessage());
-            Throwable root = e;
-            while (root.getCause() != null) root = root.getCause();
-            if (root != e) debug.put("rootCause", root.getClass().getSimpleName() + ": " + root.getMessage());
+            debug.put("sheetInspectException", e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
         return ResponseEntity.ok(Map.of("success", true, "debug", debug));
