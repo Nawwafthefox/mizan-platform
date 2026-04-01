@@ -29,7 +29,7 @@ public class DashboardService {
         double purch, double purchWt, double mothan, double mothanWt,
         double k18Sar, double k18Wt, double k21Sar, double k21Wt,
         double k22Sar, double k22Wt, double k24Sar, double k24Wt,
-        double returns, boolean isReturn,
+        double returns, boolean isReturn, int returnDays,
         double saleRate, double purchRate, double diffRate, double net, double avgInvoice
     ) {}
 
@@ -71,7 +71,7 @@ public class DashboardService {
                 k -> new MutableBranch(k, s.getBranchName(), s.getRegion()));
             b.sar += s.getTotalSarAmount(); b.wn += s.getNetWeight();
             b.wp += s.getGrossWeight(); b.pcs += s.getInvoiceCount();
-            if (s.isReturn()) b.returns += s.getTotalSarAmount();
+            if (s.isReturn()) { b.returns += s.getTotalSarAmount(); b.returnDays++; }
             if (s.getKaratRows() != null) {
                 for (KaratRow kr : s.getKaratRows()) {
                     switch (kr.getKarat()) {
@@ -107,7 +107,7 @@ public class DashboardService {
             return new BranchData(b.code, b.name, b.region,
                 b.sar, b.wn, b.wp, b.pcs, b.purch, b.purchWt, b.mothan, b.mothanWt,
                 b.k18Sar, b.k18Wt, b.k21Sar, b.k21Wt, b.k22Sar, b.k22Wt, b.k24Sar, b.k24Wt,
-                b.returns, b.returns > 0,
+                Math.abs(b.returns), b.returns != 0, b.returnDays,
                 saleRate, purchRate, diffRate, net, avgInvoice);
         }).collect(Collectors.toList());
     }
@@ -127,7 +127,7 @@ public class DashboardService {
         String code,name,region;
         double sar,wn,wp,purch,purchWt,mothan,mothanWt,returns;
         double k18Sar,k18Wt,k21Sar,k21Wt,k22Sar,k22Wt,k24Sar,k24Wt;
-        int pcs;
+        int pcs,returnDays;
         MutableBranch(String code,String name,String region){
             this.code=code; this.name=name; this.region=region;
         }
