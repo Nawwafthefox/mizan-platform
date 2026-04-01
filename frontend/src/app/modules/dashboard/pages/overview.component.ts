@@ -417,7 +417,25 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
     ];
   });
 
-  ngOnInit(): void { this.load(); }
+  ngOnInit(): void {
+    this.svc.getLatestDate().subscribe({
+      next: r => {
+        if (r.data?.latestDate) {
+          const latest = new Date(r.data.latestDate);
+          const now = new Date();
+          if (latest.getMonth() !== now.getMonth() ||
+              latest.getFullYear() !== now.getFullYear()) {
+            const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
+            this.dr.fromDate.set(first.toISOString().slice(0, 10));
+            this.dr.toDate.set(r.data.latestDate);
+            this.dr.activePeriod.set('month');
+          }
+        }
+        this.load();
+      },
+      error: () => this.load()
+    });
+  }
 
   exportCsv(): void { this.uploadSvc.exportCsv('summary', this.dr.getFrom(), this.dr.getTo()); }
 

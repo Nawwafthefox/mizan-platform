@@ -1,4 +1,5 @@
 import { Injectable, signal } from '@angular/core';
+import { DashboardService } from './dashboard.service';
 
 @Injectable({ providedIn: 'root' })
 export class DateRangeService {
@@ -48,4 +49,20 @@ export class DateRangeService {
 
   getFrom(): string { return this.fromDate(); }
   getTo(): string { return this.toDate(); }
+
+  autoDetect(dashSvc: DashboardService): void {
+    dashSvc.getLatestDate().subscribe(r => {
+      if (r.data?.latestDate) {
+        const latest = new Date(r.data.latestDate);
+        const now = new Date();
+        if (latest.getMonth() !== now.getMonth() ||
+            latest.getFullYear() !== now.getFullYear()) {
+          const first = new Date(latest.getFullYear(), latest.getMonth(), 1);
+          this.fromDate.set(first.toISOString().slice(0, 10));
+          this.toDate.set(r.data.latestDate);
+          this.activePeriod.set('month');
+        }
+      }
+    });
+  }
 }

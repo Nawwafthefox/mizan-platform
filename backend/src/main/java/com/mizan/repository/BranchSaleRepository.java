@@ -4,8 +4,11 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.mongodb.repository.Query;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 public interface BranchSaleRepository extends MongoRepository<BranchSale, String> {
+    Optional<BranchSale> findFirstByTenantIdOrderBySaleDateDesc(String tenantId);
+    Optional<BranchSale> findFirstByTenantIdOrderBySaleDateAsc(String tenantId);
     @Query("{'tenantId':?0,'saleDate':{$gte:?1,$lte:?2}}")
     List<BranchSale> findByTenantAndRange(String tenantId, LocalDate from, LocalDate to);
     @Query("{'tenantId':?0,'saleDate':{$gte:?1,$lte:?2},'branchCode':{$in:?3}}")

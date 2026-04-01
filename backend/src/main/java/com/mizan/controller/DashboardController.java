@@ -652,6 +652,22 @@ public class DashboardController {
         return ResponseEntity.ok(Map.of("success",true,"data",trend));
     }
 
+    @GetMapping("/latest-date")
+    public ResponseEntity<?> latestDate(@AuthenticationPrincipal MizanUserDetails principal) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.ok(Map.of("success", true, "data", Map.of()));
+
+        var latest = saleRepo.findFirstByTenantIdOrderBySaleDateDesc(tenantId);
+        var earliest = saleRepo.findFirstByTenantIdOrderBySaleDateAsc(tenantId);
+
+        if (latest.isEmpty()) return ResponseEntity.ok(Map.of("success", true, "data", Map.of()));
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("latestDate", latest.get().getSaleDate().toString());
+        data.put("earliestDate", earliest.map(s -> s.getSaleDate().toString()).orElse(latest.get().getSaleDate().toString()));
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
     @GetMapping("/targets")
     public ResponseEntity<?> targets(
             @RequestParam(required=false) String month,

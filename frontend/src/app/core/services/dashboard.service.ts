@@ -95,4 +95,9 @@ export class DashboardService {
     const params = new HttpParams().set('month', month);
     return this.http.get<ApiResponse<any[]>>(`${environment.apiUrl}/dashboard/targets`, { params });
   }
+
+  getLatestDate(): Observable<ApiResponse<any>> {
+    return this.cached('latest-date',
+      this.http.get<ApiResponse<any>>(`${environment.apiUrl}/dashboard/latest-date`));
+  }
 }
