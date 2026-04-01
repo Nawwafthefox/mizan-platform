@@ -44,6 +44,14 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
     @Bean
     CommandLineRunner ensureIndexes(MongoTemplate mt) {
         return args -> {
+            // Drop legacy unique index on sourceFileName — causes DuplicateKeyException on re-upload
+            try {
+                mt.indexOps("employee_sales").dropIndex("sourceFileName_1");
+                log.info("Dropped legacy unique index sourceFileName_1 on employee_sales");
+            } catch (Exception ignored) {
+                log.debug("sourceFileName_1 index not found on employee_sales — nothing to drop");
+            }
+
             mt.indexOps("branch_sales")
                 .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("saleDate", Sort.Direction.ASC));
             mt.indexOps("employee_sales")

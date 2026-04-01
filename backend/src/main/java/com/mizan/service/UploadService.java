@@ -212,25 +212,38 @@ public class UploadService {
      * Batched insert with SSE progress reporting.
      * Splits items into 200-record batches to avoid MongoDB timeout / OOM on large files.
      * Reports progress from 60% → 90% while saving.
+     *
+     * IMPORTANT: on any batch failure we log and skip — we do NOT fall back to
+     * individual saves. Individual fallback would do N sequential MongoDB operations
+     * (one per record) which causes apparent hangs against Atlas when N is large.
+     * For typed uploads (delete-then-insert) there should be no duplicates;
+     * if a batch fails it's a real error that won't be fixed by retrying individually.
      */
     private <T> int bulkSaveBatched(MongoRepository<T, String> repo, List<T> items, String uploadId) {
         if (items.isEmpty()) return 0;
         final int BATCH = 200;
         int totalSaved = 0;
         int total = items.size();
+        int batchNum = 0;
+        int totalBatches = (total + BATCH - 1) / BATCH;
+        log.info("bulkSaveBatched: {} total records, {} batches of {}", total, totalBatches, BATCH);
         for (int i = 0; i < total; i += BATCH) {
+            batchNum++;
             List<T> batch = items.subList(i, Math.min(i + BATCH, total));
+            log.info("Saving batch {}/{} ({} items)...", batchNum, totalBatches, batch.size());
             try {
                 repo.saveAll(batch);
                 totalSaved += batch.size();
+                log.info("Batch {}/{} saved OK — total so far: {}/{}", batchNum, totalBatches, totalSaved, total);
+            } catch (DuplicateKeyException e) {
+                // Duplicate key = unique index conflict; individual retries would all fail too.
+                // Log and skip the batch — caller should drop/avoid unique indexes for typed uploads.
+                log.error("Batch {}/{} skipped — DuplicateKeyException (check unique indexes): {}",
+                    batchNum, totalBatches, e.getMessage());
             } catch (Exception e) {
-                log.warn("Batch {}-{} failed, falling back to individual saves: {}", i, i + batch.size(), e.getMessage());
-                for (T item : batch) {
-                    try { repo.save(item); totalSaved++; }
-                    catch (Exception ignored) { log.debug("Individual save skipped: {}", ignored.getMessage()); }
-                }
+                log.error("Batch {}/{} failed: {}", batchNum, totalBatches, e.getMessage(), e);
             }
-            int pct = 60 + (int)(30.0 * totalSaved / total);
+            int pct = 60 + (int)(30.0 * (i + batch.size()) / total);
             try {
                 progress.send(uploadId, "progress", Map.of(
                     "uploadId", uploadId,
