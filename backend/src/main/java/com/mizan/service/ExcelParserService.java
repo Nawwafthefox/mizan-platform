@@ -317,7 +317,7 @@ public class ExcelParserService {
                 if (c15.getNumericCellValue() < 1) { belowOne++; continue; }
                 String desc = getStr(row, 12);
                 if (desc.contains("Sub Total") || desc.contains("Grand Total")
-                        || desc.contains("مجموع فرعي") || desc.contains("الإجمالي")) { aggSkipped++; continue; }
+                        ) { aggSkipped++; continue; }
                 validDataRows++;
             }
             log.warn("ZERO RECORDS DIAGNOSTIC (branch-sales): totalRows={}, nullRows={}, nonNumericC15={}, belowOne={}, aggSkipped={}, validDataRows={}",
@@ -402,7 +402,7 @@ public class ExcelParserService {
                 if (c15.getNumericCellValue() < 1) { belowOne++; continue; }
                 String desc = getStr(row, 12);
                 if (desc.contains("Sub Total") || desc.contains("Grand Total")
-                        || desc.contains("مجموع فرعي") || desc.contains("الإجمالي")) { aggSkipped++; continue; }
+                        ) { aggSkipped++; continue; }
                 validDataRows++;
             }
             log.warn("ZERO RECORDS DIAGNOSTIC (employee-sales): totalRows={}, nullRows={}, nonNumericC15={}, belowOne={}, aggSkipped={}, validDataRows={}",
@@ -480,7 +480,7 @@ public class ExcelParserService {
                 if (c15.getNumericCellValue() < 1) { belowOne++; continue; }
                 String desc = getStr(row, 12);
                 if (desc.contains("Sub Total") || desc.contains("Grand Total")
-                        || desc.contains("مجموع فرعي") || desc.contains("الإجمالي")) { aggSkipped++; continue; }
+                        ) { aggSkipped++; continue; }
                 validDataRows++;
             }
             log.warn("ZERO RECORDS DIAGNOSTIC (purchases): totalRows={}, nullRows={}, nonNumericC15={}, belowOne={}, aggSkipped={}, validDataRows={}",
@@ -625,7 +625,7 @@ public class ExcelParserService {
      * A row is a data row if:
      *  1. col15 = Sl.# numeric integer >= 1
      *  2. col12 (description) does NOT contain aggregate-row keywords
-     *     (Sub Total / Grand Total / مجموع فرعي / الإجمالي)
+     *     (Sub Total / Grand Total)
      *
      * Branch header rows ("XXXX - Name") and Sub Total rows normally have empty col15,
      * but some aggregate ERP exports incorrectly place a numeric in col15 for total rows.
@@ -636,10 +636,11 @@ public class ExcelParserService {
         if (c15 == null) return false;
         if (c15.getCellType() != CellType.NUMERIC) return false;
         if (c15.getNumericCellValue() < 1) return false;
-        // Guard: skip aggregate / sub-total rows
+        // Guard: skip Sub Total / Grand Total rows that occasionally carry a numeric col15
+        // in aggregate ERP exports. Only check English patterns — Arabic words like
+        // "الإجمالي" also appear inside valid karat/description cells and must not be blocked.
         String desc = getStr(row, 12);
-        if (desc.contains("Sub Total") || desc.contains("Grand Total")
-                || desc.contains("مجموع فرعي") || desc.contains("الإجمالي")) {
+        if (desc.startsWith("Sub Total") || desc.startsWith("Grand Total")) {
             return false;
         }
         return true;
