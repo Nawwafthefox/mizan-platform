@@ -7,6 +7,8 @@ import com.mizan.service.PgImportService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 @RestController
@@ -79,17 +81,20 @@ public class AdminController {
         return ResponseEntity.ok(java.util.Map.of("success", true));
     }
 
-    @PostMapping("/import-pg-data")
+    @PostMapping(value = "/import-pg-data", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> importPgData(
-            @RequestParam(defaultValue = "/Users/macintosh/Desktop/1111111/new_pg.sql") String filePath,
-            @org.springframework.security.core.annotation.AuthenticationPrincipal com.mizan.security.MizanUserDetails principal) {
-        String tenantId = com.mizan.security.TenantContext.getTenantId();
-        if (tenantId == null) return ResponseEntity.status(403).body(java.util.Map.of("success", false));
+            @RequestParam("file") MultipartFile file,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.status(403).body(Map.of("success", false));
+        if (file == null || file.isEmpty())
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", "No file uploaded"));
         try {
-            java.util.Map<String, Object> result = pgImportService.importFromSqlFile(filePath, tenantId);
-            return ResponseEntity.ok(java.util.Map.of("success", true, "data", result));
+            String content = new String(file.getBytes(), StandardCharsets.UTF_8);
+            java.util.Map<String, Object> result = pgImportService.importFromContent(content, tenantId);
+            return ResponseEntity.ok(Map.of("success", true, "data", result));
         } catch (Exception e) {
-            return ResponseEntity.status(500).body(java.util.Map.of("success", false, "error", e.getMessage()));
+            return ResponseEntity.status(500).body(Map.of("success", false, "error", e.getMessage()));
         }
     }
 }

@@ -6,8 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.IOException;
+import java.io.StringReader;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
@@ -25,11 +25,19 @@ public class PgImportService {
     private final DailySaleRepository dailySaleRepo;
     private final MonthlySummaryRepository monthlySummaryRepo;
     private final BranchTargetRepository branchTargetRepo;
+    private final BranchSaleRepository branchSaleRepo;
+    private final BranchPurchaseRepository branchPurchaseRepo;
+    private final EmployeeSaleRepository employeeSaleRepo;
+    private final MothanTransactionRepository mothanRepo;
+    private final BranchPurchaseRateRepository purchaseRateRepo;
 
     public PgImportService(AdminNoteRepository adminNoteRepo, RegionRepository regionRepo,
             BranchRepository branchRepo, EmployeeTargetRepository empTargetRepo,
             EmployeeTransferRepository empTransferRepo, DailySaleRepository dailySaleRepo,
-            MonthlySummaryRepository monthlySummaryRepo, BranchTargetRepository branchTargetRepo) {
+            MonthlySummaryRepository monthlySummaryRepo, BranchTargetRepository branchTargetRepo,
+            BranchSaleRepository branchSaleRepo, BranchPurchaseRepository branchPurchaseRepo,
+            EmployeeSaleRepository employeeSaleRepo, MothanTransactionRepository mothanRepo,
+            BranchPurchaseRateRepository purchaseRateRepo) {
         this.adminNoteRepo = adminNoteRepo;
         this.regionRepo = regionRepo;
         this.branchRepo = branchRepo;
@@ -38,13 +46,19 @@ public class PgImportService {
         this.dailySaleRepo = dailySaleRepo;
         this.monthlySummaryRepo = monthlySummaryRepo;
         this.branchTargetRepo = branchTargetRepo;
+        this.branchSaleRepo = branchSaleRepo;
+        this.branchPurchaseRepo = branchPurchaseRepo;
+        this.employeeSaleRepo = employeeSaleRepo;
+        this.mothanRepo = mothanRepo;
+        this.purchaseRateRepo = purchaseRateRepo;
     }
 
-    public Map<String, Object> importFromSqlFile(String filePath, String tenantId) throws IOException {
+    /** Entry point: accepts raw SQL dump content (from MultipartFile) */
+    public Map<String, Object> importFromContent(String sqlContent, String tenantId) throws IOException {
         Map<String, Object> result = new LinkedHashMap<>();
-        Map<String, List<String[]>> tables = parseSqlFile(filePath);
+        Map<String, List<String[]>> tables = parseSqlContent(sqlContent);
 
-        // Import regions
+        // ── 1. Regions ────────────────────────────────────────────────
         List<String[]> regionsData = tables.getOrDefault("regions", List.of());
         regionRepo.deleteByTenantId(tenantId);
         List<Region> regions = new ArrayList<>();
@@ -62,10 +76,11 @@ public class PgImportService {
         result.put("regions", regions.size());
         log.info("Imported {} regions", regions.size());
 
-        // Import branches
+        // ── 2. Branches ───────────────────────────────────────────────
         List<String[]> branchesData = tables.getOrDefault("branches", List.of());
         branchRepo.deleteByTenantId(tenantId);
         List<Branch> branches = new ArrayList<>();
+        Map<Integer, Branch> branchById = new LinkedHashMap<>();
         for (String[] row : branchesData) {
             Branch b = new Branch();
             b.setTenantId(tenantId);
@@ -73,17 +88,258 @@ public class PgImportService {
             b.setName(row[1]);
             b.setRegionId(parseInt(row[2]));
             Region reg = regionMap.get(b.getRegionId());
-            if (reg != null) {
-                b.setRegionName(reg.getName());
-                b.setRegionColor(reg.getColor());
-            }
+            if (reg != null) { b.setRegionName(reg.getName()); b.setRegionColor(reg.getColor()); }
             branches.add(b);
+            branchById.put(b.getPgId(), b);
         }
         branchRepo.saveAll(branches);
         result.put("branches", branches.size());
         log.info("Imported {} branches", branches.size());
 
-        // Import admin_notes
+        // ── 3. branch_sales ───────────────────────────────────────────
+        // Columns: id, report_date, branch_code, branch_name, region,
+        //          total_sar(5), total_weight_g(6), total_pieces(7),
+        //          k18_sar(8), k18_weight_g(9), k18_pieces(10),
+        //          k21_sar(11), k21_weight_g(12), k21_pieces(13),
+        //          k24_sar(14), k24_weight_g(15), k24_pieces(16),
+        //          avg_invoice_sar(17), wt_pure_g(18), wt_safe_g(19),
+        //          sale_rate(20), avg_mkg_charge(21),
+        //          k18_wt_pure(22), k18_wt_safe(23), k18_rate(24), k18_avg_mkg(25),
+        //          k21_wt_pure(26), k21_wt_safe(27), k21_rate(28), k21_avg_mkg(29),
+        //          k24_wt_pure(30), k24_wt_safe(31), k24_rate(32), k24_avg_mkg(33),
+        //          k22_sar(34), k22_weight_g(35), k22_pieces(36),
+        //          k22_wt_pure(37), k22_wt_safe(38), k22_rate(39), k22_avg_mkg(40)
+        List<String[]> branchSalesData = tables.getOrDefault("branch_sales", List.of());
+        branchSaleRepo.deleteByTenantId(tenantId);
+        List<BranchSale> branchSales = new ArrayList<>();
+        for (String[] row : branchSalesData) {
+            BranchSale s = new BranchSale();
+            s.setTenantId(tenantId);
+            s.setSaleDate(parseDate(row[1]));
+            s.setBranchCode(row[2]);
+            s.setBranchName(nullOrValue(row[3]));
+            s.setRegion(nullOrValue(row[4]));
+            s.setTotalSarAmount(parseDouble(row[5]));
+            s.setNetWeight(parseDouble(row[6]));
+            s.setInvoiceCount((int) parseDouble(row[7]));
+            s.setK18Sar(parseDouble(row[8]));
+            s.setK18WeightG(parseDouble(row[9]));
+            s.setK18Pieces((int) parseDouble(row[10]));
+            s.setK21Sar(parseDouble(row[11]));
+            s.setK21WeightG(parseDouble(row[12]));
+            s.setK21Pieces((int) parseDouble(row[13]));
+            s.setK24Sar(parseDouble(row[14]));
+            s.setK24WeightG(parseDouble(row[15]));
+            s.setK24Pieces((int) parseDouble(row[16]));
+            s.setAvgInvoiceSar(parseDouble(row[17]));
+            s.setWtPureG(parseDouble(row[18]));
+            s.setGrossWeight(parseDouble(row[18])); // grossWeight = wt_pure_g
+            s.setWtSafeG(parseDouble(row[19]));
+            s.setSaleRate(parseDouble(row[20]));
+            s.setAvgMkgCharge(parseDouble(row[21]));
+            s.setK18WtPure(parseDouble(row[22]));
+            s.setK18WtSafe(parseDouble(row[23]));
+            s.setK18Rate(parseDouble(row[24]));
+            s.setK18AvgMkg(parseDouble(row[25]));
+            s.setK21WtPure(parseDouble(row[26]));
+            s.setK21WtSafe(parseDouble(row[27]));
+            s.setK21Rate(parseDouble(row[28]));
+            s.setK21AvgMkg(parseDouble(row[29]));
+            s.setK24WtPure(parseDouble(row[30]));
+            s.setK24WtSafe(parseDouble(row[31]));
+            s.setK24Rate(parseDouble(row[32]));
+            s.setK24AvgMkg(parseDouble(row[33]));
+            if (row.length > 34) {
+                s.setK22Sar(parseDouble(row[34]));
+                s.setK22WeightG(parseDouble(row[35]));
+                s.setK22Pieces((int) parseDouble(row[36]));
+                s.setK22WtPure(parseDouble(row[37]));
+                s.setK22WtSafe(parseDouble(row[38]));
+                s.setK22Rate(parseDouble(row[39]));
+                if (row.length > 40) s.setK22AvgMkg(parseDouble(row[40]));
+            }
+            s.setReturn(s.getTotalSarAmount() < 0);
+            s.setSourceFileName("pg-import");
+            s.setCreatedAt(LocalDateTime.now());
+            branchSales.add(s);
+        }
+        saveBatched(branchSaleRepo, branchSales, "branch_sales");
+        result.put("branchSales", branchSales.size());
+        log.info("Imported {} branch_sales", branchSales.size());
+
+        // ── 4. branch_purchases ───────────────────────────────────────
+        // Columns: id, report_date(1), branch_code(2), branch_name(3), region(4),
+        //          total_sar(5), total_weight_g(6), purchase_avg_mkg(7),
+        //          k18_sar(8), k18_weight_g(9), k21_sar(10), k21_weight_g(11),
+        //          k24_sar(12), k24_weight_g(13),
+        //          wt_pure_g(14), wt_safe_g(15), purchase_rate(16),
+        //          k18_wt_pure(17), k18_wt_safe(18), k18_rate(19),
+        //          k21_wt_pure(20), k21_wt_safe(21), k21_rate(22),
+        //          k24_wt_pure(23), k24_wt_safe(24), k24_rate(25)
+        List<String[]> purchasesData = tables.getOrDefault("branch_purchases", List.of());
+        branchPurchaseRepo.deleteByTenantId(tenantId);
+        List<BranchPurchase> purchases = new ArrayList<>();
+        for (String[] row : purchasesData) {
+            BranchPurchase p = new BranchPurchase();
+            p.setTenantId(tenantId);
+            p.setPurchaseDate(parseDate(row[1]));
+            p.setBranchCode(row[2]);
+            p.setBranchName(nullOrValue(row[3]));
+            p.setRegion(nullOrValue(row[4]));
+            p.setTotalSarAmount(parseDouble(row[5]));
+            p.setNetWeight(parseDouble(row[6]));
+            p.setPurchaseAvgMkg(parseDouble(row[7]));
+            p.setK18Sar(parseDouble(row[8]));
+            p.setK18WeightG(parseDouble(row[9]));
+            p.setK21Sar(parseDouble(row[10]));
+            p.setK21WeightG(parseDouble(row[11]));
+            p.setK24Sar(parseDouble(row[12]));
+            p.setK24WeightG(parseDouble(row[13]));
+            p.setWtPureG(parseDouble(row[14]));
+            p.setGrossWeight(parseDouble(row[14]));
+            p.setWtSafeG(parseDouble(row[15]));
+            p.setPurchaseRate(parseDouble(row[16]));
+            p.setK18WtPure(parseDouble(row[17]));
+            p.setK18WtSafe(parseDouble(row[18]));
+            p.setK18Rate(parseDouble(row[19]));
+            p.setK21WtPure(parseDouble(row[20]));
+            p.setK21WtSafe(parseDouble(row[21]));
+            p.setK21Rate(parseDouble(row[22]));
+            p.setK24WtPure(parseDouble(row[23]));
+            p.setK24WtSafe(parseDouble(row[24]));
+            if (row.length > 25) p.setK24Rate(parseDouble(row[25]));
+            p.setSourceFileName("pg-import");
+            p.setCreatedAt(LocalDateTime.now());
+            purchases.add(p);
+        }
+        saveBatched(branchPurchaseRepo, purchases, "branch_purchases");
+        result.put("branchPurchases", purchases.size());
+        log.info("Imported {} branch_purchases", purchases.size());
+
+        // ── 5. employee_sales ─────────────────────────────────────────
+        // Columns: id, report_date(1), date_from(2), date_to(3),
+        //          emp_id(4), emp_name(5), branch_code(6), branch_name(7), region(8),
+        //          total_sar(9), weight_net_g(10), weight_pure_g(11), pieces(12),
+        //          avg_invoice_sar(13), emp_avg_mkg(14), branch_purchase_avg(15),
+        //          diff_avg(16), achieved_target(17), sale_rate_g(18)
+        List<String[]> empSalesData = tables.getOrDefault("employee_sales", List.of());
+        employeeSaleRepo.deleteByTenantId(tenantId);
+        List<EmployeeSale> empSales = new ArrayList<>();
+        for (String[] row : empSalesData) {
+            EmployeeSale e = new EmployeeSale();
+            e.setTenantId(tenantId);
+            e.setSaleDate(parseDate(row[1]));
+            e.setDateFrom(parseDate(row[2]));
+            e.setDateTo(parseDate(row[3]));
+            e.setEmployeeId(row[4]);
+            e.setEmployeeName(nullOrValue(row[5]));
+            e.setBranchCode(row[6]);
+            e.setBranchName(nullOrValue(row[7]));
+            e.setRegion(nullOrValue(row[8]));
+            e.setTotalSarAmount(parseDouble(row[9]));
+            e.setNetWeight(parseDouble(row[10]));
+            e.setGrossWeight(parseDouble(row[11]));
+            e.setInvoiceCount((int) parseDouble(row[12]));
+            e.setAvgInvoiceSar(parseDouble(row[13]));
+            e.setAvgMakingCharge(parseDouble(row[14]));
+            e.setBranchPurchaseAvg(parseDouble(row[15]));
+            e.setDiffAvg(parseDouble(row[16]));
+            e.setAchievedTarget("t".equals(nullOrValue(row[17])) || "true".equalsIgnoreCase(nullOrValue(row[17])));
+            e.setSaleRate(parseDouble(row[18]));
+            e.setReturn(e.getTotalSarAmount() < 0);
+            e.setSourceFileName("pg-import");
+            e.setCreatedAt(LocalDateTime.now());
+            empSales.add(e);
+        }
+        saveBatched(employeeSaleRepo, empSales, "employee_sales");
+        result.put("employeeSales", empSales.size());
+        log.info("Imported {} employee_sales", empSales.size());
+
+        // ── 6. mothan_transactions ────────────────────────────────────
+        // Columns: id, report_date(1), transaction_date(2), doc_ref(3),
+        //          branch_code(4), branch_name(5), description(6),
+        //          amount_sar(7), balance(8), weight_credit_g(9), weight_debit_g(10),
+        //          rate_sar_per_g(11), balance_gold_g(12), balance_sar(13)
+        List<String[]> mothanData = tables.getOrDefault("mothan_transactions", List.of());
+        mothanRepo.deleteByTenantId(tenantId);
+        List<MothanTransaction> mothans = new ArrayList<>();
+        for (String[] row : mothanData) {
+            MothanTransaction m = new MothanTransaction();
+            m.setTenantId(tenantId);
+            m.setReportDate(parseDate(row[1]));
+            m.setTransactionDate(parseDate(row[2]));
+            m.setDocReference(nullOrValue(row[3]));
+            m.setBranchCode(row[4]);
+            m.setBranchName(nullOrValue(row[5]));
+            m.setDescription(nullOrValue(row[6]));
+            m.setAmountSar(parseDouble(row[7]));
+            m.setCreditSar(parseDouble(row[7]));   // keep creditSar = amountSar for existing queries
+            m.setRunningBalance(parseDouble(row[8]));
+            m.setWeightCreditG(parseDouble(row[9]));
+            m.setWeightDebitG(parseDouble(row[10]));
+            m.setGoldWeightGrams(parseDouble(row[10])); // keep goldWeightGrams for existing queries
+            m.setRateSarPerGram(parseDouble(row[11]));
+            m.setBalanceGoldG(parseDouble(row[12]));
+            m.setBalanceSar(parseDouble(row[13]));
+            m.setSourceFileName("pg-import");
+            m.setCreatedAt(LocalDateTime.now());
+            mothans.add(m);
+        }
+        mothanRepo.saveAll(mothans);
+        result.put("mothanTransactions", mothans.size());
+        log.info("Imported {} mothan_transactions", mothans.size());
+
+        // ── 7. branch_purchase_rates ──────────────────────────────────
+        // Columns: branch_code(0), branch_name(1), rate_purchase(2),
+        //          total_sar(3), total_weight(4), last_updated(5), source_date(6)
+        List<String[]> ratesData = tables.getOrDefault("branch_purchase_rates", List.of());
+        purchaseRateRepo.deleteByTenantId(tenantId);
+        List<BranchPurchaseRate> rates = new ArrayList<>();
+        for (String[] row : ratesData) {
+            BranchPurchaseRate r = new BranchPurchaseRate();
+            r.setTenantId(tenantId);
+            r.setBranchCode(row[0]);
+            r.setBranchName(nullOrValue(row[1]));
+            r.setPurchaseRate(parseDouble(row[2]));
+            r.setTotalSar(parseDouble(row[3]));
+            r.setTotalWeight(parseDouble(row[4]));
+            r.setSourceDate(parseDate(row.length > 6 ? row[6] : row[5]));
+            r.setUpdatedAt(LocalDateTime.now());
+            rates.add(r);
+        }
+        purchaseRateRepo.saveAll(rates);
+        result.put("branchPurchaseRates", rates.size());
+        log.info("Imported {} branch_purchase_rates", rates.size());
+
+        // ── 8. branch_targets ─────────────────────────────────────────
+        // Columns: id(0), branch_code(1), branch_name(2), target_month(3),
+        //          annual_target(4), monthly_target(5), daily_target(6),
+        //          daily_per_emp(7), emp_count(8), target_rate_diff(9),
+        //          month_pct(10), created_at(11)
+        List<String[]> targetsData = tables.getOrDefault("branch_targets", List.of());
+        branchTargetRepo.deleteByTenantId(tenantId);
+        List<BranchTarget> targets = new ArrayList<>();
+        for (String[] row : targetsData) {
+            BranchTarget t = new BranchTarget();
+            t.setTenantId(tenantId);
+            t.setBranchCode(nullOrValue(row[1]));
+            t.setBranchName(nullOrValue(row[2]));
+            t.setTargetDate(parseDate(row[3]));
+            t.setAnnualTarget(parseDouble(row[4]));
+            t.setMonthlyTarget(parseDouble(row[5]));
+            t.setDailyTarget(parseDouble(row[6]));
+            t.setTargetNetWeightDaily(parseDouble(row[7]));
+            t.setEmpCount(parseInt(row[8]));
+            t.setTargetRateDifference(parseDouble(row[9]));
+            t.setMonthPct(parseDouble(row[10]));
+            t.setUpdatedAt(parseDateTime(row[11]));
+            targets.add(t);
+        }
+        saveBatched(branchTargetRepo, targets, "branch_targets");
+        result.put("branchTargets", targets.size());
+        log.info("Imported {} branch_targets", targets.size());
+
+        // ── 9. admin_notes ────────────────────────────────────────────
         List<String[]> notesData = tables.getOrDefault("admin_notes", List.of());
         adminNoteRepo.deleteByTenantId(tenantId);
         List<AdminNote> notes = new ArrayList<>();
@@ -98,10 +354,9 @@ public class PgImportService {
             notes.add(n);
         }
         adminNoteRepo.saveAll(notes);
-        result.put("admin_notes", notes.size());
-        log.info("Imported {} admin_notes", notes.size());
+        result.put("adminNotes", notes.size());
 
-        // Import employee_targets
+        // ── 10. employee_targets ──────────────────────────────────────
         List<String[]> empTargetsData = tables.getOrDefault("employee_targets", List.of());
         empTargetRepo.deleteByTenantId(tenantId);
         List<EmployeeTarget> empTargets = new ArrayList<>();
@@ -121,9 +376,9 @@ public class PgImportService {
             empTargets.add(et);
         }
         empTargetRepo.saveAll(empTargets);
-        result.put("employee_targets", empTargets.size());
+        result.put("employeeTargets", empTargets.size());
 
-        // Import employee_transfers
+        // ── 11. employee_transfers ────────────────────────────────────
         List<String[]> transfersData = tables.getOrDefault("employee_transfers", List.of());
         empTransferRepo.deleteByTenantId(tenantId);
         List<EmployeeTransfer> transfers = new ArrayList<>();
@@ -142,13 +397,9 @@ public class PgImportService {
             transfers.add(et);
         }
         empTransferRepo.saveAll(transfers);
-        result.put("employee_transfers", transfers.size());
+        result.put("employeeTransfers", transfers.size());
 
-        // Import daily_sales
-        // Build branchId -> branchCode/name lookup from already-imported branches
-        Map<Integer, Branch> branchById = new LinkedHashMap<>();
-        for (Branch b : branches) branchById.put(b.getPgId(), b);
-
+        // ── 12. daily_sales ───────────────────────────────────────────
         List<String[]> dailySalesData = tables.getOrDefault("daily_sales", List.of());
         dailySaleRepo.deleteByTenantId(tenantId);
         List<DailySale> dailySales = new ArrayList<>();
@@ -163,7 +414,6 @@ public class PgImportService {
             ds.setPurchases(parseDouble(row[6]));
             ds.setCash(parseDouble(row[7]));
             ds.setBank(parseDouble(row[8]));
-            // achievement_pct is GENERATED in PG - compute here
             double tgt = ds.getDailyTarget();
             ds.setAchievementPct(tgt > 0 ? Math.round(ds.getNetSales() / tgt * 10000.0) / 100.0 : 0);
             ds.setCreatedAt(parseDateTime(row[9]));
@@ -172,10 +422,9 @@ public class PgImportService {
             dailySales.add(ds);
         }
         dailySaleRepo.saveAll(dailySales);
-        result.put("daily_sales", dailySales.size());
-        log.info("Imported {} daily_sales", dailySales.size());
+        result.put("dailySales", dailySales.size());
 
-        // Import monthly_summaries (may be empty in dump)
+        // ── 13. monthly_summaries ─────────────────────────────────────
         List<String[]> summariesData = tables.getOrDefault("monthly_summaries", List.of());
         monthlySummaryRepo.deleteByTenantId(tenantId);
         List<MonthlySummary> summaries = new ArrayList<>();
@@ -194,25 +443,34 @@ public class PgImportService {
             summaries.add(ms);
         }
         monthlySummaryRepo.saveAll(summaries);
-        result.put("monthly_summaries", summaries.size());
+        result.put("monthlySummaries", summaries.size());
 
         result.put("status", "ok");
         result.put("tenantId", tenantId);
         return result;
     }
 
-    /** Parse a PostgreSQL dump file, return Map of tableName -> list of column-value arrays */
-    private Map<String, List<String[]>> parseSqlFile(String filePath) throws IOException {
+    /** Batch-save in groups of 500 to avoid Atlas document size limits */
+    private <T> void saveBatched(org.springframework.data.mongodb.repository.MongoRepository<T, String> repo,
+            List<T> items, String label) {
+        int batchSize = 500;
+        for (int i = 0; i < items.size(); i += batchSize) {
+            repo.saveAll(items.subList(i, Math.min(i + batchSize, items.size())));
+            log.info("{}: saved {}/{}", label, Math.min(i + batchSize, items.size()), items.size());
+        }
+    }
+
+    /** Parse PG dump SQL content: return Map of tableName → list of tab-split rows */
+    private Map<String, List<String[]>> parseSqlContent(String content) throws IOException {
         Map<String, List<String[]>> result = new LinkedHashMap<>();
         String currentTable = null;
         List<String[]> currentRows = null;
         boolean inCopy = false;
 
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = new BufferedReader(new StringReader(content))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.startsWith("COPY public.")) {
-                    // e.g.: COPY public.regions (id, name, color) FROM stdin;
                     int dotIdx = line.indexOf('.') + 1;
                     int spaceIdx = line.indexOf(' ', dotIdx);
                     currentTable = line.substring(dotIdx, spaceIdx);
@@ -235,6 +493,8 @@ public class PgImportService {
         return result;
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────
+
     private LocalDate parseDate(String s) {
         if (s == null || s.equals("\\N") || s.isBlank()) return null;
         try { return LocalDate.parse(s.trim()); } catch (Exception e) { return null; }
@@ -243,13 +503,10 @@ public class PgImportService {
     private LocalDateTime parseDateTime(String s) {
         if (s == null || s.equals("\\N") || s.isBlank()) return LocalDateTime.now();
         try {
-            // PG format: 2026-03-31 21:48:22.773423+00
-            String cleaned = s.trim().replace(" ", "T");
-            if (cleaned.contains("+")) cleaned = cleaned.substring(0, cleaned.lastIndexOf('+')) + "+00:00";
-            return ZonedDateTime.parse(cleaned).toLocalDateTime();
-        } catch (Exception e) {
-            return LocalDateTime.now();
-        }
+            String c = s.trim().replace(" ", "T");
+            if (c.contains("+")) c = c.substring(0, c.lastIndexOf('+')) + "+00:00";
+            return ZonedDateTime.parse(c).toLocalDateTime();
+        } catch (Exception e) { return LocalDateTime.now(); }
     }
 
     private double parseDouble(String s) {
@@ -259,11 +516,10 @@ public class PgImportService {
 
     private int parseInt(String s) {
         if (s == null || s.equals("\\N") || s.isBlank()) return 0;
-        try { return Integer.parseInt(s.trim()); } catch (Exception e) { return 0; }
+        try { return (int) Double.parseDouble(s.trim()); } catch (Exception e) { return 0; }
     }
 
     private String nullOrValue(String s) {
-        if (s == null || s.equals("\\N")) return null;
-        return s;
+        return (s == null || s.equals("\\N")) ? null : s;
     }
 }

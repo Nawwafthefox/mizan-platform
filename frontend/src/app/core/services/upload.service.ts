@@ -39,4 +39,10 @@ export class UploadService {
   exportCsv(type: 'branch-sales' | 'employee-sales' | 'purchases' | 'mothan' | 'summary', from: string, to: string): void {
     window.open(`${environment.apiUrl}/export/${type}?from=${from}&to=${to}`, '_blank');
   }
+
+  importPgData(file: File): Observable<ApiResponse<any>> {
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+    return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/admin/import-pg-data`, formData);
+  }
 }

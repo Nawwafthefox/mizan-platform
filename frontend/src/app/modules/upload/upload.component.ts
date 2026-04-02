@@ -166,6 +166,58 @@ interface UploadCard {
       </div>
     }
 
+    <!-- PG Import Panel -->
+    <div class="card mt-4">
+      <div class="card__header">
+        <h3>📥 استيراد بيانات PostgreSQL</h3>
+        <span class="badge badge--info">مرة واحدة</span>
+      </div>
+      <div style="padding:.75rem 1rem">
+        <p style="font-size:.83rem;color:var(--mizan-text-muted);margin:0 0 .75rem">
+          ارفع ملف <code>.sql</code> (تصدير pg_dump) لاستيراد جميع البيانات دفعةً واحدة
+          مع حذف السجلات الموجودة لهذا المستأجر تلقائياً.
+        </p>
+        <input id="pg-file-input" type="file" accept=".sql" hidden
+          (change)="onPgFileChange($event)">
+        <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap">
+          <button class="btn btn--ghost btn--sm" (click)="triggerPgFilePicker()"
+            [disabled]="pgImporting()">
+            📂 اختيار ملف SQL
+          </button>
+          @if (pgFile()) {
+            <span style="font-size:.82rem;color:var(--mizan-text-muted)">
+              {{ pgFile()!.name }} ({{ (pgFile()!.size / 1024 / 1024).toFixed(1) }} MB)
+            </span>
+            <button class="btn btn--primary btn--sm" (click)="runPgImport()"
+              [disabled]="pgImporting()">
+              @if (pgImporting()) {
+                <span class="spinner" style="width:12px;height:12px"></span>
+                جارٍ الاستيراد...
+              } @else {
+                🚀 استيراد الآن
+              }
+            </button>
+          }
+        </div>
+        @if (pgImportResult()) {
+          <div class="pg-result">
+            <div class="pg-result__title">✅ اكتمل الاستيراد</div>
+            <div class="pg-result__grid">
+              @for (entry of pgResultEntries(); track entry[0]) {
+                <div class="pg-result__item">
+                  <span class="pg-result__label">{{ entry[0] }}</span>
+                  <span class="pg-result__val">{{ entry[1] }}</span>
+                </div>
+              }
+            </div>
+          </div>
+        }
+        @if (pgImportError()) {
+          <div class="uc-error" style="margin-top:.5rem">{{ pgImportError() }}</div>
+        }
+      </div>
+    </div>
+
     <!-- History -->
     <div class="card mt-4">
       <div class="card__header">
@@ -289,6 +341,17 @@ interface UploadCard {
     .progress-footer { display: flex; justify-content: space-between; margin-top: .35rem; }
     .progress-pct { font-size: .78rem; color: var(--mizan-text-muted); font-weight: 600; }
     .table-wrap { overflow-x: auto; }
+
+    .pg-result { margin-top:.75rem; padding:.75rem; background:rgba(16,185,129,.07);
+      border:1px solid rgba(16,185,129,.2); border-radius:8px; }
+    .pg-result__title { font-size:.85rem; font-weight:700; color:var(--mizan-green);
+      margin-bottom:.5rem; }
+    .pg-result__grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+      gap:.4rem; }
+    .pg-result__item { display:flex; justify-content:space-between; font-size:.8rem;
+      background:var(--mizan-bg); padding:.25rem .5rem; border-radius:5px; }
+    .pg-result__label { color:var(--mizan-text-muted); }
+    .pg-result__val { font-weight:700; color:var(--mizan-text); }
   `]
 })
 export class UploadComponent implements OnDestroy {
@@ -307,6 +370,15 @@ export class UploadComponent implements OnDestroy {
   historyLoading = signal(false);
   allDone     = signal(false);
   deleteTarget = signal<UploadCard | null>(null);
+
+  // PG import
+  pgFile        = signal<File | null>(null);
+  pgImporting   = signal(false);
+  pgImportResult = signal<Record<string, any> | null>(null);
+  pgImportError  = signal<string>('');
+  pgResultEntries = () => Object.entries(this.pgImportResult() ?? {})
+    .filter(([k]) => !['status','tenantId'].includes(k))
+    .map(([k, v]) => [this.pgLabel(k), v] as [string, any]);
 
   private eventSource?: EventSource;
   private progressMap = new Map<UploadType, UploadProgress>();
@@ -496,5 +568,55 @@ export class UploadComponent implements OnDestroy {
       processing: 'text-gold', saving: 'text-gold', pending: 'text-muted'
     };
     return m[s] ?? 'text-muted';
+  }
+
+  triggerPgFilePicker(): void {
+    (document.getElementById('pg-file-input') as HTMLInputElement).click();
+  }
+
+  onPgFileChange(e: Event): void {
+    const f = (e.target as HTMLInputElement).files?.[0];
+    if (f) {
+      this.pgFile.set(f);
+      this.pgImportResult.set(null);
+      this.pgImportError.set('');
+    }
+  }
+
+  runPgImport(): void {
+    const file = this.pgFile();
+    if (!file || this.pgImporting()) return;
+    this.pgImporting.set(true);
+    this.pgImportResult.set(null);
+    this.pgImportError.set('');
+    this.svc.importPgData(file).subscribe({
+      next: res => {
+        this.pgImporting.set(false);
+        if (res.success) {
+          this.pgImportResult.set(res.data);
+          this.pgFile.set(null);
+          this.loadHistory();
+        } else {
+          this.pgImportError.set('فشل الاستيراد');
+        }
+      },
+      error: err => {
+        this.pgImporting.set(false);
+        this.pgImportError.set(err?.error?.error || err?.error?.message || 'فشل الاستيراد');
+      }
+    });
+  }
+
+  pgLabel(key: string): string {
+    const m: Record<string, string> = {
+      regions: 'المناطق', branches: 'الفروع',
+      branchSales: 'مبيعات الفروع', branchPurchases: 'المشتريات',
+      employeeSales: 'مبيعات الموظفين', mothanTransactions: 'موطن الذهب',
+      branchPurchaseRates: 'معدلات الشراء', branchTargets: 'الأهداف',
+      adminNotes: 'الملاحظات', employeeTargets: 'أهداف الموظفين',
+      employeeTransfers: 'نقل الموظفين', dailySales: 'المبيعات اليومية',
+      monthlySummaries: 'الملخصات الشهرية'
+    };
+    return m[key] ?? key;
   }
 }

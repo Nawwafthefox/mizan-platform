@@ -7,4 +7,5 @@ import java.util.Optional;
 public interface BranchPurchaseRateRepository extends MongoRepository<BranchPurchaseRate, String> {
     List<BranchPurchaseRate> findByTenantId(String tenantId);
     Optional<BranchPurchaseRate> findByTenantIdAndBranchCode(String tenantId, String branchCode);
+    void deleteByTenantId(String tenantId);
 }
