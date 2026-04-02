@@ -114,17 +114,19 @@ public class PgImportService {
         List<String[]> branchSalesData = tables.getOrDefault("branch_sales", List.of());
         branchSaleRepo.deleteByTenantId(tenantId);
         List<BranchSale> branchSales = new ArrayList<>();
-        for (String[] row : branchSalesData) {
+        for (int i = 0; i < branchSalesData.size(); i++) {
+            String[] row = branchSalesData.get(i);
             if (row.length < 3) continue; // skip malformed rows
+            if (i < 3) log.info("branch_sales row {}: sar={} wt={} pieces={}", i, col(row,5), col(row,6), col(row,7));
             BranchSale s = new BranchSale();
             s.setTenantId(tenantId);
             s.setSaleDate(parseDate(col(row, 1)));
             s.setBranchCode(col(row, 2));
             s.setBranchName(nullOrValue(col(row, 3)));
             s.setRegion(nullOrValue(col(row, 4)));
-            s.setTotalSarAmount(colD(row, 5));
-            s.setNetWeight(colD(row, 6));
-            s.setInvoiceCount((long) Math.abs(colD(row, 7)));
+            s.setTotalSarAmount(Math.abs(colD(row, 5)));
+            s.setNetWeight(Math.abs(colD(row, 6)));
+            s.setInvoiceCount(parseLongSafe(col(row, 7)));
             s.setK18Sar(colD(row, 8));
             s.setK18WeightG(colD(row, 9));
             s.setK18Pieces(colI(row, 10));
@@ -188,8 +190,8 @@ public class PgImportService {
             p.setBranchCode(col(row, 2));
             p.setBranchName(nullOrValue(col(row, 3)));
             p.setRegion(nullOrValue(col(row, 4)));
-            p.setTotalSarAmount(colD(row, 5));
-            p.setNetWeight(colD(row, 6));
+            p.setTotalSarAmount(Math.abs(colD(row, 5)));
+            p.setNetWeight(Math.abs(colD(row, 6)));
             p.setPurchaseAvgMkg(colD(row, 7));
             p.setK18Sar(colD(row, 8));
             p.setK18WeightG(colD(row, 9));
@@ -239,10 +241,10 @@ public class PgImportService {
             e.setBranchCode(col(row, 6));
             e.setBranchName(nullOrValue(col(row, 7)));
             e.setRegion(nullOrValue(col(row, 8)));
-            e.setTotalSarAmount(colD(row, 9));
-            e.setNetWeight(colD(row, 10));
-            e.setGrossWeight(colD(row, 11));
-            e.setInvoiceCount((long) Math.abs(colD(row, 12)));
+            e.setTotalSarAmount(Math.abs(colD(row, 9)));
+            e.setNetWeight(Math.abs(colD(row, 10)));
+            e.setGrossWeight(Math.abs(colD(row, 11)));
+            e.setInvoiceCount(parseLongSafe(col(row, 12)));
             e.setAvgInvoiceSar(colD(row, 13));
             e.setAvgMakingCharge(colD(row, 14));
             e.setBranchPurchaseAvg(colD(row, 15));
@@ -529,6 +531,12 @@ public class PgImportService {
     private int parseInt(String s) {
         if (s == null || s.equals("\\N") || s.isBlank()) return 0;
         try { return (int) Double.parseDouble(s.trim()); } catch (Exception e) { return 0; }
+    }
+
+    /** Parse piece/invoice counts: handles decimals like "50.0", always positive */
+    private long parseLongSafe(String s) {
+        if (s == null || s.equals("\\N") || s.isBlank()) return 0;
+        try { return Math.abs(Math.round(Double.parseDouble(s.trim()))); } catch (Exception e) { return 0; }
     }
 
     private String nullOrValue(String s) {
