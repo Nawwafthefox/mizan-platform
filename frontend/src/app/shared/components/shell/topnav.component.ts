@@ -220,6 +220,7 @@ export class TopnavComponent {
     { labelAr: 'الخارطة الحرارية',   labelEn: 'Heatmap',           route: '/dashboard/heatmap',          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
     { labelAr: 'مقارنة الأيام',      labelEn: 'Comparison',        route: '/dashboard/comparison',       roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
     { labelAr: 'استوديو التحليلات',  labelEn: 'Analytics Studio',  route: '/dashboard/analytics-studio', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'], badge: '2.0' },
+    { labelAr: 'داشبورد 3.0',        labelEn: 'Dashboard 3.0',     route: '/v3',                         roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'], badge: 'قريباً' },
     { labelAr: 'رفع الملفات',        labelEn: 'Upload',            route: '/upload',                     roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','DATA_ENTRY'] },
     { labelAr: 'المستخدمون',         labelEn: 'Users',             route: '/users',                      roles: ['COMPANY_ADMIN'] },
     { labelAr: 'أسعار الشراء',       labelEn: 'Rates',             route: '/dashboard/rates',            roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
