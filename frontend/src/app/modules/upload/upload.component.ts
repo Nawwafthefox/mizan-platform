@@ -166,6 +166,45 @@ interface UploadCard {
       </div>
     }
 
+    <!-- Wipe All Data -->
+    <div class="card mt-4" style="border-color:rgba(220,38,38,.25)">
+      <div class="card__header">
+        <h3>🗑 مسح جميع البيانات</h3>
+        <span class="badge badge--danger">خطر</span>
+      </div>
+      <div style="padding:.75rem 1rem">
+        <p style="font-size:.83rem;color:var(--mizan-text-muted);margin:0 0 .75rem">
+          يحذف جميع سجلات المبيعات والمشتريات والموظفين وموطن الذهب لهذا الحساب.
+          استخدم هذا قبل استيراد بيانات PostgreSQL.
+        </p>
+        @if (wipeResult()) {
+          <div style="font-size:.83rem;margin-bottom:.5rem">{{ wipeResult() }}</div>
+        }
+        <button class="btn btn--danger" (click)="wipeConfirm.set(true)" [disabled]="wiping()">
+          @if (wiping()) { <span class="spinner" style="width:12px;height:12px"></span> }
+          مسح جميع البيانات
+        </button>
+      </div>
+    </div>
+
+    <!-- Wipe confirmation dialog -->
+    @if (wipeConfirm()) {
+      <div class="dialog-overlay" (click)="wipeConfirm.set(false)">
+        <div class="dialog-box" (click)="$event.stopPropagation()">
+          <h3>⚠️ تأكيد المسح الكامل</h3>
+          <p>سيتم حذف <strong>جميع</strong> سجلات المبيعات والمشتريات وموطن الذهب ومبيعات الموظفين بشكل نهائي.<br>
+          هذا الإجراء لا يمكن التراجع عنه.</p>
+          <div class="dialog-actions">
+            <button class="btn btn--danger" (click)="wipeAllData()" [disabled]="wiping()">
+              @if (wiping()) { <span class="spinner" style="width:12px;height:12px"></span> }
+              نعم، امسح كل شيء
+            </button>
+            <button class="btn btn--ghost" (click)="wipeConfirm.set(false)" [disabled]="wiping()">إلغاء</button>
+          </div>
+        </div>
+      </div>
+    }
+
     <!-- PG Import Panel -->
     <div class="card mt-4">
       <div class="card__header">
@@ -342,6 +381,8 @@ interface UploadCard {
     .progress-pct { font-size: .78rem; color: var(--mizan-text-muted); font-weight: 600; }
     .table-wrap { overflow-x: auto; }
 
+    .badge--danger { background: rgba(220,38,38,.12); color: #ef4444; }
+
     .pg-result { margin-top:.75rem; padding:.75rem; background:rgba(16,185,129,.07);
       border:1px solid rgba(16,185,129,.2); border-radius:8px; }
     .pg-result__title { font-size:.85rem; font-weight:700; color:var(--mizan-green);
@@ -370,6 +411,11 @@ export class UploadComponent implements OnDestroy {
   historyLoading = signal(false);
   allDone     = signal(false);
   deleteTarget = signal<UploadCard | null>(null);
+
+  // Wipe
+  wipeConfirm   = signal(false);
+  wiping        = signal(false);
+  wipeResult    = signal<string>('');
 
   // PG import
   pgFile        = signal<File | null>(null);
@@ -603,6 +649,24 @@ export class UploadComponent implements OnDestroy {
       error: err => {
         this.pgImporting.set(false);
         this.pgImportError.set(err?.error?.error || err?.error?.message || 'فشل الاستيراد');
+      }
+    });
+  }
+
+  wipeAllData(): void {
+    this.wiping.set(true);
+    this.wipeResult.set('');
+    this.svc.wipeAllData().subscribe({
+      next: res => {
+        this.wiping.set(false);
+        this.wipeConfirm.set(false);
+        this.wipeResult.set(res.success ? '✅ تم مسح جميع البيانات بنجاح' : '❌ فشل المسح');
+        this.loadHistory();
+      },
+      error: err => {
+        this.wiping.set(false);
+        this.wipeConfirm.set(false);
+        this.wipeResult.set('❌ ' + (err?.error?.message || 'فشل المسح'));
       }
     });
   }

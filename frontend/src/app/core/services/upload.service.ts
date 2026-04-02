@@ -45,4 +45,8 @@ export class UploadService {
     formData.append('file', file, file.name);
     return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/admin/import-pg-data`, formData);
   }
+
+  wipeAllData(): Observable<ApiResponse<any>> {
+    return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/admin/wipe-data`, null);
+  }
 }
