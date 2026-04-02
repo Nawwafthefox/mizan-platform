@@ -72,7 +72,7 @@ public class DashboardService {
             b.sar += s.getTotalSarAmount(); b.wn += s.getNetWeight();
             b.wp += s.getGrossWeight(); b.pcs += s.getInvoiceCount();
             if (s.isReturn()) { b.returns += s.getTotalSarAmount(); b.returnDays++; }
-            if (s.getKaratRows() != null) {
+            if (s.getKaratRows() != null && !s.getKaratRows().isEmpty()) {
                 for (KaratRow kr : s.getKaratRows()) {
                     switch (kr.getKarat()) {
                         case "18" -> { b.k18Sar+=kr.getSarAmount(); b.k18Wt+=kr.getNetWeight(); }
@@ -81,6 +81,12 @@ public class DashboardService {
                         case "24" -> { b.k24Sar+=kr.getSarAmount(); b.k24Wt+=kr.getNetWeight(); }
                     }
                 }
+            } else {
+                // PG-imported records use flat karat fields instead of karatRows
+                b.k18Sar += s.getK18Sar(); b.k18Wt += s.getK18WeightG();
+                b.k21Sar += s.getK21Sar(); b.k21Wt += s.getK21WeightG();
+                b.k22Sar += s.getK22Sar(); b.k22Wt += s.getK22WeightG();
+                b.k24Sar += s.getK24Sar(); b.k24Wt += s.getK24WeightG();
             }
         }
         for (BranchPurchase p : purchases) {
@@ -125,6 +131,7 @@ public class DashboardService {
 
     private static double r4(double v) { return Math.round(v * 10000.0) / 10000.0; }
     private static double r2(double v) { return Math.round(v * 100.0)   / 100.0; }
+
 
     private static class MutableBranch {
         String code,name,region;

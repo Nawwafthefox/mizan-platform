@@ -64,10 +64,11 @@ public class PgImportService {
         List<Region> regions = new ArrayList<>();
         Map<Integer, Region> regionMap = new LinkedHashMap<>();
         for (String[] row : regionsData) {
+            if (row.length < 2) continue;
             Region r = new Region();
             r.setTenantId(tenantId);
-            r.setPgId(parseInt(row[0]));
-            r.setName(row[1]);
+            r.setPgId(colI(row, 0));
+            r.setName(col(row, 1));
             r.setColor(row.length > 2 ? row[2] : "#2563eb");
             regions.add(r);
             regionMap.put(r.getPgId(), r);
@@ -82,11 +83,12 @@ public class PgImportService {
         List<Branch> branches = new ArrayList<>();
         Map<Integer, Branch> branchById = new LinkedHashMap<>();
         for (String[] row : branchesData) {
+            if (row.length < 2) continue;
             Branch b = new Branch();
             b.setTenantId(tenantId);
-            b.setPgId(parseInt(row[0]));
-            b.setName(row[1]);
-            b.setRegionId(parseInt(row[2]));
+            b.setPgId(colI(row, 0));
+            b.setName(col(row, 1));
+            b.setRegionId(colI(row, 2));
             Region reg = regionMap.get(b.getRegionId());
             if (reg != null) { b.setRegionName(reg.getName()); b.setRegionColor(reg.getColor()); }
             branches.add(b);
@@ -113,51 +115,50 @@ public class PgImportService {
         branchSaleRepo.deleteByTenantId(tenantId);
         List<BranchSale> branchSales = new ArrayList<>();
         for (String[] row : branchSalesData) {
+            if (row.length < 3) continue; // skip malformed rows
             BranchSale s = new BranchSale();
             s.setTenantId(tenantId);
-            s.setSaleDate(parseDate(row[1]));
-            s.setBranchCode(row[2]);
-            s.setBranchName(nullOrValue(row[3]));
-            s.setRegion(nullOrValue(row[4]));
-            s.setTotalSarAmount(parseDouble(row[5]));
-            s.setNetWeight(parseDouble(row[6]));
-            s.setInvoiceCount((int) parseDouble(row[7]));
-            s.setK18Sar(parseDouble(row[8]));
-            s.setK18WeightG(parseDouble(row[9]));
-            s.setK18Pieces((int) parseDouble(row[10]));
-            s.setK21Sar(parseDouble(row[11]));
-            s.setK21WeightG(parseDouble(row[12]));
-            s.setK21Pieces((int) parseDouble(row[13]));
-            s.setK24Sar(parseDouble(row[14]));
-            s.setK24WeightG(parseDouble(row[15]));
-            s.setK24Pieces((int) parseDouble(row[16]));
-            s.setAvgInvoiceSar(parseDouble(row[17]));
-            s.setWtPureG(parseDouble(row[18]));
-            s.setGrossWeight(parseDouble(row[18])); // grossWeight = wt_pure_g
-            s.setWtSafeG(parseDouble(row[19]));
-            s.setSaleRate(parseDouble(row[20]));
-            s.setAvgMkgCharge(parseDouble(row[21]));
-            s.setK18WtPure(parseDouble(row[22]));
-            s.setK18WtSafe(parseDouble(row[23]));
-            s.setK18Rate(parseDouble(row[24]));
-            s.setK18AvgMkg(parseDouble(row[25]));
-            s.setK21WtPure(parseDouble(row[26]));
-            s.setK21WtSafe(parseDouble(row[27]));
-            s.setK21Rate(parseDouble(row[28]));
-            s.setK21AvgMkg(parseDouble(row[29]));
-            s.setK24WtPure(parseDouble(row[30]));
-            s.setK24WtSafe(parseDouble(row[31]));
-            s.setK24Rate(parseDouble(row[32]));
-            s.setK24AvgMkg(parseDouble(row[33]));
-            if (row.length > 34) {
-                s.setK22Sar(parseDouble(row[34]));
-                s.setK22WeightG(parseDouble(row[35]));
-                s.setK22Pieces((int) parseDouble(row[36]));
-                s.setK22WtPure(parseDouble(row[37]));
-                s.setK22WtSafe(parseDouble(row[38]));
-                s.setK22Rate(parseDouble(row[39]));
-                if (row.length > 40) s.setK22AvgMkg(parseDouble(row[40]));
-            }
+            s.setSaleDate(parseDate(col(row, 1)));
+            s.setBranchCode(col(row, 2));
+            s.setBranchName(nullOrValue(col(row, 3)));
+            s.setRegion(nullOrValue(col(row, 4)));
+            s.setTotalSarAmount(colD(row, 5));
+            s.setNetWeight(colD(row, 6));
+            s.setInvoiceCount(colI(row, 7));
+            s.setK18Sar(colD(row, 8));
+            s.setK18WeightG(colD(row, 9));
+            s.setK18Pieces(colI(row, 10));
+            s.setK21Sar(colD(row, 11));
+            s.setK21WeightG(colD(row, 12));
+            s.setK21Pieces(colI(row, 13));
+            s.setK24Sar(colD(row, 14));
+            s.setK24WeightG(colD(row, 15));
+            s.setK24Pieces(colI(row, 16));
+            s.setAvgInvoiceSar(colD(row, 17));
+            s.setWtPureG(colD(row, 18));
+            s.setGrossWeight(colD(row, 18));
+            s.setWtSafeG(colD(row, 19));
+            s.setSaleRate(colD(row, 20));
+            s.setAvgMkgCharge(colD(row, 21));
+            s.setK18WtPure(colD(row, 22));
+            s.setK18WtSafe(colD(row, 23));
+            s.setK18Rate(colD(row, 24));
+            s.setK18AvgMkg(colD(row, 25));
+            s.setK21WtPure(colD(row, 26));
+            s.setK21WtSafe(colD(row, 27));
+            s.setK21Rate(colD(row, 28));
+            s.setK21AvgMkg(colD(row, 29));
+            s.setK24WtPure(colD(row, 30));
+            s.setK24WtSafe(colD(row, 31));
+            s.setK24Rate(colD(row, 32));
+            s.setK24AvgMkg(colD(row, 33));
+            s.setK22Sar(colD(row, 34));
+            s.setK22WeightG(colD(row, 35));
+            s.setK22Pieces(colI(row, 36));
+            s.setK22WtPure(colD(row, 37));
+            s.setK22WtSafe(colD(row, 38));
+            s.setK22Rate(colD(row, 39));
+            s.setK22AvgMkg(colD(row, 40));
             s.setReturn(s.getTotalSarAmount() < 0);
             s.setSourceFileName("pg-import");
             s.setCreatedAt(LocalDateTime.now());
@@ -180,34 +181,35 @@ public class PgImportService {
         branchPurchaseRepo.deleteByTenantId(tenantId);
         List<BranchPurchase> purchases = new ArrayList<>();
         for (String[] row : purchasesData) {
+            if (row.length < 3) continue;
             BranchPurchase p = new BranchPurchase();
             p.setTenantId(tenantId);
-            p.setPurchaseDate(parseDate(row[1]));
-            p.setBranchCode(row[2]);
-            p.setBranchName(nullOrValue(row[3]));
-            p.setRegion(nullOrValue(row[4]));
-            p.setTotalSarAmount(parseDouble(row[5]));
-            p.setNetWeight(parseDouble(row[6]));
-            p.setPurchaseAvgMkg(parseDouble(row[7]));
-            p.setK18Sar(parseDouble(row[8]));
-            p.setK18WeightG(parseDouble(row[9]));
-            p.setK21Sar(parseDouble(row[10]));
-            p.setK21WeightG(parseDouble(row[11]));
-            p.setK24Sar(parseDouble(row[12]));
-            p.setK24WeightG(parseDouble(row[13]));
-            p.setWtPureG(parseDouble(row[14]));
-            p.setGrossWeight(parseDouble(row[14]));
-            p.setWtSafeG(parseDouble(row[15]));
-            p.setPurchaseRate(parseDouble(row[16]));
-            p.setK18WtPure(parseDouble(row[17]));
-            p.setK18WtSafe(parseDouble(row[18]));
-            p.setK18Rate(parseDouble(row[19]));
-            p.setK21WtPure(parseDouble(row[20]));
-            p.setK21WtSafe(parseDouble(row[21]));
-            p.setK21Rate(parseDouble(row[22]));
-            p.setK24WtPure(parseDouble(row[23]));
-            p.setK24WtSafe(parseDouble(row[24]));
-            if (row.length > 25) p.setK24Rate(parseDouble(row[25]));
+            p.setPurchaseDate(parseDate(col(row, 1)));
+            p.setBranchCode(col(row, 2));
+            p.setBranchName(nullOrValue(col(row, 3)));
+            p.setRegion(nullOrValue(col(row, 4)));
+            p.setTotalSarAmount(colD(row, 5));
+            p.setNetWeight(colD(row, 6));
+            p.setPurchaseAvgMkg(colD(row, 7));
+            p.setK18Sar(colD(row, 8));
+            p.setK18WeightG(colD(row, 9));
+            p.setK21Sar(colD(row, 10));
+            p.setK21WeightG(colD(row, 11));
+            p.setK24Sar(colD(row, 12));
+            p.setK24WeightG(colD(row, 13));
+            p.setWtPureG(colD(row, 14));
+            p.setGrossWeight(colD(row, 14));
+            p.setWtSafeG(colD(row, 15));
+            p.setPurchaseRate(colD(row, 16));
+            p.setK18WtPure(colD(row, 17));
+            p.setK18WtSafe(colD(row, 18));
+            p.setK18Rate(colD(row, 19));
+            p.setK21WtPure(colD(row, 20));
+            p.setK21WtSafe(colD(row, 21));
+            p.setK21Rate(colD(row, 22));
+            p.setK24WtPure(colD(row, 23));
+            p.setK24WtSafe(colD(row, 24));
+            p.setK24Rate(colD(row, 25));
             p.setSourceFileName("pg-import");
             p.setCreatedAt(LocalDateTime.now());
             purchases.add(p);
@@ -226,26 +228,28 @@ public class PgImportService {
         employeeSaleRepo.deleteByTenantId(tenantId);
         List<EmployeeSale> empSales = new ArrayList<>();
         for (String[] row : empSalesData) {
+            if (row.length < 3) continue;
             EmployeeSale e = new EmployeeSale();
             e.setTenantId(tenantId);
-            e.setSaleDate(parseDate(row[1]));
-            e.setDateFrom(parseDate(row[2]));
-            e.setDateTo(parseDate(row[3]));
-            e.setEmployeeId(row[4]);
-            e.setEmployeeName(nullOrValue(row[5]));
-            e.setBranchCode(row[6]);
-            e.setBranchName(nullOrValue(row[7]));
-            e.setRegion(nullOrValue(row[8]));
-            e.setTotalSarAmount(parseDouble(row[9]));
-            e.setNetWeight(parseDouble(row[10]));
-            e.setGrossWeight(parseDouble(row[11]));
-            e.setInvoiceCount((int) parseDouble(row[12]));
-            e.setAvgInvoiceSar(parseDouble(row[13]));
-            e.setAvgMakingCharge(parseDouble(row[14]));
-            e.setBranchPurchaseAvg(parseDouble(row[15]));
-            e.setDiffAvg(parseDouble(row[16]));
-            e.setAchievedTarget("t".equals(nullOrValue(row[17])) || "true".equalsIgnoreCase(nullOrValue(row[17])));
-            e.setSaleRate(parseDouble(row[18]));
+            e.setSaleDate(parseDate(col(row, 1)));
+            e.setDateFrom(parseDate(col(row, 2)));
+            e.setDateTo(parseDate(col(row, 3)));
+            e.setEmployeeId(col(row, 4));
+            e.setEmployeeName(nullOrValue(col(row, 5)));
+            e.setBranchCode(col(row, 6));
+            e.setBranchName(nullOrValue(col(row, 7)));
+            e.setRegion(nullOrValue(col(row, 8)));
+            e.setTotalSarAmount(colD(row, 9));
+            e.setNetWeight(colD(row, 10));
+            e.setGrossWeight(colD(row, 11));
+            e.setInvoiceCount(colI(row, 12));
+            e.setAvgInvoiceSar(colD(row, 13));
+            e.setAvgMakingCharge(colD(row, 14));
+            e.setBranchPurchaseAvg(colD(row, 15));
+            e.setDiffAvg(colD(row, 16));
+            String achv = nullOrValue(col(row, 17));
+            e.setAchievedTarget("t".equals(achv) || "true".equalsIgnoreCase(achv));
+            e.setSaleRate(colD(row, 18));
             e.setReturn(e.getTotalSarAmount() < 0);
             e.setSourceFileName("pg-import");
             e.setCreatedAt(LocalDateTime.now());
@@ -264,23 +268,24 @@ public class PgImportService {
         mothanRepo.deleteByTenantId(tenantId);
         List<MothanTransaction> mothans = new ArrayList<>();
         for (String[] row : mothanData) {
+            if (row.length < 5) continue;
             MothanTransaction m = new MothanTransaction();
             m.setTenantId(tenantId);
-            m.setReportDate(parseDate(row[1]));
-            m.setTransactionDate(parseDate(row[2]));
-            m.setDocReference(nullOrValue(row[3]));
-            m.setBranchCode(row[4]);
-            m.setBranchName(nullOrValue(row[5]));
-            m.setDescription(nullOrValue(row[6]));
-            m.setAmountSar(parseDouble(row[7]));
-            m.setCreditSar(parseDouble(row[7]));   // keep creditSar = amountSar for existing queries
-            m.setRunningBalance(parseDouble(row[8]));
-            m.setWeightCreditG(parseDouble(row[9]));
-            m.setWeightDebitG(parseDouble(row[10]));
-            m.setGoldWeightGrams(parseDouble(row[10])); // keep goldWeightGrams for existing queries
-            m.setRateSarPerGram(parseDouble(row[11]));
-            m.setBalanceGoldG(parseDouble(row[12]));
-            m.setBalanceSar(parseDouble(row[13]));
+            m.setReportDate(parseDate(col(row, 1)));
+            m.setTransactionDate(parseDate(col(row, 2)));
+            m.setDocReference(nullOrValue(col(row, 3)));
+            m.setBranchCode(col(row, 4));
+            m.setBranchName(nullOrValue(col(row, 5)));
+            m.setDescription(nullOrValue(col(row, 6)));
+            m.setAmountSar(colD(row, 7));
+            m.setCreditSar(colD(row, 7));
+            m.setRunningBalance(colD(row, 8));
+            m.setWeightCreditG(colD(row, 9));
+            m.setWeightDebitG(colD(row, 10));
+            m.setGoldWeightGrams(colD(row, 10));
+            m.setRateSarPerGram(colD(row, 11));
+            m.setBalanceGoldG(colD(row, 12));
+            m.setBalanceSar(colD(row, 13));
             m.setSourceFileName("pg-import");
             m.setCreatedAt(LocalDateTime.now());
             mothans.add(m);
@@ -296,14 +301,15 @@ public class PgImportService {
         purchaseRateRepo.deleteByTenantId(tenantId);
         List<BranchPurchaseRate> rates = new ArrayList<>();
         for (String[] row : ratesData) {
+            if (row.length < 1) continue;
             BranchPurchaseRate r = new BranchPurchaseRate();
             r.setTenantId(tenantId);
-            r.setBranchCode(row[0]);
-            r.setBranchName(nullOrValue(row[1]));
-            r.setPurchaseRate(parseDouble(row[2]));
-            r.setTotalSar(parseDouble(row[3]));
-            r.setTotalWeight(parseDouble(row[4]));
-            r.setSourceDate(parseDate(row.length > 6 ? row[6] : row[5]));
+            r.setBranchCode(col(row, 0));
+            r.setBranchName(nullOrValue(col(row, 1)));
+            r.setPurchaseRate(colD(row, 2));
+            r.setTotalSar(colD(row, 3));
+            r.setTotalWeight(colD(row, 4));
+            r.setSourceDate(parseDate(col(row, row.length > 6 ? 6 : 5)));
             r.setUpdatedAt(LocalDateTime.now());
             rates.add(r);
         }
@@ -320,19 +326,20 @@ public class PgImportService {
         branchTargetRepo.deleteByTenantId(tenantId);
         List<BranchTarget> targets = new ArrayList<>();
         for (String[] row : targetsData) {
+            if (row.length < 2) continue;
             BranchTarget t = new BranchTarget();
             t.setTenantId(tenantId);
-            t.setBranchCode(nullOrValue(row[1]));
-            t.setBranchName(nullOrValue(row[2]));
-            t.setTargetDate(parseDate(row[3]));
-            t.setAnnualTarget(parseDouble(row[4]));
-            t.setMonthlyTarget(parseDouble(row[5]));
-            t.setDailyTarget(parseDouble(row[6]));
-            t.setTargetNetWeightDaily(parseDouble(row[7]));
-            t.setEmpCount(parseInt(row[8]));
-            t.setTargetRateDifference(parseDouble(row[9]));
-            t.setMonthPct(parseDouble(row[10]));
-            t.setUpdatedAt(parseDateTime(row[11]));
+            t.setBranchCode(nullOrValue(col(row, 1)));
+            t.setBranchName(nullOrValue(col(row, 2)));
+            t.setTargetDate(parseDate(col(row, 3)));
+            t.setAnnualTarget(colD(row, 4));
+            t.setMonthlyTarget(colD(row, 5));
+            t.setDailyTarget(colD(row, 6));
+            t.setTargetNetWeightDaily(colD(row, 7));
+            t.setEmpCount(colI(row, 8));
+            t.setTargetRateDifference(colD(row, 9));
+            t.setMonthPct(colD(row, 10));
+            t.setUpdatedAt(parseDateTime(col(row, 11)));
             targets.add(t);
         }
         saveBatched(branchTargetRepo, targets, "branch_targets");
@@ -344,13 +351,14 @@ public class PgImportService {
         adminNoteRepo.deleteByTenantId(tenantId);
         List<AdminNote> notes = new ArrayList<>();
         for (String[] row : notesData) {
+            if (row.length < 2) continue;
             AdminNote n = new AdminNote();
             n.setTenantId(tenantId);
-            n.setBranchCode(nullOrValue(row[1]));
-            n.setNoteDate(parseDate(row[2]));
-            n.setNoteText(row[3]);
-            n.setCreatedBy(nullOrValue(row[4]));
-            n.setCreatedAt(parseDateTime(row[5]));
+            n.setBranchCode(nullOrValue(col(row, 1)));
+            n.setNoteDate(parseDate(col(row, 2)));
+            n.setNoteText(col(row, 3));
+            n.setCreatedBy(nullOrValue(col(row, 4)));
+            n.setCreatedAt(parseDateTime(col(row, 5)));
             notes.add(n);
         }
         adminNoteRepo.saveAll(notes);
@@ -361,18 +369,19 @@ public class PgImportService {
         empTargetRepo.deleteByTenantId(tenantId);
         List<EmployeeTarget> empTargets = new ArrayList<>();
         for (String[] row : empTargetsData) {
+            if (row.length < 2) continue;
             EmployeeTarget et = new EmployeeTarget();
             et.setTenantId(tenantId);
-            et.setEmpId(parseInt(row[1]));
-            et.setEmpName(nullOrValue(row[2]));
-            et.setBranchCode(nullOrValue(row[3]));
-            et.setTargetMonth(parseDate(row[4]));
-            et.setTargetWeightG(parseDouble(row[5]));
-            et.setTargetDiffAvg(parseDouble(row[6]));
-            et.setTargetPieces(parseInt(row[7]));
-            et.setTargetSalesSar(parseDouble(row[8]));
-            et.setCreatedBy(nullOrValue(row[9]));
-            et.setUpdatedAt(parseDateTime(row[10]));
+            et.setEmpId(colI(row, 1));
+            et.setEmpName(nullOrValue(col(row, 2)));
+            et.setBranchCode(nullOrValue(col(row, 3)));
+            et.setTargetMonth(parseDate(col(row, 4)));
+            et.setTargetWeightG(colD(row, 5));
+            et.setTargetDiffAvg(colD(row, 6));
+            et.setTargetPieces(colI(row, 7));
+            et.setTargetSalesSar(colD(row, 8));
+            et.setCreatedBy(nullOrValue(col(row, 9)));
+            et.setUpdatedAt(parseDateTime(col(row, 10)));
             empTargets.add(et);
         }
         empTargetRepo.saveAll(empTargets);
@@ -383,17 +392,18 @@ public class PgImportService {
         empTransferRepo.deleteByTenantId(tenantId);
         List<EmployeeTransfer> transfers = new ArrayList<>();
         for (String[] row : transfersData) {
+            if (row.length < 2) continue;
             EmployeeTransfer et = new EmployeeTransfer();
             et.setTenantId(tenantId);
-            et.setEmpId(parseInt(row[1]));
-            et.setEmpName(nullOrValue(row[2]));
-            et.setFromBranchCode(nullOrValue(row[3]));
-            et.setFromBranchName(nullOrValue(row[4]));
-            et.setToBranchCode(nullOrValue(row[5]));
-            et.setToBranchName(nullOrValue(row[6]));
-            et.setTransferDate(parseDate(row[7]));
-            et.setNotes(nullOrValue(row[8]));
-            et.setCreatedAt(parseDateTime(row[9]));
+            et.setEmpId(colI(row, 1));
+            et.setEmpName(nullOrValue(col(row, 2)));
+            et.setFromBranchCode(nullOrValue(col(row, 3)));
+            et.setFromBranchName(nullOrValue(col(row, 4)));
+            et.setToBranchCode(nullOrValue(col(row, 5)));
+            et.setToBranchName(nullOrValue(col(row, 6)));
+            et.setTransferDate(parseDate(col(row, 7)));
+            et.setNotes(nullOrValue(col(row, 8)));
+            et.setCreatedAt(parseDateTime(col(row, 9)));
             transfers.add(et);
         }
         empTransferRepo.saveAll(transfers);
@@ -404,19 +414,20 @@ public class PgImportService {
         dailySaleRepo.deleteByTenantId(tenantId);
         List<DailySale> dailySales = new ArrayList<>();
         for (String[] row : dailySalesData) {
+            if (row.length < 2) continue;
             DailySale ds = new DailySale();
             ds.setTenantId(tenantId);
-            ds.setBranchId(parseInt(row[1]));
-            ds.setSaleDate(parseDate(row[2]));
-            ds.setNetSales(parseDouble(row[3]));
-            ds.setGrossSales(parseDouble(row[4]));
-            ds.setDailyTarget(parseDouble(row[5]));
-            ds.setPurchases(parseDouble(row[6]));
-            ds.setCash(parseDouble(row[7]));
-            ds.setBank(parseDouble(row[8]));
+            ds.setBranchId(colI(row, 1));
+            ds.setSaleDate(parseDate(col(row, 2)));
+            ds.setNetSales(colD(row, 3));
+            ds.setGrossSales(colD(row, 4));
+            ds.setDailyTarget(colD(row, 5));
+            ds.setPurchases(colD(row, 6));
+            ds.setCash(colD(row, 7));
+            ds.setBank(colD(row, 8));
             double tgt = ds.getDailyTarget();
             ds.setAchievementPct(tgt > 0 ? Math.round(ds.getNetSales() / tgt * 10000.0) / 100.0 : 0);
-            ds.setCreatedAt(parseDateTime(row[9]));
+            ds.setCreatedAt(parseDateTime(col(row, 9)));
             Branch b = branchById.get(ds.getBranchId());
             if (b != null) { ds.setBranchCode(String.valueOf(b.getPgId())); ds.setBranchName(b.getName()); }
             dailySales.add(ds);
@@ -429,13 +440,14 @@ public class PgImportService {
         monthlySummaryRepo.deleteByTenantId(tenantId);
         List<MonthlySummary> summaries = new ArrayList<>();
         for (String[] row : summariesData) {
+            if (row.length < 2) continue;
             MonthlySummary ms = new MonthlySummary();
             ms.setTenantId(tenantId);
-            ms.setBranchId(parseInt(row[1]));
-            ms.setYear(parseInt(row[2]));
-            ms.setMonth(parseInt(row[3]));
-            ms.setTotalSales(parseDouble(row[4]));
-            ms.setTotalTarget(parseDouble(row[5]));
+            ms.setBranchId(colI(row, 1));
+            ms.setYear(colI(row, 2));
+            ms.setMonth(colI(row, 3));
+            ms.setTotalSales(colD(row, 4));
+            ms.setTotalTarget(colD(row, 5));
             double tgt = ms.getTotalTarget();
             ms.setAchievementPct(tgt > 0 ? Math.round(ms.getTotalSales() / tgt * 10000.0) / 100.0 : 0);
             Branch b = branchById.get(ms.getBranchId());
@@ -522,4 +534,12 @@ public class PgImportService {
     private String nullOrValue(String s) {
         return (s == null || s.equals("\\N")) ? null : s;
     }
+
+    /** Safe column access — returns null if index is out of bounds */
+    private String col(String[] row, int i) {
+        return (row != null && i < row.length) ? row[i] : null;
+    }
+
+    private double colD(String[] row, int i) { return parseDouble(col(row, i)); }
+    private int    colI(String[] row, int i) { return parseInt(col(row, i)); }
 }

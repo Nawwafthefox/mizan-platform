@@ -44,12 +44,22 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
     @Bean
     CommandLineRunner ensureIndexes(MongoTemplate mt) {
         return args -> {
-            // Drop legacy unique index on sourceFileName — causes DuplicateKeyException on re-upload
-            try {
-                mt.indexOps("employee_sales").dropIndex("sourceFileName_1");
-                log.info("Dropped legacy unique index sourceFileName_1 on employee_sales");
-            } catch (Exception ignored) {
-                log.debug("sourceFileName_1 index not found on employee_sales — nothing to drop");
+            // Drop any unique indexes on sourceFileName — they block pg-import (all rows share same filename)
+            String[] collections = {"branch_sales", "branch_purchases", "employee_sales", "mothan_transactions"};
+            String[] legacyNames = {
+                "unique_tenantId_sourceFileName_branch_sales",
+                "unique_tenantId_sourceFileName_branch_purchases",
+                "unique_tenantId_sourceFileName_employee_sales",
+                "unique_tenantId_sourceFileName_mothan_transactions",
+                "sourceFileName_1", "tenantId_1_sourceFileName_1"
+            };
+            for (String col : collections) {
+                for (String idx : legacyNames) {
+                    try {
+                        mt.indexOps(col).dropIndex(idx);
+                        log.info("Dropped legacy unique index {} on {}", idx, col);
+                    } catch (Exception ignored) {}
+                }
             }
 
             mt.indexOps("branch_sales")
