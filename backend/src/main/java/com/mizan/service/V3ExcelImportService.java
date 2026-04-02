@@ -198,9 +198,9 @@ public class V3ExcelImportService {
             if (row == null) continue;
             Cell c0 = row.getCell(0);
             if (c0 != null && c0.getCellType() == CellType.NUMERIC && c0.getNumericCellValue() >= 1) {
-                // Check col1 for a 4-digit branch code to confirm Format B
+                // Accept 3-6 digit branch codes for Format B detection
                 String c1 = getStr(row, 1);
-                if (c1.matches("\\d{4}")) return Format.B;
+                if (c1.matches("\\d{3,6}")) return Format.B;
             }
             Cell c15 = row.getCell(15);
             if (c15 != null && c15.getCellType() == CellType.NUMERIC && c15.getNumericCellValue() >= 1) {
@@ -320,8 +320,9 @@ public class V3ExcelImportService {
     //             3=totalSAR, 6=pureWt, 7=purity, 10=grossWt, 11=pieces,
     //             4=mkgCharge, 5=metalVal
 
+    // Accept 3-6 digit codes; separators: hyphen, en-dash, em-dash, slash, space, or colon
     private static final java.util.regex.Pattern BRANCH_HEADER_A =
-        java.util.regex.Pattern.compile("^(\\d{4})\\s*[-–]\\s*(.+)");
+        java.util.regex.Pattern.compile("^(\\d{3,6})\\s*[-–—/: ]\\s*(.+)");
     private static final java.util.regex.Pattern DATE_HEADER_A =
         java.util.regex.Pattern.compile("(\\d{1,2})/(\\d{1,2})/(\\d{4})|(\\d{4})-(\\d{2})-(\\d{2})");
 
@@ -329,12 +330,20 @@ public class V3ExcelImportService {
         List<V3SaleTransaction> result = new ArrayList<>();
         String currentBranch = null;
         LocalDate currentDate = LocalDate.now();
+        Set<String> loggedMisses = new java.util.LinkedHashSet<>();
+        Set<String> foundBranches = new java.util.LinkedHashSet<>();
 
         for (Row row : sheet) {
             if (row == null) continue;
             String col12 = getStr(row, 12);
             java.util.regex.Matcher bm = BRANCH_HEADER_A.matcher(col12);
-            if (bm.matches()) { currentBranch = bm.group(1); continue; }
+            if (bm.matches()) { currentBranch = bm.group(1); foundBranches.add(currentBranch); continue; }
+
+            // Log col12 values that look like branch headers but didn't match (first 20 unique)
+            if (!col12.isBlank() && col12.length() > 2 && Character.isDigit(col12.charAt(0))
+                    && loggedMisses.size() < 20) {
+                loggedMisses.add(col12);
+            }
 
             // Try to extract date from any cell
             LocalDate rowDate = extractDateFromRow(row, currentDate);
@@ -363,6 +372,10 @@ public class V3ExcelImportService {
             t.setMetalValue(metalVal); t.setMakingCharge(mkgCharge);
             t.setReturn(sar < 0);
             result.add(t);
+        }
+        log.info("parseSalesA: found {} branch headers: {}", foundBranches.size(), foundBranches);
+        if (!loggedMisses.isEmpty()) {
+            log.warn("parseSalesA: col12 digit-starting values that DIDN'T match branch header regex: {}", loggedMisses);
         }
         return result;
     }

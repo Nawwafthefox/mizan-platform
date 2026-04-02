@@ -4,13 +4,17 @@ import com.mizan.model.V3MothanTransaction;
 import com.mizan.model.V3SaleTransaction;
 import com.mizan.repository.*;
 import com.mizan.security.TenantContext;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.ss.usermodel.*;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.time.LocalDate;
 import java.util.*;
 
@@ -165,5 +169,56 @@ public class V3DebugController {
         d.put("EXPECTED", expected);
 
         return ResponseEntity.ok(Map.of("success", true, "diagnosis", d));
+    }
+
+    /**
+     * POST /api/v3/debug/sheet-preview
+     * Upload any XLS file → returns first 30 rows with all cell values per column.
+     * Used to understand the actual file structure when parsers produce wrong counts.
+     */
+    @PostMapping("/sheet-preview")
+    public ResponseEntity<?> sheetPreview(@RequestParam("file") MultipartFile file) throws Exception {
+        byte[] bytes = file.getBytes();
+        List<Map<String, Object>> rows = new ArrayList<>();
+
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+            int maxRows = Math.min(30, sheet.getLastRowNum() + 1);
+
+            for (int ri = 0; ri < maxRows; ri++) {
+                Row row = sheet.getRow(ri);
+                Map<String, Object> rowMap = new LinkedHashMap<>();
+                rowMap.put("rowIndex", ri);
+                if (row == null) { rowMap.put("empty", true); rows.add(rowMap); continue; }
+
+                Map<String, String> cells = new LinkedHashMap<>();
+                int maxCol = Math.min(row.getLastCellNum(), 18);
+                for (int ci = 0; ci < maxCol; ci++) {
+                    Cell c = row.getCell(ci);
+                    String val = "";
+                    if (c != null) {
+                        val = switch (c.getCellType()) {
+                            case NUMERIC -> String.valueOf(c.getNumericCellValue());
+                            case STRING  -> c.getStringCellValue();
+                            case BOOLEAN -> String.valueOf(c.getBooleanCellValue());
+                            case FORMULA -> {
+                                try { yield String.valueOf(c.getNumericCellValue()); }
+                                catch (Exception e) { yield c.getCellFormula(); }
+                            }
+                            default -> "";
+                        };
+                    }
+                    cells.put("c" + ci, val);
+                }
+                rowMap.put("cells", cells);
+                rows.add(rowMap);
+            }
+        }
+
+        return ResponseEntity.ok(Map.of(
+            "success", true,
+            "filename", file.getOriginalFilename(),
+            "rows", rows
+        ));
     }
 }
