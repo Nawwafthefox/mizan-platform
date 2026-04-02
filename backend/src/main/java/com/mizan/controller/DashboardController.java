@@ -7,7 +7,10 @@ import com.mizan.model.BranchPurchaseRate;
 import com.mizan.repository.BranchPurchaseRateRepository;
 import com.mizan.repository.BranchSaleRepository;
 import com.mizan.repository.BranchTargetRepository;
+import com.mizan.repository.DailySaleRepository;
 import com.mizan.repository.EmployeeSaleRepository;
+import com.mizan.repository.EmployeeTransferRepository;
+import com.mizan.repository.MonthlySummaryRepository;
 import com.mizan.repository.MothanTransactionRepository;
 import com.mizan.security.MizanUserDetails;
 import com.mizan.security.TenantContext;
@@ -34,6 +37,9 @@ public class DashboardController {
     private final BranchPurchaseRateRepository rateRepo;
     private final BranchPurchaseRepository purchRepo;
     private final UploadService uploadSvc;
+    private final DailySaleRepository dailySaleRepo;
+    private final MonthlySummaryRepository monthlySummaryRepo;
+    private final EmployeeTransferRepository empTransferRepo;
 
     public DashboardController(DashboardService dashSvc,
             EmployeeSaleRepository empRepo,
@@ -42,7 +48,10 @@ public class DashboardController {
             BranchTargetRepository targetRepo,
             BranchPurchaseRateRepository rateRepo,
             BranchPurchaseRepository purchRepo,
-            UploadService uploadSvc) {
+            UploadService uploadSvc,
+            DailySaleRepository dailySaleRepo,
+            MonthlySummaryRepository monthlySummaryRepo,
+            EmployeeTransferRepository empTransferRepo) {
         this.dashSvc = dashSvc;
         this.empRepo = empRepo;
         this.mothanRepo = mothanRepo;
@@ -51,6 +60,9 @@ public class DashboardController {
         this.rateRepo = rateRepo;
         this.purchRepo = purchRepo;
         this.uploadSvc = uploadSvc;
+        this.dailySaleRepo = dailySaleRepo;
+        this.monthlySummaryRepo = monthlySummaryRepo;
+        this.empTransferRepo = empTransferRepo;
     }
 
     @GetMapping("/summary")
@@ -625,6 +637,153 @@ public class DashboardController {
         m.put("profitableBranches",0); m.put("lossBranches",0);
         m.put("dateRange",Map.of("from",from.toString(),"to",to.toString()));
         return m;
+    }
+
+    @GetMapping("/daily-sales")
+    public ResponseEntity<?> dailySales(
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate to) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.ok(Map.of("success", true, "data", List.of()));
+        List<com.mizan.model.DailySale> sales = dailySaleRepo.findByTenantAndRange(tenantId, from, to);
+        return ResponseEntity.ok(Map.of("success", true, "data", sales));
+    }
+
+    @GetMapping("/monthly-summaries")
+    public ResponseEntity<?> monthlySummaries(@RequestParam(required = false) Integer year) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.ok(Map.of("success", true, "data", List.of()));
+        List<com.mizan.model.MonthlySummary> summaries = year != null
+            ? monthlySummaryRepo.findByTenantIdAndYear(tenantId, year)
+            : monthlySummaryRepo.findByTenantIdOrderByYearDescMonthDesc(tenantId);
+        return ResponseEntity.ok(Map.of("success", true, "data", summaries));
+    }
+
+    @GetMapping("/employee-transfers")
+    public ResponseEntity<?> employeeTransfers(
+            @RequestParam(required = false) Integer empId,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate to) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.ok(Map.of("success", true, "data", List.of()));
+        List<com.mizan.model.EmployeeTransfer> transfers;
+        if (empId != null) {
+            transfers = empTransferRepo.findByTenantIdAndEmpId(tenantId, empId);
+        } else if (from != null && to != null) {
+            transfers = empTransferRepo.findByTenantIdAndTransferDateBetween(tenantId, from, to);
+        } else {
+            transfers = empTransferRepo.findByTenantId(tenantId);
+        }
+        return ResponseEntity.ok(Map.of("success", true, "data", transfers));
+    }
+
+    @GetMapping("/employee-targets-achievement")
+    public ResponseEntity<?> employeeTargetsAchievement(
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE) LocalDate to,
+            @AuthenticationPrincipal MizanUserDetails principal) {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null) return ResponseEntity.ok(Map.of("success", true, "data", List.of()));
+
+        List<String> scoped = dashSvc.resolveScopedBranches(principal);
+        List<EmployeeSale> empSalesList = scoped == null
+            ? empRepo.findByTenantAndRange(tenantId, from, to)
+            : empRepo.findByTenantAndRangeAndBranch(tenantId, from, to, scoped);
+
+        // Group employee sales by employeeId
+        Map<String, List<EmployeeSale>> byEmp = empSalesList.stream()
+            .collect(Collectors.groupingBy(EmployeeSale::getEmployeeId));
+
+        // Load all targets for all months in the range
+        LocalDate cursor = from.withDayOfMonth(1);
+        LocalDate lastMonth = to.withDayOfMonth(1);
+        List<LocalDate> months = new ArrayList<>();
+        while (!cursor.isAfter(lastMonth)) { months.add(cursor); cursor = cursor.plusMonths(1); }
+        int monthsCount = Math.max(1, months.size());
+
+        // Load branch targets for the range
+        Map<String, com.mizan.model.BranchTarget> latestTargetByBranch = new LinkedHashMap<>();
+        for (LocalDate m : months) {
+            LocalDate endOfMonth = m.withDayOfMonth(m.lengthOfMonth());
+            List<com.mizan.model.BranchTarget> targets = targetRepo.findByTenantIdAndTargetDateBetween(tenantId, m, endOfMonth);
+            for (com.mizan.model.BranchTarget t : targets) {
+                latestTargetByBranch.put(t.getBranchCode(), t);
+            }
+        }
+
+        // Load branch purchase rates for diff
+        Map<String, Double> purchRates = rateRepo.findByTenantId(tenantId).stream()
+            .collect(Collectors.toMap(BranchPurchaseRate::getBranchCode, BranchPurchaseRate::getPurchaseRate, (a, b_) -> a));
+
+        long actualDays = java.time.temporal.ChronoUnit.DAYS.between(from, to) + 1;
+        long targetDays = (long) monthsCount * 30;
+        long useDays = actualDays >= 28 ? targetDays : actualDays;
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map.Entry<String, List<EmployeeSale>> entry : byEmp.entrySet()) {
+            List<EmployeeSale> empSales = entry.getValue();
+            EmployeeSale first = empSales.get(0);
+            String branchCode = first.getBranchCode();
+
+            double totalSar = empSales.stream().mapToDouble(EmployeeSale::getTotalSarAmount).sum();
+            double totalWt  = Math.abs(empSales.stream().mapToDouble(EmployeeSale::getNetWeight).sum());
+            int invoiceCount = empSales.stream().mapToInt(EmployeeSale::getInvoiceCount).sum();
+            double saleRate = r4(totalWt > 0 ? totalSar / totalWt : 0);
+
+            double purchRate = purchRates.getOrDefault(branchCode, 0.0);
+            double diffRate  = Math.round((saleRate - purchRate) * 10) / 10.0;
+            double profitMargin = purchRate > 0 ? Math.round(totalWt * diffRate * 100) / 100.0 : 0;
+
+            com.mizan.model.BranchTarget target = latestTargetByBranch.get(branchCode);
+            double targetRateDiff = target != null && target.getTargetRateDifference() > 0
+                ? target.getTargetRateDifference() : 110;
+            int empCount = target != null ? Math.max(1, target.getEmpCount() - 1) : 1;
+            double monthlyTotal = target != null ? target.getMonthlyTarget() * monthsCount : 0;
+
+            double avgDailyPerEmp = empCount > 0 && monthsCount > 0
+                ? (monthlyTotal / empCount) / (monthsCount * 30.0) : 0;
+            double targetWt = avgDailyPerEmp * useDays;
+            double actualWt = totalWt;
+            double wtPct = targetWt > 0
+                ? Math.round((actualWt - targetWt) / targetWt * 1000) / 10.0 : 0;
+            double actualProfit  = actualWt * Math.abs(diffRate);
+            double targetProfit  = targetWt * targetRateDiff;
+            double profitPct = targetProfit > 0
+                ? Math.round((actualProfit - targetProfit) / targetProfit * 1000) / 10.0 : 0;
+
+            String rating = saleRate >= 700 ? "excellent" : saleRate >= 600 ? "good"
+                : saleRate >= 500 ? "average" : "weak";
+
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("employeeId", entry.getKey());
+            row.put("employeeName", first.getEmployeeName());
+            row.put("branchCode", branchCode);
+            row.put("branchName", first.getBranchName());
+            row.put("region", first.getRegion());
+            row.put("totalSar", totalSar);
+            row.put("totalWt", totalWt);
+            row.put("invoiceCount", invoiceCount);
+            row.put("saleRate", saleRate);
+            row.put("purchRate", purchRate);
+            row.put("diffRate", diffRate);
+            row.put("profitMargin", profitMargin);
+            row.put("targetRateDiff", targetRateDiff);
+            row.put("empCount", empCount);
+            row.put("targetWt", Math.round(targetWt * 100.0) / 100.0);
+            row.put("actualWt", Math.round(actualWt * 100.0) / 100.0);
+            row.put("wtPct", wtPct);
+            row.put("actualProfit", Math.round(actualProfit));
+            row.put("targetProfit", Math.round(targetProfit));
+            row.put("profitPct", profitPct);
+            row.put("useDays", useDays);
+            row.put("monthsCount", monthsCount);
+            row.put("rating", rating);
+            row.put("achieved", saleRate > purchRate);
+            result.add(row);
+        }
+
+        result.sort((a, b_) -> Double.compare((double) b_.get("totalSar"), (double) a.get("totalSar")));
+        return ResponseEntity.ok(Map.of("success", true, "data", result));
     }
 
     @GetMapping("/daily-trend")

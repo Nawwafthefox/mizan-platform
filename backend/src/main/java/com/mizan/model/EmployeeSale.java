@@ -27,6 +27,8 @@ public class EmployeeSale {
     private double diffAvg;
     private double profitMargin;
     private boolean achievedTarget;
+    private LocalDate dateFrom;  // date_from
+    private LocalDate dateTo;    // date_to
     private String sourceFileName;
     private String uploadBatch;
     private String uploadedBy;

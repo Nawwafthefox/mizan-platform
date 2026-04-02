@@ -3,18 +3,23 @@ spring:
     name: mizan-platform
   data:
     mongodb:
-      auto-index-creation: true
+      auto-index-creation: false
   servlet:
     multipart:
-      max-file-size: 50MB
-      max-request-size: 200MB
+      max-file-size: 100MB
+      max-request-size: 400MB
+      file-size-threshold: 10MB   # keep files ≤10MB in memory, skip temp-disk write
 
 server:
   port: 8080
+  tomcat:
+    connection-timeout: 120000
+    max-swallow-size: -1
+
+cors:
+  allowed-origins: ${CORS_ORIGINS:http://localhost:4200}
 
 mizan:
   jwt:
     secret: ${JWT_SECRET:mizan-super-secret-key-change-in-production-2026-very-long-string}
     expiration: 86400000
-  cors:
-    allowed-origins: ${CORS_ORIGINS:http://localhost:4200}

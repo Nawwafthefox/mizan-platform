@@ -10,6 +10,8 @@ public interface EmployeeSaleRepository extends MongoRepository<EmployeeSale, St
     List<EmployeeSale> findByTenantAndRange(String tenantId, LocalDate from, LocalDate to);
     @Query("{'tenantId':?0,'saleDate':{$gte:?1,$lte:?2},'branchCode':{$in:?3}}")
     List<EmployeeSale> findByTenantAndRangeAndBranches(String tenantId, LocalDate from, LocalDate to, List<String> codes);
+    @Query("{'tenantId':?0,'saleDate':{$gte:?1,$lte:?2},'branchCode':{$in:?3}}")
+    List<EmployeeSale> findByTenantAndRangeAndBranch(String tenantId, LocalDate from, LocalDate to, List<String> codes);
     @Query("{'tenantId':?0,'saleDate':{$gte:?1,$lte:?2},'employeeId':?3}")
     List<EmployeeSale> findByTenantAndRangeAndEmployee(String tenantId, LocalDate from, LocalDate to, String empId);
     boolean existsByTenantIdAndSaleDateAndEmployeeIdAndSourceFileName(String t, LocalDate d, String e, String f);
