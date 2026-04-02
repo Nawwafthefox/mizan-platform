@@ -257,6 +257,24 @@ interface UploadCard {
       </div>
     </div>
 
+    <!-- BCNF Export -->
+    <div class="card mt-4">
+      <div class="card__header">
+        <h3>📊 تصدير قاعدة البيانات (BCNF)</h3>
+        <span class="badge badge--info">Excel</span>
+      </div>
+      <div style="padding:.75rem 1rem">
+        <p style="font-size:.83rem;color:var(--mizan-text-muted);margin:0 0 .75rem">
+          يصدّر جميع بيانات المستأجر في ملف Excel واحد مُعيَّار وفق BCNF:
+          15 جدول بيانات + 4 أوراق حسابية (VIEW) بصيغ SUMIF/SUMPRODUCT/VLOOKUP.
+        </p>
+        <button class="btn btn--export" style="font-size:.85rem;padding:.4rem 1rem"
+          (click)="exportNormalizedDb()">
+          ⬇ تحميل ملف Excel الموحَّد
+        </button>
+      </div>
+    </div>
+
     <!-- History -->
     <div class="card mt-4">
       <div class="card__header">
@@ -572,6 +590,10 @@ export class UploadComponent implements OnDestroy {
 
   exportCsv(type: UploadType): void {
     this.svc.exportCsv(type, this.dr.getFrom(), this.dr.getTo());
+  }
+
+  exportNormalizedDb(): void {
+    this.svc.exportNormalizedDb();
   }
 
   confirmDelete(card: UploadCard): void {

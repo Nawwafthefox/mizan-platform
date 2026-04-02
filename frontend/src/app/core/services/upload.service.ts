@@ -49,4 +49,8 @@ export class UploadService {
   wipeAllData(): Observable<ApiResponse<any>> {
     return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/admin/wipe-data`, null);
   }
+
+  exportNormalizedDb(): void {
+    window.open(`${environment.apiUrl}/export/normalized-db`, '_blank');
+  }
 }

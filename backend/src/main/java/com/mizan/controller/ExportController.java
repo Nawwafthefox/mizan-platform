@@ -5,6 +5,7 @@ import com.mizan.repository.*;
 import com.mizan.security.TenantContext;
 import com.mizan.service.DashboardService;
 import com.mizan.service.DashboardService.BranchData;
+import com.mizan.service.NormalizedExportService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -22,17 +23,20 @@ public class ExportController {
     private final BranchPurchaseRepository purchRepo;
     private final MothanTransactionRepository mothanRepo;
     private final DashboardService         dashSvc;
+    private final NormalizedExportService  normalizedSvc;
 
     public ExportController(BranchSaleRepository saleRepo,
                              EmployeeSaleRepository empRepo,
                              BranchPurchaseRepository purchRepo,
                              MothanTransactionRepository mothanRepo,
-                             DashboardService dashSvc) {
-        this.saleRepo   = saleRepo;
-        this.empRepo    = empRepo;
-        this.purchRepo  = purchRepo;
-        this.mothanRepo = mothanRepo;
-        this.dashSvc    = dashSvc;
+                             DashboardService dashSvc,
+                             NormalizedExportService normalizedSvc) {
+        this.saleRepo      = saleRepo;
+        this.empRepo       = empRepo;
+        this.purchRepo     = purchRepo;
+        this.mothanRepo    = mothanRepo;
+        this.dashSvc       = dashSvc;
+        this.normalizedSvc = normalizedSvc;
     }
 
     // ─── Branch Sales ────────────────────────────────────────────────────────
@@ -172,6 +176,26 @@ public class ExportController {
               .append('\n');
         }
         return csvResponse(sb, "summary-" + from + "-" + to + ".csv");
+    }
+
+    // ─── BCNF Normalized DB Export ───────────────────────────────────────────
+
+    @GetMapping("/normalized-db")
+    public ResponseEntity<byte[]> exportNormalizedDb() {
+        String tenantId = TenantContext.getTenantId();
+        if (tenantId == null)
+            return ResponseEntity.badRequest().build();
+        try {
+            byte[] bytes = normalizedSvc.generate(tenantId);
+            String filename = "mizan-normalized-db-" + LocalDate.now() + ".xlsx";
+            return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .contentType(MediaType.parseMediaType(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(bytes);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
