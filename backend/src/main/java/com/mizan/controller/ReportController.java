@@ -79,7 +79,7 @@ public class ReportController {
 
             double totalSar    = empSales.stream().mapToDouble(EmployeeSale::getTotalSarAmount).sum();
             double totalWt     = empSales.stream().mapToDouble(EmployeeSale::getNetWeight).sum();
-            long invoiceCount  = empSales.stream().mapToLong(EmployeeSale::getInvoiceCount).sum();
+            long invoiceCount  = empSales.stream().mapToLong(e -> Math.abs(e.getInvoiceCount())).sum();
             double saleRate    = totalWt != 0 ? totalSar / totalWt : 0;
             double returns     = empSales.stream()
                 .filter(s -> s.isReturn() || s.getTotalSarAmount() < 0)

@@ -70,7 +70,7 @@ public class DashboardService {
             MutableBranch b = bmap.computeIfAbsent(s.getBranchCode(),
                 k -> new MutableBranch(k, s.getBranchName(), s.getRegion()));
             b.sar += s.getTotalSarAmount(); b.wn += s.getNetWeight();
-            b.wp += s.getGrossWeight(); b.pcs += s.getInvoiceCount();
+            b.wp += s.getGrossWeight(); b.pcs += Math.abs(s.getInvoiceCount());
             if (s.isReturn()) { b.returns += s.getTotalSarAmount(); b.returnDays++; }
             if (s.getKaratRows() != null && !s.getKaratRows().isEmpty()) {
                 for (KaratRow kr : s.getKaratRows()) {

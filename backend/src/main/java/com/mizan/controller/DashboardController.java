@@ -81,7 +81,7 @@ public class DashboardController {
         double totalSar = branches.stream().mapToDouble(BranchData::sar).sum();
         double totalPurch = branches.stream().mapToDouble(b->b.purch()+b.mothan()).sum();
         double totalWn = branches.stream().mapToDouble(BranchData::wn).sum();
-        long totalPcs = branches.stream().mapToLong(BranchData::pcs).sum();
+        long totalPcs = branches.stream().mapToLong(b -> Math.abs(b.pcs())).sum();
         long profitable = branches.stream().filter(b->b.diffRate()>0).count();
         long loss = branches.stream().filter(b->b.diffRate()<0 && b.purchRate()>0).count();
         double overallSaleRate = r4(totalWn > 0 ? totalSar / totalWn : 0);
@@ -195,7 +195,7 @@ public class DashboardController {
 
             double totalSar = empSales.stream().mapToDouble(EmployeeSale::getTotalSarAmount).sum();
             double totalWt = empSales.stream().mapToDouble(EmployeeSale::getNetWeight).sum();
-            long invoiceCount = empSales.stream().mapToLong(EmployeeSale::getInvoiceCount).sum();
+            long invoiceCount = empSales.stream().mapToLong(e -> Math.abs(e.getInvoiceCount())).sum();
             double saleRate = totalWt > 0 ? totalSar / totalWt : 0;
             double returns = empSales.stream()
                 .filter(s -> s.isReturn() || s.getTotalSarAmount() < 0)
@@ -727,7 +727,7 @@ public class DashboardController {
 
             double totalSar = empSales.stream().mapToDouble(EmployeeSale::getTotalSarAmount).sum();
             double totalWt  = Math.abs(empSales.stream().mapToDouble(EmployeeSale::getNetWeight).sum());
-            long invoiceCount = empSales.stream().mapToLong(EmployeeSale::getInvoiceCount).sum();
+            long invoiceCount = empSales.stream().mapToLong(e -> Math.abs(e.getInvoiceCount())).sum();
             double saleRate = r4(totalWt > 0 ? totalSar / totalWt : 0);
 
             double purchRate = purchRates.getOrDefault(branchCode, 0.0);
