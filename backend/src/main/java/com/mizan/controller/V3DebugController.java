@@ -172,6 +172,109 @@ public class V3DebugController {
     }
 
     /**
+     * POST /api/v3/debug/analyze-branch-sales
+     * Upload the branch sales XLS → returns detected format, all found/missed
+     * branch headers, and sample rows so we can diagnose the parser.
+     */
+    @PostMapping("/analyze-branch-sales")
+    public ResponseEntity<?> analyzeBranchSales(@RequestParam("file") MultipartFile file) throws Exception {
+        byte[] bytes = file.getBytes();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("filename",  file.getOriginalFilename());
+        result.put("sizeKb",    bytes.length / 1024);
+
+        try (org.apache.poi.hssf.usermodel.HSSFWorkbook wb =
+                 new org.apache.poi.hssf.usermodel.HSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+
+            // Detect format same way the service does
+            String detectedFmt = "A";
+            for (Row row : sheet) {
+                if (row == null) continue;
+                Cell c0 = row.getCell(0);
+                if (c0 != null && c0.getCellType() == CellType.NUMERIC && c0.getNumericCellValue() >= 1) {
+                    Cell c1cell = row.getCell(1);
+                    String c1 = c1cell != null && c1cell.getCellType() == CellType.NUMERIC
+                        ? String.valueOf((long) c1cell.getNumericCellValue())
+                        : (c1cell != null ? c1cell.getStringCellValue().trim() : "");
+                    if (c1.matches("\\d{4}")) { detectedFmt = "B"; break; }
+                }
+                Cell c15 = row.getCell(15);
+                if (c15 != null && c15.getCellType() == CellType.NUMERIC && c15.getNumericCellValue() >= 1) {
+                    detectedFmt = "A"; break;
+                }
+            }
+            result.put("detectedFormat", detectedFmt);
+
+            // Scan all col12 values (Format A branch headers)
+            java.util.regex.Pattern currentRegex  = java.util.regex.Pattern.compile("^(\\d{3,6})\\s*[-–—/: ]\\s*(.+)");
+            java.util.regex.Pattern strictRegex   = java.util.regex.Pattern.compile("^(\\d{4})\\s*[-–]\\s*(.+)");
+            List<String> matchedHeaders   = new ArrayList<>();
+            List<String> unmatchedDigitC12 = new ArrayList<>();
+            List<Map<String,String>> sampleDataRows = new ArrayList<>();
+            int dataRowCount = 0;
+
+            for (Row row : sheet) {
+                if (row == null) continue;
+                // col12 scan
+                Cell c12 = row.getCell(12);
+                String col12 = "";
+                if (c12 != null) {
+                    col12 = c12.getCellType() == CellType.STRING ? c12.getStringCellValue().trim()
+                          : c12.getCellType() == CellType.NUMERIC ? String.valueOf((long) c12.getNumericCellValue()) : "";
+                }
+                if (!col12.isBlank() && Character.isDigit(col12.charAt(0))) {
+                    if (currentRegex.matcher(col12).matches()) {
+                        if (matchedHeaders.size() < 40) matchedHeaders.add(col12);
+                    } else {
+                        if (unmatchedDigitC12.size() < 20) unmatchedDigitC12.add(col12);
+                    }
+                }
+                // col15 data rows
+                Cell c15 = row.getCell(15);
+                if (c15 != null && c15.getCellType() == CellType.NUMERIC && c15.getNumericCellValue() >= 1) {
+                    dataRowCount++;
+                    if (sampleDataRows.size() < 5) {
+                        Map<String,String> r = new LinkedHashMap<>();
+                        for (int ci = 0; ci <= 15; ci++) {
+                            Cell c = row.getCell(ci);
+                            String v = "";
+                            if (c != null) v = c.getCellType() == CellType.NUMERIC
+                                ? String.valueOf(c.getNumericCellValue())
+                                : c.getCellType() == CellType.STRING ? c.getStringCellValue() : "";
+                            r.put("c" + ci, v);
+                        }
+                        sampleDataRows.add(r);
+                    }
+                }
+            }
+
+            result.put("col12_matchedBranchHeaders",  matchedHeaders);
+            result.put("col12_unmatchedDigitValues",   unmatchedDigitC12);
+            result.put("col15_dataRowCount",           dataRowCount);
+            result.put("sampleDataRows",               sampleDataRows);
+
+            // First 10 rows raw
+            List<Map<String,String>> first10 = new ArrayList<>();
+            for (int ri = 0; ri <= Math.min(9, sheet.getLastRowNum()); ri++) {
+                Row row = sheet.getRow(ri);
+                Map<String,String> r = new LinkedHashMap<>();
+                if (row != null) for (int ci = 0; ci <= 15; ci++) {
+                    Cell c = row.getCell(ci);
+                    String v = c == null ? "" : c.getCellType() == CellType.NUMERIC
+                        ? String.valueOf(c.getNumericCellValue())
+                        : c.getCellType() == CellType.STRING ? c.getStringCellValue() : "";
+                    if (!v.isBlank()) r.put("c" + ci, v);
+                }
+                first10.add(r);
+            }
+            result.put("first10Rows", first10);
+        }
+
+        return ResponseEntity.ok(Map.of("success", true, "analysis", result));
+    }
+
+    /**
      * POST /api/v3/debug/sheet-preview
      * Upload any XLS file → returns first 30 rows with all cell values per column.
      * Used to understand the actual file structure when parsers produce wrong counts.

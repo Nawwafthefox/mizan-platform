@@ -198,9 +198,9 @@ public class V3ExcelImportService {
             if (row == null) continue;
             Cell c0 = row.getCell(0);
             if (c0 != null && c0.getCellType() == CellType.NUMERIC && c0.getNumericCellValue() >= 1) {
-                // Accept 3-6 digit branch codes for Format B detection
+                // Exactly 4-digit branch code in col1 → Format B (employee/purchase reports)
                 String c1 = getStr(row, 1);
-                if (c1.matches("\\d{3,6}")) return Format.B;
+                if (c1.matches("\\d{4}")) return Format.B;
             }
             Cell c15 = row.getCell(15);
             if (c15 != null && c15.getCellType() == CellType.NUMERIC && c15.getNumericCellValue() >= 1) {
