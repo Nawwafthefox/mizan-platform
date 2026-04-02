@@ -275,6 +275,96 @@ public class V3DebugController {
     }
 
     /**
+     * POST /api/v3/debug/analyze-employee-sales
+     * Dry-run the employee-sales parser and return per-filter counts + branch distribution.
+     * Tells us exactly where records are lost (detection → branch filter → SAR filter).
+     */
+    @PostMapping("/analyze-employee-sales")
+    public ResponseEntity<?> analyzeEmployeeSales(@RequestParam("file") MultipartFile file) throws Exception {
+        byte[] bytes = file.getBytes();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("filename", file.getOriginalFilename());
+        result.put("sizeKb",   bytes.length / 1024);
+
+        try (org.apache.poi.hssf.usermodel.HSSFWorkbook wb =
+                 new org.apache.poi.hssf.usermodel.HSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+            result.put("totalRowsInSheet", sheet.getLastRowNum() + 1);
+
+            // ── Format detection (same logic as service) ──────────────────────
+            String detectedFmt = "A";
+            for (Row row : sheet) {
+                if (row == null) continue;
+                Cell c0 = row.getCell(0);
+                if (c0 != null && c0.getCellType() == CellType.NUMERIC && c0.getNumericCellValue() >= 1) {
+                    Cell c1c = row.getCell(1);
+                    String c1 = c1c != null && c1c.getCellType() == CellType.NUMERIC
+                        ? String.valueOf((long) c1c.getNumericCellValue())
+                        : (c1c != null ? c1c.getStringCellValue().trim() : "");
+                    if (c1.matches("\\d{4}")) { detectedFmt = "B"; break; }
+                }
+                Cell c15 = row.getCell(15);
+                if (c15 != null && c15.getCellType() == CellType.NUMERIC && c15.getNumericCellValue() >= 1) {
+                    detectedFmt = "A"; break;
+                }
+            }
+            result.put("detectedFormat", detectedFmt);
+
+            // ── Per-filter row counts (Format B path) ─────────────────────────
+            int rowsPassC0       = 0; // col0 NUMERIC >= 1
+            int rowsPassBranch   = 0; // col1 matches \d{3,6}
+            int rowsPassSar      = 0; // col15 != 0
+            int rowsTotal        = 0; // same as rowsPassSar = final parse count
+
+            Map<String, Integer> branchCounts  = new java.util.TreeMap<>();
+            List<String> invalidC1Samples      = new ArrayList<>();
+            List<String> zeroSarSamples        = new ArrayList<>();
+
+            for (Row row : sheet) {
+                if (row == null) continue;
+                Cell c0 = row.getCell(0);
+                if (c0 == null || c0.getCellType() != CellType.NUMERIC || c0.getNumericCellValue() < 1) continue;
+                rowsPassC0++;
+
+                // branch code
+                Cell c1c = row.getCell(1);
+                String c1 = "";
+                if (c1c != null) {
+                    if (c1c.getCellType() == CellType.NUMERIC) c1 = String.valueOf((long) c1c.getNumericCellValue());
+                    else if (c1c.getCellType() == CellType.STRING) c1 = c1c.getStringCellValue().trim();
+                }
+                if (c1.isBlank() || !c1.matches("\\d{3,6}")) {
+                    if (invalidC1Samples.size() < 20) invalidC1Samples.add("c0=" + c0.getNumericCellValue() + " c1='" + c1 + "'");
+                    continue;
+                }
+                rowsPassBranch++;
+
+                // total SAR
+                Cell c15 = row.getCell(15);
+                double rawTotal = 0;
+                if (c15 != null && c15.getCellType() == CellType.NUMERIC) rawTotal = c15.getNumericCellValue();
+                if (rawTotal == 0) {
+                    if (zeroSarSamples.size() < 10) zeroSarSamples.add("c0=" + c0.getNumericCellValue() + " branch=" + c1);
+                    continue;
+                }
+                rowsPassSar++;
+                rowsTotal++;
+                branchCounts.merge(c1, 1, Integer::sum);
+            }
+
+            result.put("rowsPassC0_numericGte1",    rowsPassC0);
+            result.put("rowsPassBranchCode",         rowsPassBranch);
+            result.put("rowsPassSarNonZero_PARSED",  rowsPassSar);
+            result.put("invalidC1_samples",          invalidC1Samples);
+            result.put("zeroSar_samples",            zeroSarSamples);
+            result.put("branchDistribution",         branchCounts);
+            result.put("uniqueBranches",             branchCounts.size());
+        }
+
+        return ResponseEntity.ok(Map.of("success", true, "analysis", result));
+    }
+
+    /**
      * POST /api/v3/debug/sheet-preview
      * Upload any XLS file → returns first 30 rows with all cell values per column.
      * Used to understand the actual file structure when parsers produce wrong counts.
