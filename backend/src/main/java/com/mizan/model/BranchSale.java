@@ -17,7 +17,7 @@ public class BranchSale {
     private double totalSarAmount;
     private double netWeight;
     private double grossWeight;
-    private int invoiceCount;
+    private long invoiceCount;
     private double saleRate;
     private boolean isReturn = false;
     private List<KaratRow> karatRows;

@@ -124,7 +124,7 @@ public class PgImportService {
             s.setRegion(nullOrValue(col(row, 4)));
             s.setTotalSarAmount(colD(row, 5));
             s.setNetWeight(colD(row, 6));
-            s.setInvoiceCount(colI(row, 7));
+            s.setInvoiceCount((long) Math.abs(colD(row, 7)));
             s.setK18Sar(colD(row, 8));
             s.setK18WeightG(colD(row, 9));
             s.setK18Pieces(colI(row, 10));
@@ -242,7 +242,7 @@ public class PgImportService {
             e.setTotalSarAmount(colD(row, 9));
             e.setNetWeight(colD(row, 10));
             e.setGrossWeight(colD(row, 11));
-            e.setInvoiceCount(colI(row, 12));
+            e.setInvoiceCount((long) Math.abs(colD(row, 12)));
             e.setAvgInvoiceSar(colD(row, 13));
             e.setAvgMakingCharge(colD(row, 14));
             e.setBranchPurchaseAvg(colD(row, 15));

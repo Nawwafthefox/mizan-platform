@@ -17,7 +17,7 @@ public class BranchPurchase {
     private double totalSarAmount;
     private double netWeight;
     private double grossWeight;
-    private int invoiceCount;
+    private long invoiceCount;
     private double purchaseRate;
     private List<KaratRow> karatRows;
     // Flat karat fields (mirror PG branch_purchases columns)

@@ -25,7 +25,7 @@ public class DashboardService {
 
     public record BranchData(
         String code, String name, String region,
-        double sar, double wn, double wp, int pcs,
+        double sar, double wn, double wp, long pcs,
         double purch, double purchWt, double mothan, double mothanWt,
         double k18Sar, double k18Wt, double k21Sar, double k21Wt,
         double k22Sar, double k22Wt, double k24Sar, double k24Wt,
@@ -137,7 +137,7 @@ public class DashboardService {
         String code,name,region;
         double sar,wn,wp,purch,purchWt,mothan,mothanWt,returns;
         double k18Sar,k18Wt,k21Sar,k21Wt,k22Sar,k22Wt,k24Sar,k24Wt;
-        int pcs,returnDays;
+        long pcs; int returnDays;
         MutableBranch(String code,String name,String region){
             this.code=code; this.name=name; this.region=region;
         }
