@@ -7,6 +7,8 @@ interface V3Tab {
   label: string;
   path: string;
   premium?: boolean;
+  absolute?: boolean;
+  upload?: boolean;
 }
 
 @Component({
@@ -21,10 +23,11 @@ interface V3Tab {
         <div class="v3-topnav-inner">
           @for (tab of tabs; track tab.path) {
             <a
-              [routerLink]="tab.path"
+              [routerLink]="tab.absolute ? tab.path : tab.path"
               routerLinkActive="active"
               class="v3-tab"
               [class.premium-tab]="tab.premium"
+              [class.upload-tab]="tab.upload"
             >
               {{ tab.label }}
             </a>
@@ -169,6 +172,22 @@ interface V3Tab {
       text-shadow: 0 0 12px rgba(201,168,76,.5);
     }
 
+    /* Upload tab styling */
+    .v3-tab.upload-tab {
+      color: rgba(100,180,255,.65);
+      border-inline-start: 1px solid rgba(255,255,255,.08);
+      margin-inline-start: auto;
+      flex-shrink: 0;
+    }
+    .v3-tab.upload-tab:hover {
+      color: rgba(100,180,255,.9);
+      background: rgba(100,180,255,.07);
+    }
+    .v3-tab.upload-tab.active {
+      color: #64b4ff;
+      border-bottom-color: #64b4ff;
+    }
+
     /* ── Date Filter Bar ── */
     .v3-date-bar {
       background: var(--mizan-surface, #1a2a1f);
@@ -299,6 +318,7 @@ export class DashboardV3ShellComponent implements OnInit {
     { label: 'مقارنة',       path: 'comparison' },
     { label: 'الأهداف',      path: 'targets' },
     { label: '⭐ بريميوم',   path: 'premium', premium: true },
+    { label: '↑ رفع الملفات', path: '/upload',  absolute: true, upload: true },
   ];
 
   ngOnInit(): void {
