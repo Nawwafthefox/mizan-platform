@@ -124,9 +124,9 @@ public class PgImportService {
             s.setBranchCode(col(row, 2));
             s.setBranchName(nullOrValue(col(row, 3)));
             s.setRegion(nullOrValue(col(row, 4)));
-            s.setTotalSarAmount(Math.abs(colD(row, 5)));
-            s.setNetWeight(Math.abs(colD(row, 6)));
-            s.setInvoiceCount(parseLongSafe(col(row, 7)));
+            s.setTotalSarAmount(colD(row, 5));           // keep sign — negative = return day
+            s.setNetWeight(colD(row, 6));                // keep sign — negative on return rows
+            s.setInvoiceCount(parseLongSafe(col(row, 7))); // pieces always positive
             s.setK18Sar(colD(row, 8));
             s.setK18WeightG(colD(row, 9));
             s.setK18Pieces(colI(row, 10));
@@ -190,8 +190,8 @@ public class PgImportService {
             p.setBranchCode(col(row, 2));
             p.setBranchName(nullOrValue(col(row, 3)));
             p.setRegion(nullOrValue(col(row, 4)));
-            p.setTotalSarAmount(Math.abs(colD(row, 5)));
-            p.setNetWeight(Math.abs(colD(row, 6)));
+            p.setTotalSarAmount(colD(row, 5));            // keep sign
+            p.setNetWeight(colD(row, 6));                 // keep sign
             p.setPurchaseAvgMkg(colD(row, 7));
             p.setK18Sar(colD(row, 8));
             p.setK18WeightG(colD(row, 9));
@@ -241,9 +241,9 @@ public class PgImportService {
             e.setBranchCode(col(row, 6));
             e.setBranchName(nullOrValue(col(row, 7)));
             e.setRegion(nullOrValue(col(row, 8)));
-            e.setTotalSarAmount(Math.abs(colD(row, 9)));
-            e.setNetWeight(Math.abs(colD(row, 10)));
-            e.setGrossWeight(Math.abs(colD(row, 11)));
+            e.setTotalSarAmount(colD(row, 9));            // keep sign
+            e.setNetWeight(colD(row, 10));                // keep sign
+            e.setGrossWeight(colD(row, 11));
             e.setInvoiceCount(parseLongSafe(col(row, 12)));
             e.setAvgInvoiceSar(colD(row, 13));
             e.setAvgMakingCharge(colD(row, 14));
