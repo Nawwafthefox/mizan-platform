@@ -37,7 +37,7 @@ export class UploadService {
   }
 
   exportCsv(type: 'branch-sales' | 'employee-sales' | 'purchases' | 'mothan' | 'summary', from: string, to: string): void {
-    window.open(`${environment.apiUrl}/export/${type}?from=${from}&to=${to}`, '_blank');
+    this.downloadFile(`${environment.apiUrl}/export/${type}?from=${from}&to=${to}`);
   }
 
   importPgData(file: File): Observable<ApiResponse<any>> {
@@ -51,6 +51,23 @@ export class UploadService {
   }
 
   exportNormalizedDb(): void {
-    window.open(`${environment.apiUrl}/export/normalized-db`, '_blank');
+    this.downloadFile(`${environment.apiUrl}/export/normalized-db`);
+  }
+
+  private downloadFile(url: string): void {
+    this.http.get(url, { responseType: 'blob', observe: 'response' }).subscribe({
+      next: res => {
+        const blob = res.body!;
+        const cd = res.headers.get('Content-Disposition') ?? '';
+        const match = cd.match(/filename="?([^"]+)"?/);
+        const filename = match ? match[1] : url.split('/').pop() ?? 'download';
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      },
+      error: err => console.error('Download failed', err)
+    });
   }
 }
