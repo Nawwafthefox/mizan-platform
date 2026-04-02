@@ -10,6 +10,7 @@ interface NavItem {
   icon: string;
   route: string;
   roles?: string[];
+  badge?: string;
 }
 
 interface NavSection {
@@ -47,6 +48,9 @@ interface NavSection {
               <span class="nav-label">{{ item.labelAr }}</span>
               @if (item.route === '/dashboard/analytics-studio') {
                 <span class="studio-2-badge">2.0</span>
+              }
+              @if (item.badge) {
+                <span class="nav-badge">{{ item.badge }}</span>
               }
             </a>
           }
@@ -155,6 +159,17 @@ interface NavSection {
 
     .nav-label { flex: 1; }
 
+    .nav-badge {
+      font-size: .62rem;
+      font-weight: 700;
+      background: rgba(201,168,76,.25);
+      color: var(--mizan-gold);
+      border: 1px solid rgba(201,168,76,.4);
+      border-radius: 10px;
+      padding: .1rem .45rem;
+      white-space: nowrap;
+    }
+
     .sidebar__footer {
       padding: 1rem 1.25rem;
       border-top: 1px solid rgba(255,255,255,.1);
@@ -209,6 +224,7 @@ export class SidebarComponent {
         { label: 'Heatmap',    labelAr: 'الخارطة الحرارية',   icon: '', route: '/dashboard/heatmap',    roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
         { label: 'Comparison', labelAr: 'مقارنة الأيام',      icon: '', route: '/dashboard/comparison', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
         { label: 'Analytics Studio', labelAr: 'استوديو التحليلات', icon: '✦', route: '/dashboard/analytics-studio', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+        { label: 'Dashboard 3.0', labelAr: 'داشبورد 3.0', icon: '🚀', route: '/v3', badge: 'قريباً', roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
       ]
     },
     {

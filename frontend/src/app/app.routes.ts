@@ -21,6 +21,10 @@ export const routes: Routes = [
     path: 'super-admin',
     loadChildren: () => import('./modules/super-admin/super-admin.routes').then(m => m.SUPER_ADMIN_ROUTES)
   },
+  {
+    path: 'v3',
+    loadChildren: () => import('./modules/dashboard-v3/dashboard-v3.routes').then(m => m.DASHBOARD_V3_ROUTES)
+  },
   { path: '', redirectTo: '/auth/login', pathMatch: 'full' },
   { path: '**', redirectTo: '/auth/login' }
 ];

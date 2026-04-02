@@ -75,6 +75,17 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
             mt.indexOps("mothan_transactions")
                 .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("transactionDate", Sort.Direction.ASC));
             log.info("MongoDB compound indexes ensured for upload collections");
+
+            // V3 BCNF collections
+            mt.indexOps("v3_sale_transactions")
+                .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("branchCode", Sort.Direction.ASC).on("saleDate", Sort.Direction.ASC));
+            mt.indexOps("v3_employee_sale_transactions")
+                .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("empId", Sort.Direction.ASC).on("saleDate", Sort.Direction.ASC));
+            mt.indexOps("v3_purchase_transactions")
+                .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("branchCode", Sort.Direction.ASC).on("purchaseDate", Sort.Direction.ASC));
+            mt.indexOps("v3_mothan_transactions")
+                .ensureIndex(new Index().on("tenantId", Sort.Direction.ASC).on("branchCode", Sort.Direction.ASC).on("transactionDate", Sort.Direction.ASC));
+            log.info("MongoDB compound indexes ensured for V3 BCNF collections");
         };
     }
 }
