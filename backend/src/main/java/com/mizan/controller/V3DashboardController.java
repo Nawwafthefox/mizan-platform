@@ -63,4 +63,52 @@ public class V3DashboardController {
         return ResponseEntity.ok(Map.of("success", true,
             "data", calcSvc.getTargetAchievement(tenantId, from, to)));
     }
+
+    @GetMapping("/regions")
+    public ResponseEntity<?> regions(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getRegions(TenantContext.getTenantId(), from, to)));
+    }
+
+    @GetMapping("/karat-breakdown")
+    public ResponseEntity<?> karatBreakdown(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getKaratBreakdown(TenantContext.getTenantId(), from, to)));
+    }
+
+    @GetMapping("/mothan-detail")
+    public ResponseEntity<?> mothanDetail(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getMothanDetail(TenantContext.getTenantId(), from, to)));
+    }
+
+    @GetMapping("/comparison")
+    public ResponseEntity<?> comparison(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate d1,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate d2) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getComparison(TenantContext.getTenantId(), d1, d2)));
+    }
+
+    @GetMapping("/alerts")
+    public ResponseEntity<?> alerts(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getAlerts(TenantContext.getTenantId(), from, to)));
+    }
+
+    @GetMapping("/premium-analytics")
+    public ResponseEntity<?> premiumAnalytics(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getPremiumAnalytics(TenantContext.getTenantId(), from, to)));
+    }
 }
