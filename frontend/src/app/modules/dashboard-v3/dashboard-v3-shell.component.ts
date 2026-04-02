@@ -174,9 +174,6 @@ interface V3Tab {
     /* Upload tab styling */
     .v3-tab.upload-tab {
       color: rgba(100,180,255,.65);
-      border-inline-start: 1px solid rgba(255,255,255,.08);
-      margin-inline-start: auto;
-      flex-shrink: 0;
     }
     .v3-tab.upload-tab:hover {
       color: rgba(100,180,255,.9);
@@ -307,6 +304,7 @@ export class DashboardV3ShellComponent implements OnInit {
 
   tabs: V3Tab[] = [
     { label: 'نظرة عامة',    path: 'overview' },
+    { label: 'رفع الملفات',  path: 'upload', upload: true },
     { label: 'التنبيهات',    path: 'alerts' },
     { label: 'الفروع',       path: 'branches' },
     { label: 'المناطق',      path: 'regions' },
@@ -317,7 +315,6 @@ export class DashboardV3ShellComponent implements OnInit {
     { label: 'مقارنة',       path: 'comparison' },
     { label: 'الأهداف',      path: 'targets' },
     { label: '⭐ بريميوم',   path: 'premium', premium: true },
-    { label: '↑ رفع الملفات', path: 'upload', upload: true },
   ];
 
   ngOnInit(): void {
