@@ -1,6 +1,6 @@
 import { Component, inject, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { HttpClient, HttpEventType, HttpRequest } from '@angular/common/http';
+import { HttpClient, HttpEventType, HttpRequest, HttpResponse } from '@angular/common/http';
 import { AuthService } from '../../../core/services/auth.service';
 import { environment } from '../../../../environments/environment';
 
@@ -199,6 +199,108 @@ function blank(type: string, label: string, icon: string): CardState {
     </div>
   }
 
+  <!-- Diagnosis Panel -->
+  @if (isAdmin()) {
+    <div class="diag-section">
+      <div class="diag-header">
+        <div class="ih-left">
+          <span class="ih-icon">🔍</span>
+          <h3>تشخيص البيانات</h3>
+          <span class="badge-admin">Admin Only</span>
+        </div>
+        <button class="btn-diag" (click)="runDiagnosis()" [disabled]="diagLoading()">
+          @if (diagLoading()) { <span class="spinner"></span> جارٍ الفحص... }
+          @else { 🔍 تشخيص الآن }
+        </button>
+      </div>
+
+      @if (diag()) {
+        @if (diag().error) {
+          <div class="diag-error">❌ {{ diag().error }}</div>
+        } @else {
+          <div class="diag-grid">
+
+            <!-- Counts table -->
+            <table class="diag-table">
+              <thead>
+                <tr><th>المجموعة</th><th>الفعلي</th><th>المتوقع</th><th>النسبة</th></tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>مبيعات الفروع</td>
+                  <td>{{ diag().v3_sale_transactions | number }}</td>
+                  <td class="exp">~21,896</td>
+                  <td [style.color]="diagColor(diag().v3_sale_transactions, 21896)">
+                    {{ diagPct(diag().v3_sale_transactions, 21896) }}%
+                  </td>
+                </tr>
+                <tr>
+                  <td>مبيعات الموظفين</td>
+                  <td>{{ diag().v3_employee_sale_transactions | number }}</td>
+                  <td class="exp">~21,896</td>
+                  <td [style.color]="diagColor(diag().v3_employee_sale_transactions, 21896)">
+                    {{ diagPct(diag().v3_employee_sale_transactions, 21896) }}%
+                  </td>
+                </tr>
+                <tr>
+                  <td>المشتريات</td>
+                  <td>{{ diag().v3_purchase_transactions | number }}</td>
+                  <td class="exp">~3,868</td>
+                  <td [style.color]="diagColor(diag().v3_purchase_transactions, 3868)">
+                    {{ diagPct(diag().v3_purchase_transactions, 3868) }}%
+                  </td>
+                </tr>
+                <tr>
+                  <td>موطن الذهب</td>
+                  <td>{{ diag().v3_mothan_transactions | number }}</td>
+                  <td class="exp">~385</td>
+                  <td [style.color]="diagColor(diag().v3_mothan_transactions, 385)">
+                    {{ diagPct(diag().v3_mothan_transactions, 385) }}%
+                  </td>
+                </tr>
+                @if (diag().sales_agg) {
+                  <tr>
+                    <td>إجمالي المبيعات (SAR)</td>
+                    <td>{{ diag().sales_agg.totalSar | number:'1.0-0' }}</td>
+                    <td class="exp">~267,200,000</td>
+                    <td [style.color]="diagColor(diag().sales_agg.totalSar, 267200000)">
+                      {{ diagPct(diag().sales_agg.totalSar, 267200000) }}%
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>نطاق التاريخ</td>
+                    <td colspan="2">{{ diag().sales_agg.minDate }} → {{ diag().sales_agg.maxDate }}</td>
+                    <td class="exp">2026-01-01 → 2026-03-31</td>
+                  </tr>
+                }
+                <tr>
+                  <td>عدد الفروع الفريدة</td>
+                  <td>{{ diag().unique_sale_branches }}</td>
+                  <td class="exp">29</td>
+                  <td [style.color]="diagColor(diag().unique_sale_branches, 29)">
+                    {{ diagPct(diag().unique_sale_branches, 29) }}%
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- Source files -->
+            <div class="diag-files">
+              <div class="diag-files-label">الملفات المُستوردة للمبيعات:</div>
+              @for (f of diag().sale_sourceFiles; track f) {
+                <div class="diag-file-item">📄 {{ f }}</div>
+              }
+              @if (!diag().sale_sourceFiles?.length) {
+                <div class="diag-file-none">لا توجد بيانات مستوردة</div>
+              }
+            </div>
+
+          </div>
+        }
+      }
+    </div>
+  }
+
 </div>
   `,
   styles: [`
@@ -373,6 +475,72 @@ function blank(type: string, label: string, icon: string): CardState {
     @media (max-width: 400px) {
       .import-grid { grid-template-columns: 1fr; }
     }
+
+    /* ─── Diagnosis section ─────────────────────────────────── */
+    .diag-section {
+      margin-top: 1.5rem;
+      background: var(--mizan-surface);
+      border: 1px solid var(--mizan-border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .diag-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem 1.25rem;
+    }
+    .btn-diag {
+      display: inline-flex; align-items: center; gap: .4rem;
+      background: rgba(201,168,76,.1); border: 1px solid rgba(201,168,76,.28);
+      color: var(--mizan-gold); padding: .4rem .9rem; border-radius: 7px;
+      font-size: .8rem; font-weight: 600; cursor: pointer;
+      transition: background .15s; font-family: inherit;
+    }
+    .btn-diag:hover:not(:disabled) { background: rgba(201,168,76,.2); }
+    .btn-diag:disabled { opacity: .55; cursor: default; }
+    .diag-error {
+      margin: .75rem 1.25rem 1rem;
+      background: rgba(239,68,68,.07); border: 1px solid rgba(239,68,68,.2);
+      border-radius: 8px; padding: .65rem .9rem;
+      color: #f87171; font-size: .82rem;
+    }
+    .diag-grid {
+      padding: .75rem 1.25rem 1.25rem;
+      display: grid; grid-template-columns: 1fr 280px; gap: 1rem;
+    }
+    .diag-table {
+      width: 100%; border-collapse: collapse; font-size: .8rem;
+    }
+    .diag-table th {
+      background: rgba(255,255,255,.04);
+      color: var(--mizan-text-muted);
+      padding: .45rem .65rem;
+      text-align: right; font-weight: 600;
+      border-bottom: 1px solid var(--mizan-border);
+    }
+    .diag-table td {
+      padding: .4rem .65rem;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      color: var(--mizan-text);
+    }
+    .diag-table .exp { color: var(--mizan-text-muted); font-size: .75rem; }
+    .diag-files {
+      background: var(--mizan-bg); border-radius: 8px; padding: .75rem;
+    }
+    .diag-files-label {
+      font-size: .75rem; font-weight: 600; color: var(--mizan-text-muted);
+      margin-bottom: .5rem;
+    }
+    .diag-file-item {
+      font-size: .72rem; color: var(--mizan-text); padding: .25rem 0;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .diag-file-none {
+      font-size: .75rem; color: #ef4444; font-style: italic;
+    }
+    @media (max-width: 700px) {
+      .diag-grid { grid-template-columns: 1fr; }
+    }
   `]
 })
 export class ComingSoonComponent implements OnDestroy {
@@ -393,6 +561,9 @@ export class ComingSoonComponent implements OnDestroy {
 
   private timerH = new Map<string, ReturnType<typeof setInterval>>();
   private simH   = new Map<string, ReturnType<typeof setInterval>>();
+
+  diagLoading = signal(false);
+  diag        = signal<any>(null);
 
   ngOnDestroy() {
     this.timerH.forEach(h => clearInterval(h));
@@ -503,11 +674,19 @@ export class ComingSoonComponent implements OnDestroy {
           if (httpEv.type === HttpEventType.Response) {
             clearInterval(this.simH.get(cur.type));
             clearInterval(this.timerH.get(cur.type));
-            const body  = httpEv.body as any;
-            const count = body?.data?.count ?? body?.count ?? 0;
+            const resp = httpEv as HttpResponse<any>;
             const elapsed = Date.now() - startedAt;
-            this.patch(idx, { stage: 'done', pct: 100, elapsedMs: elapsed, stageMsg: 'تم الاستيراد بنجاح', count, stallMsg: '' });
-            this.log(idx, startedAt, `✅ ${count.toLocaleString('ar')} سجل — اكتمل في ${this.fmtTime(elapsed)}`, 'ok');
+            if (resp.status === 202) {
+              // Async import — server accepted the file and is processing in background
+              this.patch(idx, { stage: 'done', pct: 100, elapsedMs: elapsed,
+                stageMsg: 'رُفع الملف — الخادم يعالج البيانات في الخلفية', stallMsg: '' });
+              this.log(idx, startedAt, '✅ مقبول — انتظر 90 ثانية ثم اضغط "تشخيص البيانات"', 'ok');
+            } else {
+              const count = resp.body?.data?.count ?? resp.body?.count ?? 0;
+              this.patch(idx, { stage: 'done', pct: 100, elapsedMs: elapsed,
+                stageMsg: 'تم الاستيراد بنجاح', count, stallMsg: '' });
+              this.log(idx, startedAt, `✅ ${count.toLocaleString('ar')} سجل — ${this.fmtTime(elapsed)}`, 'ok');
+            }
           }
         },
         error: err => {
@@ -548,6 +727,26 @@ export class ComingSoonComponent implements OnDestroy {
     if (st === 415) return { code: 'FORMAT',        title: 'صيغة الملف غير مدعومة',          body: 'يُقبل فقط .xls (Excel 97-2003).', status: st, hint: 'احفظ الملف بصيغة .xls من Excel ثم أعد الرفع.' };
     if (st >= 500)  return { code: 'SERVER',        title: 'خطأ داخلي في الخادم',             body: srv || `رمز الخطأ ${st} — فشلت المعالجة.`, status: st, hint: 'أعد المحاولة. إذا تكرر تحقق من سجلات الخادم.' };
     return           { code: 'UNKNOWN',             title: 'خطأ غير معروف',                   body: srv || `رمز: ${st ?? 'N/A'}`, status: st, hint: 'أعد المحاولة أو تواصل مع الدعم الفني.' };
+  }
+
+  runDiagnosis(): void {
+    this.diagLoading.set(true);
+    this.diag.set(null);
+    this.http.get<any>(`${environment.apiUrl}/v3/debug/full-diagnosis`).subscribe({
+      next: res => { this.diag.set(res.diagnosis); this.diagLoading.set(false); },
+      error: err => { this.diag.set({ error: err?.error?.message ?? 'فشل الاتصال' }); this.diagLoading.set(false); },
+    });
+  }
+
+  diagPct(actual: number, expected: number): number {
+    return expected > 0 ? Math.round((actual / expected) * 100) : 0;
+  }
+
+  diagColor(actual: number, expected: number): string {
+    const pct = this.diagPct(actual, expected);
+    if (pct >= 95) return '#22c55e';
+    if (pct >= 50) return '#f59e0b';
+    return '#ef4444';
   }
 
   fmtTime(ms: number): string {

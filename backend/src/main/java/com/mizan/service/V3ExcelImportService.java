@@ -10,9 +10,8 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -51,93 +50,138 @@ public class V3ExcelImportService {
     }
 
     // ─── Public entry points ──────────────────────────────────────────────────
+    // All methods now accept raw bytes so the caller can read the file
+    // synchronously (before any HTTP timeout) and process asynchronously.
+    // Pattern: PARSE ALL → validate count → DELETE old range → INSERT new.
+    // If parse produces 0 records, existing data is NEVER deleted.
 
-    public int importBranchSales(MultipartFile file, String tenantId) throws Exception {
-        try (InputStream is = file.getInputStream();
-             Workbook wb   = new HSSFWorkbook(is)) {
+    public int importByType(String type, byte[] bytes, String filename, String tenantId) throws Exception {
+        return switch (type) {
+            case "branch-sales"   -> importBranchSales(bytes, filename, tenantId);
+            case "employee-sales" -> importEmployeeSales(bytes, filename, tenantId);
+            case "purchases"      -> importPurchases(bytes, filename, tenantId);
+            case "mothan"         -> importMothan(bytes, filename, tenantId);
+            default -> throw new IllegalArgumentException("Unknown import type: " + type);
+        };
+    }
+
+    public int importBranchSales(byte[] bytes, String filename, String tenantId) throws Exception {
+        log.info("V3 branch-sales START: '{}' {} bytes, tenant={}", filename, bytes.length, tenantId);
+        long t0 = System.currentTimeMillis();
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
             Sheet sheet = wb.getSheetAt(0);
             Format fmt  = detectFormat(sheet);
+            log.info("V3 branch-sales format detected: {}", fmt);
             List<V3SaleTransaction> txns = fmt == Format.B
-                ? parseSalesB(sheet, tenantId, file.getOriginalFilename())
-                : parseSalesA(sheet, tenantId, file.getOriginalFilename());
+                ? parseSalesB(sheet, tenantId, filename)
+                : parseSalesA(sheet, tenantId, filename);
 
-            if (txns.isEmpty()) return 0;
-            LocalDate minDate = txns.stream().map(V3SaleTransaction::getSaleDate).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = txns.stream().map(V3SaleTransaction::getSaleDate).max(LocalDate::compareTo).orElseThrow();
+            log.info("V3 branch-sales PARSED: {} records from '{}'", txns.size(), filename);
+            if (txns.isEmpty()) {
+                log.warn("V3 branch-sales: 0 records parsed — existing data NOT touched");
+                return 0;
+            }
 
-            mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("saleDate").gte(minDate).lte(maxDate)), V3SaleTransaction.class);
+            LocalDate minDate = txns.stream().map(V3SaleTransaction::getSaleDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
+            LocalDate maxDate = txns.stream().map(V3SaleTransaction::getSaleDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
+            log.info("V3 branch-sales date range: {} to {}, totalSar={}", minDate, maxDate,
+                txns.stream().mapToDouble(V3SaleTransaction::getSarAmount).sum());
 
-            bulkInsert(txns, V3SaleTransaction.class);
+            long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                .and("saleDate").gte(minDate).lte(maxDate)), V3SaleTransaction.class).getDeletedCount();
+            log.info("V3 branch-sales deleted {} existing records for range {} – {}", deleted, minDate, maxDate);
+
+            int saved = bulkInsertSafe(txns, V3SaleTransaction.class);
             upsertBranches(txns.stream().map(V3SaleTransaction::getBranchCode).distinct().toList(), tenantId);
-            log.info("V3 branch_sales: {} records, {} – {}", txns.size(), minDate, maxDate);
-            return txns.size();
+            log.info("V3 branch-sales DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
+            return saved;
         }
     }
 
-    public int importEmployeeSales(MultipartFile file, String tenantId) throws Exception {
-        try (InputStream is = file.getInputStream();
-             Workbook wb   = new HSSFWorkbook(is)) {
+    public int importEmployeeSales(byte[] bytes, String filename, String tenantId) throws Exception {
+        log.info("V3 employee-sales START: '{}' {} bytes", filename, bytes.length);
+        long t0 = System.currentTimeMillis();
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
             Sheet sheet = wb.getSheetAt(0);
             Format fmt  = detectFormat(sheet);
             List<V3EmployeeSaleTransaction> txns = fmt == Format.B
-                ? parseEmpSalesB(sheet, tenantId, file.getOriginalFilename())
-                : parseEmpSalesA(sheet, tenantId, file.getOriginalFilename());
+                ? parseEmpSalesB(sheet, tenantId, filename)
+                : parseEmpSalesA(sheet, tenantId, filename);
 
-            if (txns.isEmpty()) return 0;
-            LocalDate minDate = txns.stream().map(V3EmployeeSaleTransaction::getSaleDate).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = txns.stream().map(V3EmployeeSaleTransaction::getSaleDate).max(LocalDate::compareTo).orElseThrow();
+            log.info("V3 employee-sales PARSED: {} records", txns.size());
+            if (txns.isEmpty()) {
+                log.warn("V3 employee-sales: 0 records parsed — existing data NOT touched");
+                return 0;
+            }
 
-            mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("saleDate").gte(minDate).lte(maxDate)), V3EmployeeSaleTransaction.class);
+            LocalDate minDate = txns.stream().map(V3EmployeeSaleTransaction::getSaleDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
+            LocalDate maxDate = txns.stream().map(V3EmployeeSaleTransaction::getSaleDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
 
-            bulkInsert(txns, V3EmployeeSaleTransaction.class);
+            long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                .and("saleDate").gte(minDate).lte(maxDate)), V3EmployeeSaleTransaction.class).getDeletedCount();
+            log.info("V3 employee-sales deleted {} existing, range {} – {}", deleted, minDate, maxDate);
+
+            int saved = bulkInsertSafe(txns, V3EmployeeSaleTransaction.class);
             upsertEmployees(txns, tenantId);
-            log.info("V3 employee_sale_transactions: {} records", txns.size());
-            return txns.size();
+            log.info("V3 employee-sales DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
+            return saved;
         }
     }
 
-    public int importPurchases(MultipartFile file, String tenantId) throws Exception {
-        try (InputStream is = file.getInputStream();
-             Workbook wb   = new HSSFWorkbook(is)) {
+    public int importPurchases(byte[] bytes, String filename, String tenantId) throws Exception {
+        log.info("V3 purchases START: '{}' {} bytes", filename, bytes.length);
+        long t0 = System.currentTimeMillis();
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
             Sheet sheet = wb.getSheetAt(0);
             Format fmt  = detectFormat(sheet);
             List<V3PurchaseTransaction> txns = fmt == Format.B
-                ? parsePurchasesB(sheet, tenantId, file.getOriginalFilename())
-                : parsePurchasesA(sheet, tenantId, file.getOriginalFilename());
+                ? parsePurchasesB(sheet, tenantId, filename)
+                : parsePurchasesA(sheet, tenantId, filename);
 
-            if (txns.isEmpty()) return 0;
-            LocalDate minDate = txns.stream().map(V3PurchaseTransaction::getPurchaseDate).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = txns.stream().map(V3PurchaseTransaction::getPurchaseDate).max(LocalDate::compareTo).orElseThrow();
+            log.info("V3 purchases PARSED: {} records", txns.size());
+            if (txns.isEmpty()) {
+                log.warn("V3 purchases: 0 records parsed — existing data NOT touched");
+                return 0;
+            }
 
-            mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("purchaseDate").gte(minDate).lte(maxDate)), V3PurchaseTransaction.class);
+            LocalDate minDate = txns.stream().map(V3PurchaseTransaction::getPurchaseDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
+            LocalDate maxDate = txns.stream().map(V3PurchaseTransaction::getPurchaseDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
 
-            bulkInsert(txns, V3PurchaseTransaction.class);
+            long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                .and("purchaseDate").gte(minDate).lte(maxDate)), V3PurchaseTransaction.class).getDeletedCount();
+            log.info("V3 purchases deleted {} existing, range {} – {}", deleted, minDate, maxDate);
+
+            int saved = bulkInsertSafe(txns, V3PurchaseTransaction.class);
             recomputePurchaseRates(tenantId);
-            log.info("V3 purchase_transactions: {} records", txns.size());
-            return txns.size();
+            log.info("V3 purchases DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
+            return saved;
         }
     }
 
-    public int importMothan(MultipartFile file, String tenantId) throws Exception {
-        try (InputStream is = file.getInputStream();
-             Workbook wb   = new HSSFWorkbook(is)) {
+    public int importMothan(byte[] bytes, String filename, String tenantId) throws Exception {
+        log.info("V3 mothan START: '{}' {} bytes", filename, bytes.length);
+        long t0 = System.currentTimeMillis();
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
             Sheet sheet = wb.getSheetAt(0);
-            List<V3MothanTransaction> txns = parseMothan(sheet, tenantId, file.getOriginalFilename());
+            List<V3MothanTransaction> txns = parseMothan(sheet, tenantId, filename);
 
-            if (txns.isEmpty()) return 0;
-            LocalDate minDate = txns.stream().map(V3MothanTransaction::getTransactionDate).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = txns.stream().map(V3MothanTransaction::getTransactionDate).max(LocalDate::compareTo).orElseThrow();
+            log.info("V3 mothan PARSED: {} records", txns.size());
+            if (txns.isEmpty()) {
+                log.warn("V3 mothan: 0 records parsed — existing data NOT touched");
+                return 0;
+            }
 
-            mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("transactionDate").gte(minDate).lte(maxDate)), V3MothanTransaction.class);
+            LocalDate minDate = txns.stream().map(V3MothanTransaction::getTransactionDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
+            LocalDate maxDate = txns.stream().map(V3MothanTransaction::getTransactionDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
 
-            bulkInsert(txns, V3MothanTransaction.class);
+            long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                .and("transactionDate").gte(minDate).lte(maxDate)), V3MothanTransaction.class).getDeletedCount();
+            log.info("V3 mothan deleted {} existing, range {} – {}", deleted, minDate, maxDate);
+
+            int saved = bulkInsertSafe(txns, V3MothanTransaction.class);
             recomputePurchaseRates(tenantId);
-            log.info("V3 mothan_transactions: {} records", txns.size());
-            return txns.size();
+            log.info("V3 mothan DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
+            return saved;
         }
     }
 
@@ -502,7 +546,7 @@ public class V3ExcelImportService {
             r.setComputedAt(LocalDateTime.now());
             rates.add(r);
         }
-        if (!rates.isEmpty()) bulkInsert(rates, V3BranchPurchaseRate.class);
+        if (!rates.isEmpty()) bulkInsertSafe(rates, V3BranchPurchaseRate.class);
         log.info("V3 purchase rates recomputed for {} branches", rates.size());
     }
 
@@ -620,11 +664,26 @@ public class V3ExcelImportService {
 
     private static double round4(double v) { return Math.round(v * 10000.0) / 10000.0; }
 
-    private <T> void bulkInsert(List<T> items, Class<T> clazz) {
-        int batch = 200;
-        for (int i = 0; i < items.size(); i += batch) {
-            mongo.insertAll(items.subList(i, Math.min(i + batch, items.size())));
+    private <T> int bulkInsertSafe(List<T> items, Class<T> clazz) {
+        int saved = 0;
+        int batchSz = 200;
+        for (int i = 0; i < items.size(); i += batchSz) {
+            List<T> batch = items.subList(i, Math.min(i + batchSz, items.size()));
+            try {
+                mongo.insertAll(batch);
+                saved += batch.size();
+            } catch (Exception batchEx) {
+                log.warn("Batch {}-{} failed ({}), falling back to individual inserts", i, i + batch.size(), batchEx.getMessage());
+                for (T item : batch) {
+                    try { mongo.insert(item); saved++; }
+                    catch (Exception e) { log.error("Individual insert failed: {}", e.getMessage()); }
+                }
+            }
+            if (i > 0 && i % 2000 == 0) {
+                log.info("  progress: {}/{} saved", saved, items.size());
+            }
         }
+        return saved;
     }
 
     public void wipeV3Data(String tenantId) {
