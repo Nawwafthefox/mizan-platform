@@ -150,9 +150,12 @@ function blank(type: string, label: string, icon: string): CardState {
                 </div>
               }
 
-              <!-- Success count -->
-              @if (card.stage === 'done') {
+              <!-- Success count (only shown for sync 200 response with known count) -->
+              @if (card.stage === 'done' && card.count > 0) {
                 <div class="success-count">✅ {{ card.count | number }} سجل محفوظ</div>
+              }
+              @if (card.stage === 'done' && card.count === 0) {
+                <div class="success-count async-note">⏳ جارٍ المعالجة في الخلفية — اضغط "تشخيص الآن" بعد 90 ثانية</div>
               }
 
               <!-- Log toggle -->
@@ -409,6 +412,7 @@ function blank(type: string, label: string, icon: string): CardState {
 
     /* Success count */
     .success-count { font-size: .82rem; font-weight: 700; color: #22c55e; text-align: center; padding: .3rem 0; }
+    .async-note { color: #f59e0b; font-weight: 500; font-size: .76rem; }
 
     /* Log */
     .log-toggle {
