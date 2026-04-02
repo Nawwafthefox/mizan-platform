@@ -7,7 +7,6 @@ interface V3Tab {
   label: string;
   path: string;
   premium?: boolean;
-  absolute?: boolean;
   upload?: boolean;
 }
 
@@ -23,7 +22,7 @@ interface V3Tab {
         <div class="v3-topnav-inner">
           @for (tab of tabs; track tab.path) {
             <a
-              [routerLink]="tab.absolute ? tab.path : tab.path"
+              [routerLink]="tab.path"
               routerLinkActive="active"
               class="v3-tab"
               [class.premium-tab]="tab.premium"
@@ -318,7 +317,7 @@ export class DashboardV3ShellComponent implements OnInit {
     { label: 'مقارنة',       path: 'comparison' },
     { label: 'الأهداف',      path: 'targets' },
     { label: '⭐ بريميوم',   path: 'premium', premium: true },
-    { label: '↑ رفع الملفات', path: '/upload',  absolute: true, upload: true },
+    { label: '↑ رفع الملفات', path: 'upload', upload: true },
   ];
 
   ngOnInit(): void {
