@@ -73,6 +73,25 @@ public class AuthController {
         return ResponseEntity.ok(Map.of("success",true,"data",Map.of("accessToken",token,"user",userMap)));
     }
 
+    // Temporary emergency reset — requires a hardcoded token, remove after use
+    @PostMapping("/emergency-reset")
+    public ResponseEntity<?> emergencyReset(@RequestBody Map<String,String> body) {
+        if (!"MIZAN-RESET-2026".equals(body.get("resetToken")))
+            return ResponseEntity.status(403).body(Map.of("success",false,"message","Invalid reset token"));
+        String email = body.get("email");
+        String newPassword = body.get("newPassword");
+        if (email == null || newPassword == null || newPassword.length() < 6)
+            return ResponseEntity.badRequest().body(Map.of("success",false,"message","email and newPassword (min 6 chars) required"));
+        Optional<User> opt = userRepo.findByEmailIgnoreCase(email);
+        if (opt.isEmpty())
+            return ResponseEntity.status(404).body(Map.of("success",false,"message","User not found"));
+        User u = opt.get();
+        u.setPasswordHash(encoder.encode(newPassword));
+        u.setMustChangePassword(false);
+        userRepo.save(u);
+        return ResponseEntity.ok(Map.of("success",true,"message","Password reset for " + email));
+    }
+
     @PostMapping("/change-password")
     public ResponseEntity<?> changePassword(@AuthenticationPrincipal MizanUserDetails principal,
             @RequestBody Map<String,String> body) {
