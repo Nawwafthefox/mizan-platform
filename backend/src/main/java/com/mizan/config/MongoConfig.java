@@ -51,7 +51,11 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
                 "unique_tenantId_sourceFileName_branch_purchases",
                 "unique_tenantId_sourceFileName_employee_sales",
                 "unique_tenantId_sourceFileName_mothan_transactions",
-                "sourceFileName_1", "tenantId_1_sourceFileName_1"
+                "sourceFileName_1", "tenantId_1_sourceFileName_1",
+                "tenantId_1_saleDate_1_employeeId_1_sourceFileName_1",
+                "tenantId_1_saleDate_1_branchCode_1_sourceFileName_1",
+                "tenantId_1_purchaseDate_1_branchCode_1_sourceFileName_1",
+                "tenantId_1_transactionDate_1_branchCode_1_sourceFileName_1"
             };
             for (String col : collections) {
                 for (String idx : legacyNames) {
