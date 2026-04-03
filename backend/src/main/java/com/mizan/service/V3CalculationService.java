@@ -960,6 +960,120 @@ public class V3CalculationService {
         return result;
     }
 
+    // ─── Mothan paginated ($facet) ────────────────────────────────────────────
+
+    /**
+     * Single $facet query: summary from ALL records + paginated transactions + byBranch.
+     * Returns { totalSar, totalWt, avgRate, txnCount, transactions, byBranch,
+     *           totalElements, totalPages, page, size }.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getMothanDetailPaged(String tenantId, LocalDate from, LocalDate to,
+                                                     int page, int size) {
+        long t0 = System.currentTimeMillis();
+        Criteria criteria = Criteria.where("tenantId").is(tenantId)
+            .and("transactionDate").gte(from).lte(to)
+            .and("weightDebitG").gt(0);
+
+        AggregationOperation matchOp = Aggregation.match(criteria);
+        // $facet: all three branches in ONE MongoDB round-trip
+        AggregationOperation facetOp = ctx -> new Document("$facet", new Document()
+            .append("summary", List.of(
+                new Document("$group", new Document("_id", null)
+                    .append("totalSar", new Document("$sum", "$amountSar"))
+                    .append("totalWt",  new Document("$sum", "$weightDebitG"))
+                    .append("count",    new Document("$sum", 1)))
+            ))
+            .append("transactions", List.of(
+                new Document("$sort",  new Document("transactionDate", -1)),
+                new Document("$skip",  (long) page * size),
+                new Document("$limit", (long) size)
+            ))
+            .append("byBranch", List.of(
+                new Document("$group", new Document("_id", "$branchCode")
+                    .append("totalSar", new Document("$sum", "$amountSar"))
+                    .append("totalWt",  new Document("$sum", "$weightDebitG"))
+                    .append("txnCount", new Document("$sum", 1))),
+                new Document("$sort", new Document("totalSar", -1))
+            ))
+        );
+
+        List<Document> results = mongo.aggregate(
+            Aggregation.newAggregation(matchOp, facetOp),
+            V3MothanTransaction.class, Document.class).getMappedResults();
+
+        if (results.isEmpty()) {
+            return Map.of("totalSar", 0, "totalWt", 0, "avgRate", 0, "txnCount", 0,
+                "transactions", List.of(), "byBranch", List.of(),
+                "totalElements", 0, "totalPages", 0, "page", page, "size", size);
+        }
+        Document facetResult = results.get(0);
+
+        // ── Summary ──────────────────────────────────────────────────────────
+        List<Document> summaryArr = (List<Document>) facetResult.get("summary");
+        Document sum    = summaryArr != null && !summaryArr.isEmpty() ? summaryArr.get(0) : new Document();
+        double totalSar = dbl(sum, "totalSar");
+        double totalWt  = dbl(sum, "totalWt");
+        int    totalAll = (int) lng(sum, "count");
+
+        // ── Transactions (paginated) ──────────────────────────────────────────
+        List<Document> txnDocs = (List<Document>) facetResult.get("transactions");
+        List<Map<String, Object>> transactions = new ArrayList<>();
+        if (txnDocs != null) {
+            for (Document d : txnDocs) {
+                String bc = d.getString("branchCode");
+                double sar = dbl(d, "amountSar"), wt = dbl(d, "weightDebitG");
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("date",        toDateString(d.get("transactionDate")));
+                row.put("branchCode",  bc);
+                row.put("branchName",  BranchMaps.getName(bc));
+                row.put("region",      BranchMaps.getRegion(bc));
+                row.put("docRef",      d.getString("docReference"));
+                row.put("description", d.getString("description"));
+                row.put("amountSar",   sar);
+                row.put("weightDebitG", wt);
+                row.put("rate",        wt > 0 ? r2(sar / wt) : 0);
+                transactions.add(row);
+            }
+        }
+
+        // ── ByBranch (from all records) ───────────────────────────────────────
+        List<Document> bbDocs = (List<Document>) facetResult.get("byBranch");
+        List<Map<String, Object>> byBranch = new ArrayList<>();
+        if (bbDocs != null) {
+            for (Document d : bbDocs) {
+                String bc = d.getString("_id");
+                double bSar = dbl(d, "totalSar"), bWt = dbl(d, "totalWt");
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("branchCode", bc);
+                row.put("branchName", BranchMaps.getName(bc));
+                row.put("region",     BranchMaps.getRegion(bc));
+                row.put("totalSar",   bSar);
+                row.put("totalWt",    bWt);
+                row.put("avgRate",    bWt > 0 ? r2(bSar / bWt) : 0);
+                row.put("txnCount",   lng(d, "txnCount"));
+                byBranch.add(row);
+            }
+        }
+
+        int totalPages = size > 0 ? (int) Math.ceil((double) totalAll / size) : 1;
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("totalSar",      totalSar);
+        result.put("totalWt",       totalWt);
+        result.put("avgRate",       totalWt > 0 ? r2(totalSar / totalWt) : 0);
+        result.put("txnCount",      totalAll);
+        result.put("transactions",  transactions);
+        result.put("byBranch",      byBranch);
+        result.put("totalElements", totalAll);
+        result.put("totalPages",    totalPages);
+        result.put("page",          page);
+        result.put("size",          size);
+        log.info("Mothan paged p={} s={} ({} txns of {}) in {}ms", page, size,
+            transactions.size(), totalAll, System.currentTimeMillis() - t0);
+        return result;
+    }
+
     // ─── Premium (pure-Java, zero MongoDB) ───────────────────────────────────
 
     /**

@@ -172,6 +172,37 @@ type SortDir   = 'asc' | 'desc';
       font-size: 0.75rem;
     }
 
+    /* Pagination */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--mizan-border);
+    }
+    .page-btn {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--mizan-border);
+      color: var(--mizan-text);
+      border-radius: 8px;
+      padding: 0.4rem 0.9rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .page-btn:hover:not(:disabled) {
+      background: rgba(201,168,76,0.15);
+      color: var(--mizan-gold);
+      border-color: rgba(201,168,76,0.4);
+    }
+    .page-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .page-info {
+      font-size: 0.82rem;
+      color: var(--mizan-text-muted);
+      padding: 0 0.5rem;
+    }
+
     /* Loading / Error */
     .state-box {
       padding: 3rem;
@@ -246,7 +277,7 @@ type SortDir   = 'asc' | 'desc';
       <div class="section-card">
         <div class="section-header">
           <h3 class="section-title">المعاملات التفصيلية</h3>
-          <span class="row-count">{{ sortedTxns().length }} سجل</span>
+          <span class="row-count">{{ totalElements() }} سجل</span>
         </div>
         <div class="table-wrap">
           <table>
@@ -286,6 +317,13 @@ type SortDir   = 'asc' | 'desc';
             </tbody>
           </table>
         </div>
+        @if (totalPages() > 1) {
+          <div class="pagination">
+            <button class="page-btn" [disabled]="page() === 0" (click)="loadPage(page() - 1)">&#8250; السابق</button>
+            <span class="page-info">{{ page() + 1 }} / {{ totalPages() }}</span>
+            <button class="page-btn" [disabled]="page() >= totalPages() - 1" (click)="loadPage(page() + 1)">التالي &#8249;</button>
+          </div>
+        }
       </div>
 
       <!-- By Branch Table -->
@@ -330,29 +368,49 @@ export class V3MothanComponent {
   private svc       = inject(V3DashboardService);
   private dateRange = inject(V3DateRangeService);
 
-  data    = signal<any>(null);
-  loading = signal(true);
-  error   = signal<string | null>(null);
+  data          = signal<any>(null);
+  loading       = signal(true);
+  error         = signal<string | null>(null);
+  page          = signal(0);
+  totalPages    = signal(0);
+  totalElements = signal(0);
 
   sortField = signal<SortField>('date');
   sortDir   = signal<SortDir>('desc');
 
   sortedTxns = signal<any[]>([]);
 
+  private currentFrom = '';
+  private currentTo   = '';
+
   constructor() {
     effect(() => {
       const from = this.dateRange.from();
       const to   = this.dateRange.to();
-      if (from && to) this.load(from, to);
+      if (from && to) {
+        if (from !== this.currentFrom || to !== this.currentTo) {
+          this.page.set(0);
+          this.currentFrom = from;
+          this.currentTo   = to;
+        }
+        this.load(from, to, this.page());
+      }
     });
   }
 
-  private load(from: string, to: string): void {
+  loadPage(p: number): void {
+    this.page.set(p);
+    this.load(this.currentFrom, this.currentTo, p);
+  }
+
+  private load(from: string, to: string, page: number): void {
     this.loading.set(true);
     this.error.set(null);
-    this.svc.getMothan(from, to).subscribe({
+    this.svc.getMothan(from, to, page, 50).subscribe({
       next: (d) => {
         this.data.set(d);
+        this.totalPages.set(d?.totalPages ?? 0);
+        this.totalElements.set(d?.totalElements ?? 0);
         this.rebuildSort(d?.transactions ?? []);
         this.loading.set(false);
       },

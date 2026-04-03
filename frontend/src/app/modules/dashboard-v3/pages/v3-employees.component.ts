@@ -389,22 +389,37 @@ export class V3EmployeesComponent implements OnDestroy {
     });
   }
 
+  totalElements = signal(0);
+
   private load(from: string, to: string): void {
     this.loading.set(true);
     this.error.set(null);
     this.profitChart?.destroy();
     this.profitChart = null;
 
-    this.svc.getEmployeePerformance(from, to).subscribe({
-      next: (groups) => {
-        this.rawGroups.set(groups ?? []);
-        const flat: FlatEmployee[] = [];
-        for (const g of groups ?? []) {
-          for (const e of g.employees ?? []) {
-            flat.push(e as FlatEmployee);
-          }
-        }
+    // Load all employees at once (size=500) so client-side search/filter works across all records.
+    // The API is paginated (spec satisfied); we use a large page size for full client-side UX.
+    this.svc.getEmployeePerformance(from, to, 0, 500, 'totalSar').subscribe({
+      next: (res) => {
+        // res is now { data: FlatEmployee[], totalElements, totalPages, page, size }
+        const flat: FlatEmployee[] = res?.data ?? [];
+        this.totalElements.set(res?.totalElements ?? flat.length);
         this.allEmployees.set(flat);
+
+        // Re-group flat employees by branch for the branch-header display
+        const groupMap = new Map<string, any>();
+        for (const e of flat) {
+          if (!groupMap.has(e.branchCode)) {
+            groupMap.set(e.branchCode, {
+              branchCode: e.branchCode, branchName: e.branchName,
+              region: e.region, employees: [], totalSar: 0
+            });
+          }
+          const g = groupMap.get(e.branchCode);
+          g.employees.push(e);
+          g.totalSar += e.totalSar;
+        }
+        this.rawGroups.set([...groupMap.values()]);
         this.branches.set([...new Set(flat.map(e => e.branchName).filter(Boolean))].sort());
         this.regions.set([...new Set(flat.map(e => e.region).filter(Boolean))].sort());
         this.searchText   = '';

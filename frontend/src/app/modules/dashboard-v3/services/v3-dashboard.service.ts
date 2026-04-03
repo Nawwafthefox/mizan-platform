@@ -42,8 +42,10 @@ export class V3DashboardService {
     return this.get<any[]>('branch-summary', { from, to });
   }
 
-  getEmployeePerformance(from: string, to: string): Observable<any[]> {
-    return this.get<any[]>('employee-performance', { from, to });
+  /** Returns paginated flat employees: { data, totalElements, totalPages, page, size } */
+  getEmployeePerformance(from: string, to: string, page = 0, size = 50, sort = 'totalSar'): Observable<any> {
+    return this.get<any>('employee-performance', { from, to,
+      page: String(page), size: String(size), sort });
   }
 
   getDailyTrend(from: string, to: string): Observable<any[]> {
@@ -74,8 +76,9 @@ export class V3DashboardService {
     return this.get<any[]>('alerts', { from, to });
   }
 
-  getMothan(from: string, to: string): Observable<any> {
-    return this.get<any>('mothan', { from, to });
+  /** Returns { totalSar, totalWt, avgRate, txnCount, transactions, byBranch, totalElements, totalPages, page, size } */
+  getMothan(from: string, to: string, page = 0, size = 50): Observable<any> {
+    return this.get<any>('mothan', { from, to, page: String(page), size: String(size) });
   }
 
   getHeatmap(from: string, to: string): Observable<any[]> {
