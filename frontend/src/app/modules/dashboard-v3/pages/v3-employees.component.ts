@@ -13,6 +13,8 @@ import { FormsModule } from '@angular/forms';
 import { Chart, registerables } from 'chart.js';
 import { V3DashboardService } from '../services/v3-dashboard.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
+import { forkJoin, of } from 'rxjs';
+import { catchError } from 'rxjs/operators';
 
 Chart.register(...registerables);
 
@@ -96,6 +98,14 @@ interface FlatEmployee {
         </div>
       </div>
 
+      @if (!loading() && likelyLeftIds().size > 0) {
+        <div class="left-notice">
+          <span class="left-badge-demo">غادر ؟</span>
+          موظفون لم يسجّلوا أي مبيعات في آخر 30 يوماً من الفترة المحددة — يُرجَّح أنهم غادروا الفرع.
+          المجموع: <strong>{{ likelyLeftIds().size }} موظف</strong>
+        </div>
+      }
+
       <!-- Employee Table -->
       <div class="table-card">
         @if (loading()) {
@@ -134,12 +144,17 @@ interface FlatEmployee {
                     </td>
                   </tr>
                   @for (emp of group.employees; track emp.empId; let i = $index) {
-                    <tr class="data-row">
+                    <tr class="data-row" [class.likely-left-row]="likelyLeftIds().has(emp.empId)">
                       <td class="idx">{{ i + 1 }}</td>
                       <td class="emp-name">
                         {{ emp.empName }}
                         @if (emp.achieved) {
                           <span class="achieved-badge">✓</span>
+                        }
+                        @if (likelyLeftIds().has(emp.empId)) {
+                          <span class="left-badge" title="لا يوجد نشاط في الشهر الأخير من الفترة المحددة — يُرجَّح أن الموظف غادر الفرع">
+                            غادر ؟
+                          </span>
                         }
                       </td>
                       <td class="emp-id">{{ emp.empId }}</td>
@@ -240,6 +255,29 @@ interface FlatEmployee {
       color: var(--mizan-text-muted);
       padding-bottom: .1rem;
     }
+    .left-notice {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      padding: .65rem 1rem;
+      background: rgba(251,191,36,.07);
+      border: 1px solid rgba(251,191,36,.22);
+      border-radius: 10px;
+      font-size: .82rem;
+      color: var(--mizan-text-muted);
+      strong { color: #fbbf24; }
+    }
+    .left-badge-demo {
+      background: rgba(251,191,36,.13);
+      color: #fbbf24;
+      border: 1px solid rgba(251,191,36,.3);
+      border-radius: 20px;
+      font-size: .68rem;
+      font-weight: 600;
+      padding: .15rem .5rem;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
 
     /* Table */
     .table-card {
@@ -293,6 +331,21 @@ interface FlatEmployee {
       text-align: center;
       vertical-align: middle;
     }
+    .left-badge {
+      display: inline-block;
+      margin-right: .4rem;
+      background: rgba(251,191,36,.13);
+      color: #fbbf24;
+      border: 1px solid rgba(251,191,36,.3);
+      border-radius: 20px;
+      font-size: .65rem;
+      font-weight: 600;
+      padding: .1rem .45rem;
+      vertical-align: middle;
+      cursor: help;
+      letter-spacing: .02em;
+    }
+    .likely-left-row td { opacity: .65; }
 
     .branch-header-row td {
       background: rgba(201,168,76,.06);
@@ -362,12 +415,13 @@ export class V3EmployeesComponent implements OnDestroy {
   private svc       = inject(V3DashboardService);
   private dateRange = inject(V3DateRangeService);
 
-  loading      = signal(true);
-  error        = signal<string | null>(null);
-  rawGroups    = signal<any[]>([]);
-  allEmployees = signal<FlatEmployee[]>([]);
-  branches     = signal<string[]>([]);
-  regions      = signal<string[]>([]);
+  loading        = signal(true);
+  error          = signal<string | null>(null);
+  rawGroups      = signal<any[]>([]);
+  allEmployees   = signal<FlatEmployee[]>([]);
+  branches       = signal<string[]>([]);
+  regions        = signal<string[]>([]);
+  likelyLeftIds  = signal<Set<string>>(new Set());
 
   searchText   = '';
   branchFilter = '';
@@ -396,15 +450,36 @@ export class V3EmployeesComponent implements OnDestroy {
     this.error.set(null);
     this.profitChart?.destroy();
     this.profitChart = null;
+    this.likelyLeftIds.set(new Set());
 
-    // Load all employees at once (size=500) so client-side search/filter works across all records.
-    // The API is paginated (spec satisfied); we use a large page size for full client-side UX.
-    this.svc.getEmployeePerformance(from, to, 0, 500, 'totalSar').subscribe({
-      next: (res) => {
-        // res is now { data: FlatEmployee[], totalElements, totalPages, page, size }
-        const flat: FlatEmployee[] = res?.data ?? [];
-        this.totalElements.set(res?.totalElements ?? flat.length);
+    // Compute the "recent 30 days" window — last month of the selected range
+    const toDate     = new Date(to);
+    const recentFrom = new Date(toDate);
+    recentFrom.setDate(recentFrom.getDate() - 30);
+    const recentFromStr = recentFrom.toISOString().split('T')[0];
+    // Only flag if the range is longer than 45 days (short ranges can't meaningfully detect departure)
+    const rangeDays  = (toDate.getTime() - new Date(from).getTime()) / 86_400_000;
+    const checkLeft  = rangeDays > 45;
+
+    forkJoin({
+      full:   this.svc.getEmployeePerformance(from, to, 0, 500, 'totalSar'),
+      recent: checkLeft
+        ? this.svc.getEmployeePerformance(recentFromStr, to, 0, 500, 'totalSar').pipe(catchError(() => of(null)))
+        : of(null),
+    }).subscribe({
+      next: ({ full, recent }) => {
+        const flat: FlatEmployee[] = full?.data ?? [];
+        this.totalElements.set(full?.totalElements ?? flat.length);
         this.allEmployees.set(flat);
+
+        // Detect likely-left employees: had activity in the full range but not in last 30 days
+        if (checkLeft && recent?.data) {
+          const recentIds = new Set<string>((recent.data as any[]).map((e: any) => e.empId));
+          const leftIds   = new Set<string>(
+            flat.filter(e => e.totalSar > 0 && !recentIds.has(e.empId)).map(e => e.empId)
+          );
+          this.likelyLeftIds.set(leftIds);
+        }
 
         // Re-group flat employees by branch for the branch-header display
         const groupMap = new Map<string, any>();
