@@ -185,6 +185,24 @@ public class SuperAdminController {
             "impersonationToken",token,"tenantName",tenant.getCompanyNameAr())));
     }
 
+    @GetMapping("/tenants/{tenantId}/users")
+    public ResponseEntity<?> getTenantUsers(@AuthenticationPrincipal MizanUserDetails p,
+            @PathVariable String tenantId) {
+        requireSuperAdmin(p);
+        List<User> users = userRepo.findByTenantId(tenantId);
+        List<Map<String,Object>> result = users.stream().map(u -> {
+            Map<String,Object> m = new LinkedHashMap<>();
+            m.put("userId", u.getUserId());
+            m.put("email", u.getEmail());
+            m.put("fullNameAr", u.getFullNameAr());
+            m.put("fullNameEn", u.getFullNameEn());
+            m.put("role", u.getRole());
+            m.put("active", u.isActive());
+            return m;
+        }).toList();
+        return ResponseEntity.ok(Map.of("success", true, "data", result));
+    }
+
     @GetMapping("/tiers")
     public ResponseEntity<?> listTiers(@AuthenticationPrincipal MizanUserDetails p) {
         requireSuperAdmin(p);

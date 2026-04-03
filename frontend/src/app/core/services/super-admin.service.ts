@@ -42,6 +42,10 @@ export class SuperAdminService {
       `${environment.apiUrl}/super-admin/impersonate`, { tenantId });
   }
 
+  getUsersByTenant(tenantId: string): Observable<ApiResponse<any[]>> {
+    return this.http.get<ApiResponse<any[]>>(`${environment.apiUrl}/super-admin/tenants/${tenantId}/users`);
+  }
+
   getTiers(): Observable<ApiResponse<SubscriptionTier[]>> {
     return this.http.get<ApiResponse<SubscriptionTier[]>>(`${environment.apiUrl}/super-admin/tiers`);
   }

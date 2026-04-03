@@ -20,7 +20,7 @@ interface NavItem {
     <nav class="topnav" [attr.dir]="i18n.lang()">
 
       <!-- Logo -->
-      <a routerLink="/dashboard/overview" class="topnav__logo" dir="ltr">
+      <a [routerLink]="logoRoute()" class="topnav__logo" dir="ltr">
         <span class="logo-mark">M</span>
         <span class="logo-en">MIZAN</span>
         <span class="logo-ar">ميزان</span>
@@ -225,6 +225,9 @@ export class TopnavComponent {
     { labelAr: 'أسعار الشراء',       labelEn: 'Rates',             route: '/dashboard/rates',             roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
     { labelAr: 'أدائي',              labelEn: 'My Performance',    route: '/dashboard/my-performance',    roles: ['BRANCH_EMPLOYEE'] },
     { labelAr: 'داشبورد 3.0',        labelEn: 'Dashboard 3.0',     route: '/v3',                          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'],  badge: 'v3' },
+    { labelAr: 'لوحة التحكم',        labelEn: 'Dashboard',         route: '/super-admin/dashboard',       roles: ['SUPER_ADMIN'] },
+    { labelAr: 'الشركات',            labelEn: 'Companies',         route: '/super-admin/tenants',         roles: ['SUPER_ADMIN'] },
+    { labelAr: 'خطط الاشتراك',       labelEn: 'Tiers',             route: '/super-admin/tiers',           roles: ['SUPER_ADMIN'] },
   ];
 
   visibleItems = computed(() => {
@@ -237,4 +240,10 @@ export class TopnavComponent {
     const name = this.auth.currentUserSignal()?.fullName || '';
     return name.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase();
   });
+
+  logoRoute = computed(() =>
+    this.auth.currentUserSignal()?.role === 'SUPER_ADMIN'
+      ? '/super-admin/dashboard'
+      : '/dashboard/overview'
+  );
 }

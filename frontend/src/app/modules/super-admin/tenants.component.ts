@@ -26,8 +26,15 @@ import { Tenant } from '../../shared/models/models';
           <tbody>
             @for (t of tenants(); track t.tenantId) {
               <tr>
-                <td><strong>{{ t.companyName }}</strong><br><small class="text-muted" dir="ltr">{{ t.tenantId }}</small></td>
-                <td><span class="badge badge--gold">{{ t.planTier }}</span></td>
+                <td>
+                  <button class="expand-btn" (click)="toggleExpand(t.tenantId)"
+                          [title]="expandedTenantId() === t.tenantId ? 'إخفاء المستخدمين' : 'عرض المستخدمين'">
+                    {{ expandedTenantId() === t.tenantId ? '▼' : '▶' }}
+                  </button>
+                  <strong>{{ (t as any).companyNameAr ?? (t as any).companyNameEn ?? t.tenantId }}</strong>
+                  <br><small class="text-muted" dir="ltr">{{ t.tenantId }}</small>
+                </td>
+                <td><span class="badge badge--gold">{{ (t as any).subscriptionTierId ?? '—' }}</span></td>
                 <td>
                   <span [class]="'badge badge--' + (t.suspended ? 'danger' : t.active ? 'success' : 'warning')">
                     {{ t.suspended ? 'موقوف' : t.active ? 'نشط' : 'غير نشط' }}
@@ -47,6 +54,31 @@ import { Tenant } from '../../shared/models/models';
                   </div>
                 </td>
               </tr>
+              @if (expandedTenantId() === t.tenantId) {
+                <tr class="users-row">
+                  <td colspan="5">
+                    @if (loadingUsers()) {
+                      <span class="spinner spinner--green"></span>
+                    } @else if (tenantUsers().get(t.tenantId)?.length) {
+                      <table class="users-table">
+                        <thead><tr><th>البريد</th><th>الاسم</th><th>الدور</th><th>الحالة</th></tr></thead>
+                        <tbody>
+                          @for (u of tenantUsers().get(t.tenantId)!; track u.userId) {
+                            <tr>
+                              <td dir="ltr">{{ u.email }}</td>
+                              <td>{{ u.fullNameAr || u.fullNameEn }}</td>
+                              <td><span class="badge badge--gold">{{ u.role }}</span></td>
+                              <td><span [class]="'badge badge--' + (u.active ? 'success' : 'warning')">{{ u.active ? 'نشط' : 'غير نشط' }}</span></td>
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    } @else {
+                      <p class="text-muted" style="margin:.5rem 0">لا يوجد مستخدمون</p>
+                    }
+                  </td>
+                </tr>
+              }
             }
           </tbody>
         </table>
@@ -179,7 +211,25 @@ import { Tenant } from '../../shared/models/models';
         </div>
       </div>
     }
-  `
+  `,
+  styles: [`
+    .expand-btn {
+      background: none; border: none; cursor: pointer;
+      color: rgba(201,168,76,.7); font-size: .65rem;
+      padding: 0 .3rem 0 0; vertical-align: middle;
+      &:hover { color: #c9a84c; }
+    }
+    .users-row td {
+      background: rgba(201,168,76,.04);
+      border-top: none;
+      padding: .5rem 1rem .75rem 2.5rem;
+    }
+    .users-table {
+      width: 100%; border-collapse: collapse; font-size: .78rem;
+      th { color: rgba(242,237,228,.4); font-weight: 600; padding: .25rem .5rem; text-align: right; }
+      td { padding: .3rem .5rem; color: rgba(242,237,228,.75); border-bottom: 1px solid rgba(201,168,76,.07); }
+    }
+  `]
 })
 export class TenantsComponent implements OnInit {
   private svc = inject(SuperAdminService);
@@ -194,12 +244,35 @@ export class TenantsComponent implements OnInit {
   showEditModal = signal(false);
   showAdminModal = signal(false);
   selectedTenant = signal<Tenant | null>(null);
+  expandedTenantId = signal<string | null>(null);
+  tenantUsers = signal<Map<string, any[]>>(new Map());
+  loadingUsers = signal(false);
 
   form = { companyNameAr: '', companyNameEn: '', initialAdminEmail: '', initialAdminPassword: '', subscriptionTierId: 'starter' };
   editForm = { companyNameAr: '', companyNameEn: '', contactEmail: '', contactPhone: '', subscriptionTierId: 'starter' };
   adminForm = { email: '', password: '', fullNameAr: '' };
 
   ngOnInit() { this.load(); }
+
+  toggleExpand(tenantId: string): void {
+    if (this.expandedTenantId() === tenantId) {
+      this.expandedTenantId.set(null);
+      return;
+    }
+    this.expandedTenantId.set(tenantId);
+    if (!this.tenantUsers().has(tenantId)) {
+      this.loadingUsers.set(true);
+      this.svc.getUsersByTenant(tenantId).subscribe({
+        next: res => {
+          const map = new Map(this.tenantUsers());
+          map.set(tenantId, res.data ?? []);
+          this.tenantUsers.set(map);
+          this.loadingUsers.set(false);
+        },
+        error: () => this.loadingUsers.set(false)
+      });
+    }
+  }
 
   load(): void {
     this.loading.set(true);
