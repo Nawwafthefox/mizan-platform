@@ -6,8 +6,6 @@ import {
   inject,
   signal,
   effect,
-  afterNextRender,
-  Injector,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Chart, registerables } from 'chart.js';
@@ -436,11 +434,10 @@ export class V3OverviewComponent implements OnDestroy {
   top5    = signal<any[]>([]);
   bottom5 = signal<any[]>([]);
 
-  private barChart:   Chart | null = null;
-  private lineChart:  Chart | null = null;
-  private pendingBar: any[] | null = null;
+  private barChart:    Chart | null = null;
+  private lineChart:   Chart | null = null;
+  private pendingBar:  any[] | null = null;
   private pendingLine: any[] | null = null;
-  private injector = inject(Injector);
 
   constructor() {
     effect(() => {
@@ -481,12 +478,12 @@ export class V3OverviewComponent implements OnDestroy {
         this.pendingLine = trend as any[] ?? [];
         this.loading.set(false);
 
-        // afterNextRender fires after Angular renders the @if/@else block,
-        // guaranteeing @ViewChild canvas refs are in the DOM
-        afterNextRender(() => {
+        // Wait 80ms after loading=false so Angular re-renders @if block
+        // and @ViewChild canvas refs are in the DOM before we attach charts
+        setTimeout(() => {
           if (this.pendingBar)  { this.buildBarChart(this.pendingBar);   this.pendingBar  = null; }
           if (this.pendingLine) { this.buildLineChart(this.pendingLine); this.pendingLine = null; }
-        }, { injector: this.injector });
+        }, 80);
       },
       error: (err) => {
         this.error.set('فشل تحميل البيانات: ' + (err?.message ?? 'خطأ غير معروف'));
