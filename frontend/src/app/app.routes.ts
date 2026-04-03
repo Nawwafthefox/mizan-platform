@@ -5,18 +5,6 @@ export const routes: Routes = [
     path: 'auth',
     loadChildren: () => import('./modules/auth/auth.routes').then(m => m.AUTH_ROUTES)
   },
-  // Redirect old /dashboard/* pages to V3 equivalents — data is in V3 collections only
-  { path: 'dashboard',            redirectTo: '/v3/overview',    pathMatch: 'full' },
-  { path: 'dashboard/overview',   redirectTo: '/v3/overview',    pathMatch: 'full' },
-  { path: 'dashboard/branches',   redirectTo: '/v3/branches',   pathMatch: 'full' },
-  { path: 'dashboard/regions',    redirectTo: '/v3/regions',    pathMatch: 'full' },
-  { path: 'dashboard/employees',  redirectTo: '/v3/employees',  pathMatch: 'full' },
-  { path: 'dashboard/karat',      redirectTo: '/v3/karat',      pathMatch: 'full' },
-  { path: 'dashboard/mothan',     redirectTo: '/v3/mothan',     pathMatch: 'full' },
-  { path: 'dashboard/heatmap',    redirectTo: '/v3/heatmap',    pathMatch: 'full' },
-  { path: 'dashboard/comparison', redirectTo: '/v3/comparison', pathMatch: 'full' },
-  { path: 'dashboard/targets',    redirectTo: '/v3/targets',    pathMatch: 'full' },
-  // Old-only pages (no V3 equivalent) still load the old dashboard module
   {
     path: 'dashboard',
     loadChildren: () => import('./modules/dashboard/dashboard.routes').then(m => m.DASHBOARD_ROUTES)

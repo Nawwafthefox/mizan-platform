@@ -1,7 +1,5 @@
 package com.mizan.service;
 
-import com.mizan.repository.BranchPurchaseRateRepository;
-import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -9,17 +7,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.mongodb.core.MongoTemplate;
-import org.springframework.data.mongodb.core.aggregation.Aggregation;
-import org.springframework.data.mongodb.core.aggregation.AggregationResults;
 
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
 
 /**
@@ -71,14 +66,13 @@ class CalculationVerificationTest {
 
     // ── Mocks ─────────────────────────────────────────────────────
 
-    @Mock BranchPurchaseRateRepository rateRepo;
-    @Mock MongoTemplate mongoTemplate;
+    @Mock V3CalculationService calcSvc;
 
     DashboardService svc;
 
     @BeforeEach
     void setUp() {
-        svc = new DashboardService(rateRepo, mongoTemplate);
+        svc = new DashboardService(calcSvc);
     }
 
     // ── Helpers ───────────────────────────────────────────────────
@@ -87,49 +81,60 @@ class CalculationVerificationTest {
     private static double r2(double v) { return Math.round(v * 100.0)   / 100.0; }
 
     /**
-     * Stubs mongoTemplate.aggregate() for all three collections with pre-built Documents
-     * matching the test scenario. Mirrors what the aggregation pipelines would produce
-     * from the original BranchSale / BranchPurchase / MothanTransaction fixture data.
+     * Stubs V3CalculationService.getBranchSummaries() with pre-built Maps matching the
+     * test scenario. V3 already returns fully computed fields (saleRate, purchRate, etc.)
+     * — DashboardService just converts the Maps to BranchData records.
      */
-    @SuppressWarnings("unchecked")
-    private void stubAggregations() {
-        // Sales: Branch A (normal) + Branch B (return)
-        Document salesA = new Document("_id", "A")
-            .append("branchName", "فرع ألفا").append("region", "وسط")
-            .append("sar", A_SAR).append("wn", A_WT).append("wp", 0.0)
-            .append("pcs", (long) A_INVOICES)
-            .append("returns", 0.0).append("returnDays", 0)
-            .append("k18Sar", 0.0).append("k18Wt", 0.0)
-            .append("k21Sar", 0.0).append("k21Wt", 0.0)
-            .append("k22Sar", 0.0).append("k22Wt", 0.0)
-            .append("k24Sar", 0.0).append("k24Wt", 0.0);
-        Document salesB = new Document("_id", "B")
-            .append("branchName", "فرع بيتا").append("region", "وسط")
-            .append("sar", B_SAR).append("wn", B_WT).append("wp", 0.0)
-            .append("pcs", 1L)
-            .append("returns", B_SAR).append("returnDays", 1)  // isReturn→true, returnSar=B_SAR
-            .append("k18Sar", 0.0).append("k18Wt", 0.0)
-            .append("k21Sar", 0.0).append("k21Wt", 0.0)
-            .append("k22Sar", 0.0).append("k22Wt", 0.0)
-            .append("k24Sar", 0.0).append("k24Wt", 0.0);
+    private void stubCalcSvc() {
+        // Branch A: normal sales + purchases + mothan
+        Map<String, Object> branchA = new LinkedHashMap<>();
+        branchA.put("branchCode",  "A");
+        branchA.put("branchName",  "فرع ألفا");
+        branchA.put("region",      "وسط");
+        branchA.put("totalSar",    A_SAR);
+        branchA.put("totalWeight", A_WT);
+        branchA.put("totalPieces", (long) A_INVOICES);
+        branchA.put("returns",     0.0);
+        branchA.put("returnDays",  0);
+        branchA.put("k18Sar", 0.0); branchA.put("k18Wt", 0.0);
+        branchA.put("k21Sar", 0.0); branchA.put("k21Wt", 0.0);
+        branchA.put("k22Sar", 0.0); branchA.put("k22Wt", 0.0);
+        branchA.put("k24Sar", 0.0); branchA.put("k24Wt", 0.0);
+        branchA.put("purchSar",    A_PURCH);
+        branchA.put("purchWt",     A_PURCH_WT);
+        branchA.put("mothanSar",   A_MOTHAN);
+        branchA.put("mothanWt",    A_MOTHAN_WT);
+        branchA.put("saleRate",    A_SALE_RATE);
+        branchA.put("purchRate",   A_PURCH_RATE);
+        branchA.put("diffRate",    A_DIFF_RATE);
+        branchA.put("net",         A_NET);
+        branchA.put("avgInvoice",  r2(A_SAR / A_INVOICES));
 
-        // Purchases: Branch A only
-        Document purchA = new Document("_id", "A")
-            .append("branchName", "فرع ألفا").append("region", "وسط")
-            .append("purch", A_PURCH).append("purchWt", A_PURCH_WT);
+        // Branch B: pure return day — V3 returns absolute value in "returns"
+        Map<String, Object> branchB = new LinkedHashMap<>();
+        branchB.put("branchCode",  "B");
+        branchB.put("branchName",  "فرع بيتا");
+        branchB.put("region",      "وسط");
+        branchB.put("totalSar",    B_SAR);
+        branchB.put("totalWeight", B_WT);
+        branchB.put("totalPieces", 1L);
+        branchB.put("returns",     Math.abs(B_SAR));   // V3 stores positive abs value
+        branchB.put("returnDays",  1);
+        branchB.put("k18Sar", 0.0); branchB.put("k18Wt", 0.0);
+        branchB.put("k21Sar", 0.0); branchB.put("k21Wt", 0.0);
+        branchB.put("k22Sar", 0.0); branchB.put("k22Wt", 0.0);
+        branchB.put("k24Sar", 0.0); branchB.put("k24Wt", 0.0);
+        branchB.put("purchSar",    0.0);
+        branchB.put("purchWt",     0.0);
+        branchB.put("mothanSar",   0.0);
+        branchB.put("mothanWt",    0.0);
+        branchB.put("saleRate",    r4(B_SAR / B_WT));   // 625.0
+        branchB.put("purchRate",   0.0);
+        branchB.put("diffRate",    0.0);                 // guarded — no purchases
+        branchB.put("net",         B_SAR);
+        branchB.put("avgInvoice",  r2(B_SAR / 1.0));
 
-        // Mothan: Branch A only
-        Document mothanA = new Document("_id", "A")
-            .append("branchName", "فرع ألفا")
-            .append("mothan", A_MOTHAN).append("mothanWt", A_MOTHAN_WT);
-
-        when(mongoTemplate.aggregate(any(Aggregation.class), eq("branch_sales"), eq(Document.class)))
-            .thenReturn(new AggregationResults<>(List.of(salesA, salesB), new Document()));
-        when(mongoTemplate.aggregate(any(Aggregation.class), eq("branch_purchases"), eq(Document.class)))
-            .thenReturn(new AggregationResults<>(List.of(purchA), new Document()));
-        when(mongoTemplate.aggregate(any(Aggregation.class), eq("mothan_transactions"), eq(Document.class)))
-            .thenReturn(new AggregationResults<>(List.of(mothanA), new Document()));
-        when(rateRepo.findByTenantId(TENANT)).thenReturn(List.of());
+        when(calcSvc.getBranchSummaries(TENANT, FROM, TO)).thenReturn(List.of(branchA, branchB));
     }
 
     // ── Branch Summaries ──────────────────────────────────────────
@@ -140,7 +145,7 @@ class CalculationVerificationTest {
 
         @BeforeEach
         void stubRepos() {
-            stubAggregations();
+            stubCalcSvc();
         }
 
         @Test
@@ -248,7 +253,7 @@ class CalculationVerificationTest {
 
         @BeforeEach
         void buildBranches() {
-            stubAggregations();
+            stubCalcSvc();
             branches = svc.getBranchSummaries(TENANT, FROM, TO, null);
         }
 

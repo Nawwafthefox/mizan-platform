@@ -20,7 +20,7 @@ interface NavItem {
     <nav class="topnav" [attr.dir]="i18n.lang()">
 
       <!-- Logo -->
-      <a routerLink="/v3/overview" class="topnav__logo" dir="ltr">
+      <a routerLink="/dashboard/overview" class="topnav__logo" dir="ltr">
         <span class="logo-mark">M</span>
         <span class="logo-en">MIZAN</span>
         <span class="logo-ar">ميزان</span>
@@ -211,19 +211,20 @@ export class TopnavComponent {
   i18n = inject(I18nService);
 
   private allItems: NavItem[] = [
-    { labelAr: 'نظرة عامة',         labelEn: 'Overview',          route: '/v3/overview',                roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER','BRANCH_EMPLOYEE','DATA_ENTRY'] },
-    { labelAr: 'الفروع',             labelEn: 'Branches',          route: '/v3/branches',                roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
-    { labelAr: 'المناطق',            labelEn: 'Regions',           route: '/v3/regions',                 roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER'] },
-    { labelAr: 'الموظفون',           labelEn: 'Employees',         route: '/v3/employees',               roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
-    { labelAr: 'عيارات الذهب',       labelEn: 'Karat',             route: '/v3/karat',                   roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
-    { labelAr: 'موطن الذهب',         labelEn: 'Mothan',            route: '/v3/mothan',                  roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'الخارطة الحرارية',   labelEn: 'Heatmap',           route: '/v3/heatmap',                 roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'مقارنة الأيام',      labelEn: 'Comparison',        route: '/v3/comparison',              roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'الأهداف',            labelEn: 'Targets',           route: '/v3/targets',                 roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'رفع الملفات',        labelEn: 'Upload',            route: '/upload',                     roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','DATA_ENTRY'] },
-    { labelAr: 'المستخدمون',         labelEn: 'Users',             route: '/users',                      roles: ['COMPANY_ADMIN'] },
-    { labelAr: 'أسعار الشراء',       labelEn: 'Rates',             route: '/dashboard/rates',            roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'أدائي',              labelEn: 'My Performance',    route: '/dashboard/my-performance',   roles: ['BRANCH_EMPLOYEE'] },
+    { labelAr: 'نظرة عامة',         labelEn: 'Overview',          route: '/dashboard/overview',          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER','BRANCH_EMPLOYEE','DATA_ENTRY'] },
+    { labelAr: 'الفروع',             labelEn: 'Branches',          route: '/dashboard/branches',          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
+    { labelAr: 'المناطق',            labelEn: 'Regions',           route: '/dashboard/regions',           roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER'] },
+    { labelAr: 'الموظفون',           labelEn: 'Employees',         route: '/dashboard/employees',         roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
+    { labelAr: 'عيارات الذهب',       labelEn: 'Karat',             route: '/dashboard/karat',             roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
+    { labelAr: 'موطن الذهب',         labelEn: 'Mothan',            route: '/dashboard/mothan',            roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+    { labelAr: 'الخارطة الحرارية',   labelEn: 'Heatmap',           route: '/dashboard/heatmap',           roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+    { labelAr: 'مقارنة الأيام',      labelEn: 'Comparison',        route: '/dashboard/comparison',        roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+    { labelAr: 'الأهداف',            labelEn: 'Targets',           route: '/dashboard/targets',           roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+    { labelAr: 'رفع الملفات',        labelEn: 'Upload',            route: '/upload',                      roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','DATA_ENTRY'] },
+    { labelAr: 'المستخدمون',         labelEn: 'Users',             route: '/users',                       roles: ['COMPANY_ADMIN'] },
+    { labelAr: 'أسعار الشراء',       labelEn: 'Rates',             route: '/dashboard/rates',             roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
+    { labelAr: 'أدائي',              labelEn: 'My Performance',    route: '/dashboard/my-performance',    roles: ['BRANCH_EMPLOYEE'] },
+    { labelAr: 'داشبورد 3.0',        labelEn: 'Dashboard 3.0',     route: '/v3',                          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'],  badge: 'v3' },
   ];
 
   visibleItems = computed(() => {

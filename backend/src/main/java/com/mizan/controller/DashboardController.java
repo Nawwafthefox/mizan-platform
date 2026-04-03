@@ -19,6 +19,11 @@ import com.mizan.service.DashboardService;
 import com.mizan.service.DashboardService.BranchData;
 import com.mizan.service.UploadService;
 import com.mizan.service.V3CacheService;
+import com.mizan.service.V3CalculationService;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -42,6 +47,8 @@ public class DashboardController {
     private final MonthlySummaryRepository monthlySummaryRepo;
     private final EmployeeTransferRepository empTransferRepo;
     private final V3CacheService cache;
+    private final V3CalculationService calcSvc;
+    private final MongoTemplate mongo;
 
     public DashboardController(DashboardService dashSvc,
             EmployeeSaleRepository empRepo,
@@ -54,7 +61,9 @@ public class DashboardController {
             DailySaleRepository dailySaleRepo,
             MonthlySummaryRepository monthlySummaryRepo,
             EmployeeTransferRepository empTransferRepo,
-            V3CacheService cache) {
+            V3CacheService cache,
+            V3CalculationService calcSvc,
+            MongoTemplate mongo) {
         this.dashSvc = dashSvc;
         this.empRepo = empRepo;
         this.mothanRepo = mothanRepo;
@@ -67,6 +76,8 @@ public class DashboardController {
         this.monthlySummaryRepo = monthlySummaryRepo;
         this.empTransferRepo = empTransferRepo;
         this.cache = cache;
+        this.calcSvc = calcSvc;
+        this.mongo = mongo;
     }
 
     // ── Cache helpers ─────────────────────────────────────────────────────────
@@ -108,7 +119,9 @@ public class DashboardController {
         double totalBranchPurchWt = branches.stream().mapToDouble(BranchData::purchWt).sum();
         double totalMothanSar     = branches.stream().mapToDouble(BranchData::mothan).sum();
         double totalMothanWt      = branches.stream().mapToDouble(BranchData::mothanWt).sum();
-        long   mothanTxnCount     = mothanRepo.countByTenantAndRange(tenantId, from, to);
+        long   mothanTxnCount     = mongo.count(new Query(Criteria.where("tenantId").is(tenantId)
+            .and("transactionDate").gte(from).lte(to).and("amountSar").gt(0)),
+            com.mizan.model.V3MothanTransaction.class);
         double totalReturns       = branches.stream().mapToDouble(BranchData::returns).sum();
         long   returnBranchCount  = branches.stream().filter(b -> b.returns() > 0).count();
         long   negativeBranches   = branches.stream().filter(b -> b.diffRate() < 0).count();
@@ -183,87 +196,31 @@ public class DashboardController {
         Object hit = cache.get(cKey);
         if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
 
-        // Load targets for the month of `from`
-        Map<String, com.mizan.model.BranchTarget> targetByBranch =
-            targetRepo.findByTenantIdAndTargetDateBetween(tenantId,
-                from.withDayOfMonth(1), from.withDayOfMonth(from.lengthOfMonth()))
-            .stream().collect(Collectors.toMap(
-                com.mizan.model.BranchTarget::getBranchCode,
-                t -> t, (a, b_) -> a));
-
-        // Build branch purchase rate map: period-actual rate first, fallback to saved rate
-        List<BranchData> branchSummaries = dashSvc.getBranchSummaries(tenantId, from, to, scoped);
-        Map<String,Double> branchPurchRates = branchSummaries.stream()
-            .collect(Collectors.toMap(BranchData::code, BranchData::purchRate, (a,b_)->a));
-        Map<String,Double> savedRates = rateRepo.findByTenantId(tenantId).stream()
-            .collect(Collectors.toMap(BranchPurchaseRate::getBranchCode, BranchPurchaseRate::getPurchaseRate, (a,b_)->a));
-
-        List<EmployeeSale> sales = scoped == null
-            ? empRepo.findByTenantAndRange(tenantId, from, to)
-            : empRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scoped);
-
-        // Filter by branchCode/region if requested
-        if (branchCode != null && !branchCode.isBlank())
-            sales = sales.stream().filter(s -> branchCode.equals(s.getBranchCode())).collect(Collectors.toList());
-        if (region != null && !region.isBlank())
-            sales = sales.stream().filter(s -> region.equals(s.getRegion())).collect(Collectors.toList());
-
-        // Group by employeeId
-        Map<String, List<EmployeeSale>> byEmp = sales.stream()
-            .collect(Collectors.groupingBy(EmployeeSale::getEmployeeId));
+        // Get employee performance from V3 collections (grouped by branch)
+        List<Map<String,Object>> v3Branches = calcSvc.getEmployeePerformance(tenantId, from, to);
 
         List<Map<String,Object>> result = new ArrayList<>();
-        for (Map.Entry<String, List<EmployeeSale>> entry : byEmp.entrySet()) {
-            List<EmployeeSale> empSales = entry.getValue();
-            EmployeeSale first = empSales.get(0);
+        for (Map<String,Object> br : v3Branches) {
+            String bCode   = (String) br.get("branchCode");
+            String bRegion = (String) br.get("region");
+            // Apply scope filter
+            if (scoped != null && !scoped.contains(bCode)) continue;
+            // Apply region/branchCode filter
+            if (region != null && !region.isBlank() && !region.equals(bRegion)) continue;
+            if (branchCode != null && !branchCode.isBlank() && !branchCode.equals(bCode)) continue;
 
-            double totalSar = empSales.stream().mapToDouble(EmployeeSale::getTotalSarAmount).sum();
-            double totalWt = empSales.stream().mapToDouble(EmployeeSale::getNetWeight).sum();
-            long invoiceCount = empSales.stream().mapToLong(e -> Math.abs(e.getInvoiceCount())).sum();
-            double saleRate = totalWt > 0 ? totalSar / totalWt : 0;
-            double returns = empSales.stream()
-                .filter(s -> s.isReturn() || s.getTotalSarAmount() < 0)
-                .mapToDouble(s -> Math.abs(s.getTotalSarAmount())).sum();
-            long returnDays = empSales.stream()
-                .filter(s -> s.isReturn() || s.getTotalSarAmount() < 0).count();
-            com.mizan.model.BranchTarget target = targetByBranch.get(first.getBranchCode());
-            double targetWeight = target != null ? target.getTargetNetWeightDaily() * empSales.size() : 0;
-            double actualWeight = Math.abs(totalWt);
-            double achievementPct = targetWeight > 0 ? (actualWeight / targetWeight) * 100 : 0;
-            String achievementStatus = achievementPct >= 100 ? "exceeded" : achievementPct >= 70 ? "onTrack" : "behind";
-
-            String bCode = first.getBranchCode();
-            double purchRate = branchPurchRates.getOrDefault(bCode,
-                savedRates.getOrDefault(bCode, 0.0));
-            double diffRate = Math.round((saleRate - purchRate) * 10) / 10.0;
-            double profitMargin = purchRate > 0 ? Math.round(totalWt * diffRate * 100) / 100.0 : 0;
-            double avgInvoice = invoiceCount > 0 ? Math.round(totalSar / invoiceCount * 100) / 100.0 : 0;
-
-            Map<String,Object> row = new LinkedHashMap<>();
-            row.put("employeeId", entry.getKey());
-            row.put("employeeName", first.getEmployeeName());
-            row.put("branchCode", bCode);
-            row.put("branchName", first.getBranchName());
-            row.put("region", first.getRegion());
-            row.put("totalSar", totalSar);
-            row.put("totalWt", totalWt);
-            row.put("invoiceCount", invoiceCount);
-            row.put("saleRate", saleRate);
-            row.put("purchRate", purchRate);
-            row.put("diffRate", diffRate);
-            row.put("profitMargin", profitMargin);
-            row.put("avgInvoice", avgInvoice);
-            String rating = saleRate >= 700 ? "excellent" : saleRate >= 600 ? "good" : saleRate >= 500 ? "average" : "weak";
-            row.put("achieved", saleRate > purchRate);
-            row.put("rating", rating);
-            row.put("days", empSales.size());
-            row.put("returns", returns);
-            row.put("returnDays", returnDays);
-            row.put("targetWeight", targetWeight);
-            row.put("actualWeight", actualWeight);
-            row.put("achievementPct", achievementPct);
-            row.put("achievementStatus", achievementStatus);
-            result.add(row);
+            @SuppressWarnings("unchecked")
+            List<Map<String,Object>> emps = (List<Map<String,Object>>) br.get("employees");
+            if (emps == null) continue;
+            for (Map<String,Object> e : emps) {
+                Map<String,Object> row = new LinkedHashMap<>(e);
+                // Add field aliases for backward compat with old dashboard frontend
+                row.put("employeeId",   e.get("empId"));
+                row.put("employeeName", e.get("empName"));
+                row.put("totalWt",      e.get("totalWeight"));
+                row.put("invoiceCount", e.get("totalPieces"));
+                result.add(row);
+            }
         }
 
         // Sort by totalSar desc
@@ -342,39 +299,36 @@ public class DashboardController {
         Object hit = cache.get(cKey);
         if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
 
-        List<MothanTransaction> transactions = mothanRepo.findByTenantAndRange(tenantId, from, to);
+        // Use V3 branch summaries (already has mothanSar/mothanWt per branch from V3 collections)
+        List<BranchData> branches = dashSvc.getBranchSummaries(tenantId, from, to, null);
+        double totalSar = branches.stream().mapToDouble(BranchData::mothan).sum();
+        double totalWt  = branches.stream().mapToDouble(BranchData::mothanWt).sum();
+        double avgRate  = totalWt > 0 ? totalSar / totalWt : 0;
 
-        double totalSar = transactions.stream().mapToDouble(MothanTransaction::getCreditSar).sum();
-        double totalWt = transactions.stream().mapToDouble(MothanTransaction::getGoldWeightGrams).sum();
-        double avgRate = totalWt > 0 ? totalSar / totalWt : 0;
-
-        // Group by branch
-        Map<String, List<MothanTransaction>> byBranch = transactions.stream()
-            .collect(Collectors.groupingBy(MothanTransaction::getBranchCode));
+        long txnCount = mongo.count(new Query(Criteria.where("tenantId").is(tenantId)
+            .and("transactionDate").gte(from).lte(to).and("amountSar").gt(0)),
+            com.mizan.model.V3MothanTransaction.class);
 
         List<Map<String,Object>> branchSummary = new ArrayList<>();
-        for (Map.Entry<String, List<MothanTransaction>> entry : byBranch.entrySet()) {
-            List<MothanTransaction> bTxns = entry.getValue();
-            MothanTransaction first = bTxns.get(0);
-            double bSar = bTxns.stream().mapToDouble(MothanTransaction::getCreditSar).sum();
-            double bWt = bTxns.stream().mapToDouble(MothanTransaction::getGoldWeightGrams).sum();
+        for (BranchData b : branches) {
+            if (b.mothan() <= 0 && b.mothanWt() <= 0) continue;
             Map<String,Object> row = new LinkedHashMap<>();
-            row.put("branchCode", entry.getKey());
-            row.put("branchName", first.getBranchName());
-            row.put("totalSar", bSar);
-            row.put("totalWt", bWt);
-            row.put("txnCount", bTxns.size());
-            row.put("avgRate", bWt > 0 ? bSar / bWt : 0);
+            row.put("branchCode", b.code());
+            row.put("branchName", b.name());
+            row.put("totalSar", b.mothan());
+            row.put("totalWt", b.mothanWt());
+            row.put("txnCount", 0);
+            row.put("avgRate", b.mothanWt() > 0 ? b.mothan() / b.mothanWt() : 0);
             branchSummary.add(row);
         }
         branchSummary.sort((a,b) -> Double.compare((double)b.get("totalSar"), (double)a.get("totalSar")));
 
         Map<String,Object> result = new LinkedHashMap<>();
-        result.put("transactions", transactions);
+        result.put("transactions", List.of());
         result.put("totalSar", totalSar);
         result.put("totalWt", totalWt);
         result.put("avgRate", avgRate);
-        result.put("txnCount", transactions.size());
+        result.put("txnCount", txnCount);
         result.put("byBranch", branchSummary);
 
         cache.put(cKey, result);
@@ -587,56 +541,35 @@ public class DashboardController {
         String tenantId = TenantContext.getTenantId();
         if (tenantId == null) return ResponseEntity.status(403).body(Map.of("success",false));
 
-        List<BranchPurchase> purchases = purchRepo.findByTenantAndRange(tenantId, from, to);
-        List<MothanTransaction> mothans = mothanRepo.findByTenantAndRange(tenantId, from, to);
-
-        // Accumulate per branch
-        Map<String, double[]> bmap = new LinkedHashMap<>();
-        // slot: [0]=purchSar [1]=purchWt [2]=mothanSar [3]=mothanWt
-        Map<String, String[]> bmeta = new LinkedHashMap<>(); // [0]=branchName [1]=region
-
-        for (BranchPurchase p : purchases) {
-            bmap.computeIfAbsent(p.getBranchCode(), k -> new double[4]);
-            bmeta.putIfAbsent(p.getBranchCode(), new String[]{p.getBranchName(), p.getRegion()});
-            bmap.get(p.getBranchCode())[0] += p.getTotalSarAmount();
-            bmap.get(p.getBranchCode())[1] += p.getNetWeight();
-        }
-        for (MothanTransaction m : mothans) {
-            if (m.getGoldWeightGrams() <= 0) continue;
-            bmap.computeIfAbsent(m.getBranchCode(), k -> new double[4]);
-            bmeta.putIfAbsent(m.getBranchCode(), new String[]{m.getBranchName(), "غير محدد"});
-            bmap.get(m.getBranchCode())[2] += m.getCreditSar();
-            bmap.get(m.getBranchCode())[3] += m.getGoldWeightGrams();
-        }
+        // Use V3 branch summaries — already has purchSar/purchWt/mothanSar/mothanWt from V3 collections
+        List<BranchData> v3branches = dashSvc.getBranchSummaries(tenantId, from, to, null);
 
         List<Map<String,Object>> result = new ArrayList<>();
-        for (Map.Entry<String, double[]> entry : bmap.entrySet()) {
-            String code = entry.getKey();
-            double[] v = entry.getValue();
-            String[] meta = bmeta.get(code);
-            double totalSar = v[0] + v[2];
-            double totalWt  = v[1] + v[3];
+        for (BranchData b : v3branches) {
+            double totalSar = b.purch() + b.mothan();
+            double totalWt  = b.purchWt() + b.mothanWt();
             double rate = totalWt > 0 ? Math.round(totalSar / totalWt * 10000) / 10000.0 : 0;
 
             Map<String,Object> row = new LinkedHashMap<>();
-            row.put("branchCode", code);
-            row.put("branchName", meta[0]);
-            row.put("region", meta[1]);
-            row.put("purchSar", v[0]);
-            row.put("purchWt", v[1]);
-            row.put("mothanSar", v[2]);
-            row.put("mothanWt", v[3]);
+            row.put("branchCode", b.code());
+            row.put("branchName", b.name());
+            row.put("region", b.region());
+            row.put("purchSar", b.purch());
+            row.put("purchWt", b.purchWt());
+            row.put("mothanSar", b.mothan());
+            row.put("mothanWt", b.mothanWt());
             row.put("totalSar", totalSar);
             row.put("totalWt", totalWt);
             row.put("purchaseRate", rate);
             result.add(row);
 
             if (save && rate > 0) {
+                String code = b.code();
                 BranchPurchaseRate bpr = rateRepo
                     .findByTenantIdAndBranchCode(tenantId, code)
                     .orElseGet(() -> { BranchPurchaseRate n = new BranchPurchaseRate();
                         n.setTenantId(tenantId); n.setBranchCode(code); return n; });
-                bpr.setBranchName(meta[0]);
+                bpr.setBranchName(b.name());
                 bpr.setPurchaseRate(rate);
                 bpr.setTotalSar(totalSar);
                 bpr.setTotalWeight(totalWt);
@@ -841,20 +774,17 @@ public class DashboardController {
         String cKey = tenantId + ":dash:daily-trend:" + from + ":" + to + ":" + scopeKey(scoped);
         Object hit = cache.get(cKey);
         if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
-        List<BranchSale> rawSales = scoped == null
-            ? saleRepo.findByTenantAndRange(tenantId, from, to)
-            : saleRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scoped);
-        Map<String, double[]> byDate = new java.util.TreeMap<>();
-        for (BranchSale s : rawSales) {
-            String d = s.getSaleDate().toString();
-            byDate.computeIfAbsent(d, k -> new double[2]);
-            byDate.get(d)[0] += s.getTotalSarAmount();
-            byDate.get(d)[1] += s.getNetWeight();
-        }
-        List<Map<String,Object>> trend = new ArrayList<>();
-        for (Map.Entry<String,double[]> e : byDate.entrySet()) {
-            trend.add(Map.of("date", e.getKey(), "sar", e.getValue()[0], "wt", e.getValue()[1]));
-        }
+
+        // Use V3 daily trend — remap totalSar→sar, totalWeight→wt for backward compat
+        List<Map<String,Object>> v3Trend = calcSvc.getDailyTrend(tenantId, from, to);
+        List<Map<String,Object>> trend = v3Trend.stream().map(d -> {
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("date", d.get("date"));
+            row.put("sar",  d.get("totalSar"));
+            row.put("wt",   d.get("totalWeight"));
+            return row;
+        }).collect(Collectors.toList());
+
         cache.put(cKey, trend);
         return ResponseEntity.ok(Map.of("success",true,"data",trend));
     }
@@ -864,14 +794,20 @@ public class DashboardController {
         String tenantId = TenantContext.getTenantId();
         if (tenantId == null) return ResponseEntity.ok(Map.of("success", true, "data", Map.of()));
 
-        var latest = saleRepo.findFirstByTenantIdOrderBySaleDateDesc(tenantId);
-        var earliest = saleRepo.findFirstByTenantIdOrderBySaleDateAsc(tenantId);
+        // Query V3 sale transactions for date range
+        Query latestQ = new Query(Criteria.where("tenantId").is(tenantId));
+        latestQ.with(Sort.by(Sort.Direction.DESC, "saleDate")).limit(1);
+        com.mizan.model.V3SaleTransaction latest = mongo.findOne(latestQ, com.mizan.model.V3SaleTransaction.class);
 
-        if (latest.isEmpty()) return ResponseEntity.ok(Map.of("success", true, "data", Map.of()));
+        if (latest == null) return ResponseEntity.ok(Map.of("success", true, "data", Map.of()));
+
+        Query earliestQ = new Query(Criteria.where("tenantId").is(tenantId));
+        earliestQ.with(Sort.by(Sort.Direction.ASC, "saleDate")).limit(1);
+        com.mizan.model.V3SaleTransaction earliest = mongo.findOne(earliestQ, com.mizan.model.V3SaleTransaction.class);
 
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("latestDate", latest.get().getSaleDate().toString());
-        data.put("earliestDate", earliest.map(s -> s.getSaleDate().toString()).orElse(latest.get().getSaleDate().toString()));
+        data.put("latestDate",   latest.getSaleDate().toString());
+        data.put("earliestDate", earliest != null ? earliest.getSaleDate().toString() : latest.getSaleDate().toString());
         return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 
