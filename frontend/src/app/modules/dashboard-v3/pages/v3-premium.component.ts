@@ -450,9 +450,13 @@ function regionColor(region: string): string {
               <span class="p-card-icon">🏆</span>
               <span class="p-card-title">نجوم الأداء</span>
             </div>
-            <div class="chart-wrap chart-wrap-lg">
-              <canvas #perfChart></canvas>
-            </div>
+            @if ((data()?.topPerformers?.length ?? 0) > 0) {
+              <div class="chart-wrap chart-wrap-lg">
+                <canvas #perfChart></canvas>
+              </div>
+            } @else {
+              <div style="text-align:center;padding:2rem;color:var(--mizan-text-muted)">لا توجد بيانات موظفين للفترة المحددة</div>
+            }
           </div>
         </div>
 
@@ -796,15 +800,19 @@ export class V3PremiumComponent implements OnDestroy {
   // ─── Chart 7: Top Performers Horizontal Bar ──────────────────────────────
   private buildPerfChart(performers: any[]): void {
     const canvas = this.getCanvas('perfChart');
-    if (!canvas || !performers) return;
-    const top10 = [...performers].sort((a, b) => b.profitMargin - a.profitMargin).slice(0, 10);
+    if (!canvas || !performers?.length) return;
+    // Use profitMargin when purchase rates are available; fall back to totalSar otherwise
+    const hasMarginData = performers.some((p: any) => (p.profitMargin ?? 0) > 0);
+    const metricKey   = hasMarginData ? 'profitMargin' : 'totalSar';
+    const metricLabel = hasMarginData ? 'هامش الربح (ر.س)' : 'المبيعات (ر.س)';
+    const top10 = [...performers].sort((a, b) => (b[metricKey] ?? 0) - (a[metricKey] ?? 0)).slice(0, 10);
     const c = new Chart(canvas, {
       type: 'bar',
       data: {
         labels: top10.map((p: any) => `${p.empName} (${p.branchName})`),
         datasets: [{
-          label: 'هامش الربح (ر.س)',
-          data: top10.map((p: any) => p.profitMargin),
+          label: metricLabel,
+          data: top10.map((p: any) => p[metricKey] ?? 0),
           backgroundColor: top10.map((_, i) =>
             i === 0 ? 'rgba(201,168,76,0.9)' : `rgba(201,168,76,${0.5 - i * 0.04})`
           ),
