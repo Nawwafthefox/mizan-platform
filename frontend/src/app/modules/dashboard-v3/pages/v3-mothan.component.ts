@@ -326,7 +326,7 @@ type SortDir   = 'asc' | 'desc';
     }
   `
 })
-export class V3MothanComponent implements OnInit, OnDestroy {
+export class V3MothanComponent {
   private svc       = inject(V3DashboardService);
   private dateRange = inject(V3DateRangeService);
 

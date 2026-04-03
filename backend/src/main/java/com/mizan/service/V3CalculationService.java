@@ -711,6 +711,215 @@ public class V3CalculationService {
         return result;
     }
 
+    // ─── Premium Dashboard (aggregation-only, no full-doc loads) ─────────────
+
+    public Map<String, Object> getPremiumDashboard(String tenantId, LocalDate from, LocalDate to) {
+        List<Map<String, Object>> branches = getBranchSummaries(tenantId, from, to);
+        Map<String, Object> result = new LinkedHashMap<>();
+
+        double totalSar     = branches.stream().mapToDouble(b -> mapDbl(b, "totalSar")).sum();
+        double totalWt      = branches.stream().mapToDouble(b -> mapDbl(b, "totalWeight")).sum();
+        double totalPurch   = branches.stream().mapToDouble(b -> mapDbl(b, "purchCombined")).sum();
+        double totalPurchWt = branches.stream().mapToDouble(b -> mapDbl(b, "combinedWt")).sum();
+
+        // ── 1. Revenue efficiency ──────────────────────────────────────────────
+        long periodDays = from.until(to, java.time.temporal.ChronoUnit.DAYS) + 1;
+        List<Map<String, Object>> prev = getBranchSummaries(tenantId, from.minusDays(periodDays), from.minusDays(1));
+        double prevSar = prev.stream().mapToDouble(b -> mapDbl(b, "totalSar")).sum();
+        double prevWt  = prev.stream().mapToDouble(b -> mapDbl(b, "totalWeight")).sum();
+        double curRPG  = totalWt > 0 ? r2(totalSar / totalWt) : 0;
+        double prevRPG = prevWt  > 0 ? r2(prevSar  / prevWt)  : 0;
+
+        // Daily trend from aggSalesByDay (already includes totalWeight)
+        List<Document> salesByDay = aggSalesByDay(tenantId, from, to);
+        // Build date → [SAR, weight] map (sorted)
+        Map<String, double[]> dayRevMap = new TreeMap<>();
+        for (Document d : salesByDay) {
+            String dateStr = toDateString(d.get("_id"));
+            if (!dateStr.isEmpty())
+                dayRevMap.put(dateStr, new double[]{ dbl(d, "totalSar"), dbl(d, "totalWeight") });
+        }
+        List<Map<String,Object>> revTrend = new ArrayList<>();
+        for (Map.Entry<String, double[]> e : dayRevMap.entrySet()) {
+            double[] v = e.getValue();
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("date", e.getKey()); row.put("value", v[1] > 0 ? r2(v[0] / v[1]) : 0);
+            revTrend.add(row);
+        }
+        Map<String,Object> revEff = new LinkedHashMap<>();
+        revEff.put("current", curRPG); revEff.put("previous", prevRPG);
+        revEff.put("changePct", prevRPG > 0 ? r1((curRPG - prevRPG) / prevRPG * 100) : 0);
+        revEff.put("trend", revTrend);
+        result.put("revenueEfficiency", revEff);
+
+        // ── 2. Branch quadrant ─────────────────────────────────────────────────
+        double[] sarArr = branches.stream().mapToDouble(b -> mapDbl(b, "totalSar")).sorted().toArray();
+        double[] drArr  = branches.stream().mapToDouble(b -> mapDbl(b, "diffRate")).sorted().toArray();
+        double medSar  = sarArr.length > 0 ? sarArr[sarArr.length / 2] : 0;
+        double medDiff = drArr.length  > 0 ? drArr[drArr.length  / 2] : 0;
+        List<Map<String,Object>> quadrant = branches.stream().map(b -> {
+            double bSar = mapDbl(b, "totalSar"), bDr = mapDbl(b, "diffRate");
+            String q = bSar >= medSar && bDr >= medDiff ? "star"
+                     : bSar >= medSar ? "cash_cow" : bDr >= medDiff ? "question" : "dog";
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("branchCode", b.get("branchCode")); row.put("branchName", b.get("branchName"));
+            row.put("region", b.get("region")); row.put("totalSar", bSar);
+            row.put("diffRate", bDr); row.put("quadrant", q);
+            return row;
+        }).collect(Collectors.toList());
+        result.put("branchQuadrant", quadrant);
+        result.put("medianSar", medSar); result.put("medianDiff", medDiff);
+
+        // ── 3. Karat profitability ─────────────────────────────────────────────
+        Map<String, Map<String, double[]>> purchKaratMap = aggPurchasesByBranchAndKarat(tenantId, from, to);
+        Map<String, double[]> kSale  = new LinkedHashMap<>();
+        Map<String, double[]> kPurch = new LinkedHashMap<>();
+        for (String k : List.of("18", "21", "22", "24")) {
+            double kSar = 0, kWt = 0;
+            for (Map<String,Object> b : branches) { kSar += mapDbl(b, "k" + k + "Sar"); kWt += mapDbl(b, "k" + k + "Wt"); }
+            kSale.put(k, new double[]{ kSar, kWt });
+            double pSar = 0, pWt = 0;
+            for (Map<String, double[]> bk : purchKaratMap.values()) { double[] a = bk.getOrDefault(k, new double[2]); pSar += a[0]; pWt += a[1]; }
+            kPurch.put(k, new double[]{ pSar, pWt });
+        }
+        double grandKarSar = kSale.values().stream().mapToDouble(t -> t[0]).sum();
+        List<Map<String,Object>> karatProfit = List.of("18","21","22","24").stream().map(k -> {
+            double[] s = kSale.get(k), p = kPurch.get(k);
+            double sr = s[1] > 0 ? r2(s[0] / s[1]) : 0, pr = p[1] > 0 ? r2(p[0] / p[1]) : 0;
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("karat", k); row.put("totalSar", s[0]); row.put("totalWt", s[1]);
+            row.put("avgSaleRate", sr); row.put("avgPurchRate", pr);
+            row.put("marginPerGram", r2(sr - pr)); row.put("pctOfSales", grandKarSar > 0 ? r1(s[0] / grandKarSar * 100) : 0);
+            return row;
+        }).collect(Collectors.toList());
+        result.put("karatProfitability", karatProfit);
+
+        // ── 4. Purchase timing trend ──────────────────────────────────────────
+        List<Document> purchByDay = aggPurchasesByDayWithWeight(tenantId, from, to);
+        Map<String, double[]> dayS = new TreeMap<>(), dayP = new TreeMap<>();
+        for (Map.Entry<String, double[]> e : dayRevMap.entrySet()) dayS.put(e.getKey(), e.getValue());
+        for (Document d : purchByDay) {
+            String dt = toDateString(d.get("_id"));
+            if (!dt.isEmpty()) dayP.put(dt, new double[]{ dbl(d, "totalSar"), dbl(d, "totalWeight") });
+        }
+        Set<String> allDates = new TreeSet<>(dayS.keySet()); allDates.addAll(dayP.keySet());
+        List<Map<String,Object>> ptTrend = new ArrayList<>();
+        for (String dt : allDates) {
+            double[] ss = dayS.getOrDefault(dt, new double[2]), ps = dayP.getOrDefault(dt, new double[2]);
+            double sr = ss[1] > 0 ? r2(ss[0] / ss[1]) : 0, pr = ps[1] > 0 ? r2(ps[0] / ps[1]) : 0;
+            if (sr == 0 && pr == 0) continue;
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("date", dt); row.put("saleRate", sr); row.put("purchRate", pr); row.put("spread", r2(sr - pr));
+            ptTrend.add(row);
+        }
+        double avgSR = totalWt > 0 ? r2(totalSar / totalWt) : 0;
+        double avgPR = totalPurchWt > 0 ? r2(totalPurch / totalPurchWt) : 0;
+        Map<String,Object> pt = new LinkedHashMap<>();
+        pt.put("avgSaleRate", avgSR); pt.put("avgPurchRate", avgPR);
+        pt.put("spread", r2(avgSR - avgPR)); pt.put("trend", ptTrend);
+        result.put("purchaseTiming", pt);
+
+        // ── 5. Return risk ────────────────────────────────────────────────────
+        List<Map<String,Object>> returnRisk = branches.stream()
+            .filter(b -> mapDbl(b, "totalSar") > 0)
+            .map(b -> {
+                double bSar = mapDbl(b, "totalSar"), bRet = mapDbl(b, "returns");
+                double rPct = bSar > 0 ? r1(bRet / bSar * 100) : 0;
+                String risk = rPct >= 10 ? "critical" : rPct >= 5 ? "warning" : bRet > 0 ? "low" : "none";
+                Map<String,Object> row = new LinkedHashMap<>();
+                row.put("branchCode", b.get("branchCode")); row.put("branchName", b.get("branchName")); row.put("region", b.get("region"));
+                row.put("totalReturns", bRet); row.put("returnPct", rPct); row.put("riskLevel", risk);
+                return row;
+            })
+            .sorted(Comparator.comparingDouble((Map<String,Object> r) -> mapDbl(r, "returnPct")).reversed())
+            .collect(Collectors.toList());
+        result.put("returnRisk", returnRisk);
+
+        // ── 6. Gold exposure ──────────────────────────────────────────────────
+        List<Map<String,Object>> byBranchExp = branches.stream().map(b -> {
+            double bS = mapDbl(b, "totalSar"), bP = mapDbl(b, "purchCombined");
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("branchCode", b.get("branchCode")); row.put("branchName", b.get("branchName")); row.put("region", b.get("region"));
+            row.put("salesSar", bS); row.put("purchSar", bP); row.put("netExposure", r2(bS - bP));
+            return row;
+        }).sorted(Comparator.comparingDouble((Map<String,Object> r) -> mapDbl(r, "netExposure")).reversed())
+          .collect(Collectors.toList());
+        Map<String,Object> goldExp = new LinkedHashMap<>();
+        goldExp.put("totalSalesSar", totalSar); goldExp.put("totalPurchSar", totalPurch);
+        goldExp.put("netExposure", r2(totalSar - totalPurch)); goldExp.put("byBranch", byBranchExp);
+        result.put("goldExposure", goldExp);
+
+        // ── 7. Seasonal patterns (from daily data — no extra agg needed) ──────
+        // Java DayOfWeek: 1=Mon...7=Sun
+        String[] dayNames = {"الإثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت","الأحد"};
+        Map<Integer, double[]> dowMap = new TreeMap<>();
+        for (int i = 1; i <= 7; i++) dowMap.put(i, new double[2]); // [sumSar, dayCount]
+        for (Map.Entry<String, double[]> e : dayRevMap.entrySet()) {
+            try {
+                LocalDate ld = LocalDate.parse(e.getKey());
+                int dow = ld.getDayOfWeek().getValue();
+                double[] arr = dowMap.get(dow);
+                arr[0] += e.getValue()[0]; arr[1]++;
+            } catch (Exception ignored) {}
+        }
+        List<Map<String,Object>> seasonDow = new ArrayList<>();
+        for (int i = 1; i <= 7; i++) {
+            double[] arr = dowMap.get(i);
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("day", dayNames[i-1]); row.put("dayNum", i);
+            row.put("avgSar", arr[1] > 0 ? r2(arr[0] / arr[1]) : 0);
+            row.put("dayCount", (long) arr[1]);
+            seasonDow.add(row);
+        }
+        Map<String,Object> seasonal = new LinkedHashMap<>();
+        seasonal.put("byDayOfWeek", seasonDow);
+        result.put("seasonalPatterns", seasonal);
+
+        // ── 8. Break-even ──────────────────────────────────────────────────────
+        List<Map<String,Object>> breakEven = branches.stream()
+            .filter(b -> mapDbl(b, "purchCombined") > 0 && mapDbl(b, "saleRate") > 0)
+            .map(b -> {
+                double bPurch = mapDbl(b, "purchCombined"), bSR = mapDbl(b, "saleRate"), bActWt = mapDbl(b, "totalWeight");
+                double beWt = r2(bPurch / bSR), surplus = r2(bActWt - beWt);
+                Map<String,Object> row = new LinkedHashMap<>();
+                row.put("branchCode", b.get("branchCode")); row.put("branchName", b.get("branchName")); row.put("region", b.get("region"));
+                row.put("totalPurchases", bPurch); row.put("saleRate", bSR);
+                row.put("breakEvenWeightG", beWt); row.put("actualWeightG", bActWt);
+                row.put("surplusWeightG", surplus); row.put("surplusPct", beWt > 0 ? r1(surplus / beWt * 100) : 0);
+                return row;
+            })
+            .sorted(Comparator.comparingDouble((Map<String,Object> r) -> mapDbl(r, "surplusPct")).reversed())
+            .collect(Collectors.toList());
+        result.put("breakEven", breakEven);
+
+        // ── 9. Top performers ─────────────────────────────────────────────────
+        List<Map<String,Object>> empPerf = getEmployeePerformance(tenantId, from, to);
+        List<Map<String,Object>> topP = new ArrayList<>();
+        for (Map<String,Object> br : empPerf) {
+            @SuppressWarnings("unchecked") List<Map<String,Object>> emps = (List<Map<String,Object>>) br.get("employees");
+            if (emps != null) topP.addAll(emps);
+        }
+        topP.sort(Comparator.comparingDouble((Map<String,Object> e) -> mapDbl(e, "profitMargin")).reversed());
+        for (int i = 0; i < Math.min(10, topP.size()); i++) topP.get(i).put("profitRank", i + 1);
+        result.put("topPerformers", topP.subList(0, Math.min(10, topP.size())));
+
+        // ── 10. Executive summary ─────────────────────────────────────────────
+        String bestBr  = branches.isEmpty() ? "—" : (String) branches.get(0).get("branchName");
+        String bestEmp = topP.isEmpty() ? "—" : (String) topP.get(0).get("empName");
+        double profit  = branches.stream().mapToDouble(b -> mapDbl(b, "net")).sum();
+        double profPct = totalSar > 0 ? r1(profit / totalSar * 100) : 0;
+        Map<String,Object> exec = new LinkedHashMap<>();
+        exec.put("totalRevenue", totalSar); exec.put("totalProfit", profit);
+        exec.put("profitMarginPct", profPct); exec.put("avgSaleRate", totalWt > 0 ? r2(totalSar / totalWt) : 0);
+        exec.put("bestBranch", bestBr); exec.put("bestEmployee", bestEmp);
+        exec.put("summaryText", String.format(
+            "في الفترة من %s إلى %s، حققت الشركة مبيعات بقيمة %,.0f ريال مع هامش ربح %.1f%%. متوسط سعر البيع %.1f ريال/جرام. أفضل فرع: %s. أفضل موظف: %s.",
+            from, to, totalSar, profPct, totalWt > 0 ? totalSar / totalWt : 0.0, bestBr, bestEmp));
+        result.put("executiveSummary", exec);
+
+        return result;
+    }
+
     // ─── Heatmap ─────────────────────────────────────────────────────────────
 
     public List<Map<String, Object>> getHeatmapData(String tenantId, LocalDate from, LocalDate to) {
@@ -878,6 +1087,16 @@ public class V3CalculationService {
             Criteria.where("tenantId").is(tenantId).and("purchaseDate").gte(from).lte(to));
         AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$purchaseDate")
             .append("totalSar", new Document("$sum", "$sarAmount")));
+        return mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3PurchaseTransaction.class, Document.class).getMappedResults();
+    }
+
+    private List<Document> aggPurchasesByDayWithWeight(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId).and("purchaseDate").gte(from).lte(to));
+        AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$purchaseDate")
+            .append("totalSar",    new Document("$sum", "$sarAmount"))
+            .append("totalWeight", new Document("$sum", "$pureWeightG")));
         return mongo.aggregate(Aggregation.newAggregation(match, group),
             V3PurchaseTransaction.class, Document.class).getMappedResults();
     }

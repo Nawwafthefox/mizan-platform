@@ -240,7 +240,7 @@ type AlertType = 'NEGATIVE_RATE' | 'NO_PURCHASES' | 'RETURNS' | 'CONSECUTIVE_RET
     }
   `
 })
-export class V3AlertsComponent implements OnInit, OnDestroy {
+export class V3AlertsComponent {
   private svc       = inject(V3DashboardService);
   private dateRange = inject(V3DateRangeService);
 

@@ -250,7 +250,7 @@ type HeatmapSort = 'total' | 'diffRate' | 'k18' | 'k21' | 'k22' | 'k24';
     }
   `
 })
-export class V3HeatmapComponent implements OnInit, OnDestroy {
+export class V3HeatmapComponent implements OnDestroy {
   @ViewChild('diffChart') canvasRef!: ElementRef<HTMLCanvasElement>;
 
   private svc       = inject(V3DashboardService);

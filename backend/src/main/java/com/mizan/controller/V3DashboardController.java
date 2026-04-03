@@ -135,4 +135,12 @@ public class V3DashboardController {
         return ResponseEntity.ok(Map.of("success", true,
             "data", calcSvc.getTargetAchievement(TenantContext.getTenantId(), from, to)));
     }
+
+    @GetMapping("/premium")
+    public ResponseEntity<?> premium(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getPremiumDashboard(TenantContext.getTenantId(), from, to)));
+    }
 }

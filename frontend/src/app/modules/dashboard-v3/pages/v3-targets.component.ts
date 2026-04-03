@@ -240,7 +240,7 @@ type TargetStatus = 'exceeded' | 'onTrack' | 'behind';
     }
   `
 })
-export class V3TargetsComponent implements OnInit, OnDestroy {
+export class V3TargetsComponent {
   private svc       = inject(V3DashboardService);
   private dateRange = inject(V3DateRangeService);
 

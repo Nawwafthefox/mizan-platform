@@ -1,5 +1,5 @@
 import {
-  Component, OnInit, OnDestroy, AfterViewInit,
+  Component, OnDestroy,
   inject, signal, effect, ViewChildren, QueryList, ElementRef,
   ChangeDetectionStrategy, ChangeDetectorRef
 } from '@angular/core';
@@ -499,7 +499,7 @@ function regionColor(region: string): string {
     }
   `
 })
-export class V3PremiumComponent implements OnInit, OnDestroy {
+export class V3PremiumComponent implements OnDestroy {
   @ViewChildren('revEffChart,matrixChart,karatChart,purchChart,exposureChart,seasonChart,perfChart')
   canvases!: QueryList<ElementRef<HTMLCanvasElement>>;
 
@@ -512,15 +512,14 @@ export class V3PremiumComponent implements OnInit, OnDestroy {
   data    = signal<any>(null);
 
   private charts: Map<string, Chart> = new Map();
-  private effectRef: any;
 
   private canvasMap: Record<string, number> = {
     revEffChart: 0, matrixChart: 1, karatChart: 2,
     purchChart: 3, exposureChart: 4, seasonChart: 5, perfChart: 6
   };
 
-  ngOnInit(): void {
-    this.effectRef = effect(() => {
+  constructor() {
+    effect(() => {
       const from = this.dateRange.from();
       const to   = this.dateRange.to();
       if (from && to) this.load(from, to);
@@ -528,7 +527,6 @@ export class V3PremiumComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    if (this.effectRef) this.effectRef.destroy();
     this.destroyAllCharts();
   }
 
@@ -540,7 +538,7 @@ export class V3PremiumComponent implements OnInit, OnDestroy {
   private load(from: string, to: string): void {
     this.loading.set(true);
     this.error.set(null);
-    this.svc.getPremiumAnalytics(from, to).subscribe({
+    this.svc.getPremium(from, to).subscribe({
       next: (d) => {
         this.data.set(d);
         this.loading.set(false);

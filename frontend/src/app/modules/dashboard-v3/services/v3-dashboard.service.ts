@@ -90,6 +90,10 @@ export class V3DashboardService {
     return this.get<any>('premium-analytics', { from, to });
   }
 
+  getPremium(from: string, to: string): Observable<any> {
+    return this.get<any>('premium', { from, to });
+  }
+
   invalidateCache(): void {
     this.cache.clear();
   }
