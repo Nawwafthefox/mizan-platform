@@ -53,7 +53,7 @@ public class V3CalculationService {
             double totalWeight = dbl(s, "totalWeight");
             long   totalPieces = lng(s, "totalPieces");
             double returns     = dbl(s, "returns");
-            int    returnDays  = returnDays(s);
+            int    returnDays  = (int) lng(s, "returnDays");
             double k18Sar = dbl(s,"k18Sar"), k18Wt = dbl(s,"k18Wt");
             double k21Sar = dbl(s,"k21Sar"), k21Wt = dbl(s,"k21Wt");
             double k22Sar = dbl(s,"k22Sar"), k22Wt = dbl(s,"k22Wt");
@@ -130,7 +130,7 @@ public class V3CalculationService {
 
         // Mothan transaction count
         Query mq = Query.query(Criteria.where("tenantId").is(tenantId)
-            .and("transactionDate").gte(from).lte(to).and("weightDebitG").gt(0));
+            .and("transactionDate").gte(from).lte(to).and("amountSar").gt(0));
         long mothanTxnCount = mongo.count(mq, V3MothanTransaction.class);
 
         // Top branch
@@ -739,41 +739,63 @@ public class V3CalculationService {
     private List<Document> aggSalesByBranch(String tenantId, LocalDate from, LocalDate to) {
         AggregationOperation match = Aggregation.match(
             Criteria.where("tenantId").is(tenantId).and("saleDate").gte(from).lte(to));
-        AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$branchCode")
-            .append("totalSar",    new Document("$sum", "$sarAmount"))
-            .append("totalWeight", new Document("$sum", "$pureWeightG"))
-            .append("totalPieces", new Document("$sum", new Document("$abs", "$pieces")))
-            .append("returns", new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$lt", Arrays.asList("$sarAmount", 0)),
-                new Document("$abs", "$sarAmount"), 0))))
-            .append("returnDates", new Document("$addToSet", new Document("$cond", Arrays.asList(
-                new Document("$lt", Arrays.asList("$sarAmount", 0)),
-                "$saleDate", null))))
-            .append("k18Sar", new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$eq", Arrays.asList("$karat", "18")),
-                new Document("$abs", "$sarAmount"), 0))))
-            .append("k18Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$eq", Arrays.asList("$karat", "18")),
-                new Document("$abs", "$pureWeightG"), 0))))
-            .append("k21Sar", new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$eq", Arrays.asList("$karat", "21")),
-                new Document("$abs", "$sarAmount"), 0))))
-            .append("k21Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$eq", Arrays.asList("$karat", "21")),
-                new Document("$abs", "$pureWeightG"), 0))))
-            .append("k22Sar", new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$eq", Arrays.asList("$karat", "22")),
-                new Document("$abs", "$sarAmount"), 0))))
-            .append("k22Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$eq", Arrays.asList("$karat", "22")),
-                new Document("$abs", "$pureWeightG"), 0))))
-            .append("k24Sar", new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$eq", Arrays.asList("$karat", "24")),
-                new Document("$abs", "$sarAmount"), 0))))
-            .append("k24Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
-                new Document("$eq", Arrays.asList("$karat", "24")),
-                new Document("$abs", "$pureWeightG"), 0)))));
-        return mongo.aggregate(Aggregation.newAggregation(match, group),
+
+        // Stage 1: aggregate to branch+date level.
+        // Returns are computed at the DAILY NET level (matching Dashboard-101):
+        // a day with 500K sales and 50K returns = net +450K = NOT a return day.
+        AggregationOperation groupByDay = ctx -> new Document("$group",
+            new Document("_id", new Document("branchCode", "$branchCode").append("saleDate", "$saleDate"))
+                .append("dailySar",    new Document("$sum", "$sarAmount"))
+                .append("dailyWeight", new Document("$sum", "$pureWeightG"))
+                .append("dailyPieces", new Document("$sum", new Document("$abs", "$pieces")))
+                .append("k18Sar", new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$eq", Arrays.asList("$karat", "18")),
+                    new Document("$abs", "$sarAmount"), 0))))
+                .append("k18Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$eq", Arrays.asList("$karat", "18")),
+                    new Document("$abs", "$pureWeightG"), 0))))
+                .append("k21Sar", new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$eq", Arrays.asList("$karat", "21")),
+                    new Document("$abs", "$sarAmount"), 0))))
+                .append("k21Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$eq", Arrays.asList("$karat", "21")),
+                    new Document("$abs", "$pureWeightG"), 0))))
+                .append("k22Sar", new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$eq", Arrays.asList("$karat", "22")),
+                    new Document("$abs", "$sarAmount"), 0))))
+                .append("k22Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$eq", Arrays.asList("$karat", "22")),
+                    new Document("$abs", "$pureWeightG"), 0))))
+                .append("k24Sar", new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$eq", Arrays.asList("$karat", "24")),
+                    new Document("$abs", "$sarAmount"), 0))))
+                .append("k24Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$eq", Arrays.asList("$karat", "24")),
+                    new Document("$abs", "$pureWeightG"), 0)))));
+
+        // Stage 2: aggregate to branch level.
+        // returns = sum of abs(dailySar) for days where dailySar < 0 (net-negative day).
+        // returnDays = count of such days.
+        AggregationOperation groupByBranch = ctx -> new Document("$group",
+            new Document("_id", "$_id.branchCode")
+                .append("totalSar",    new Document("$sum", "$dailySar"))
+                .append("totalWeight", new Document("$sum", "$dailyWeight"))
+                .append("totalPieces", new Document("$sum", "$dailyPieces"))
+                .append("returns", new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$lt", Arrays.asList("$dailySar", 0)),
+                    new Document("$abs", "$dailySar"), 0))))
+                .append("returnDays", new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$lt", Arrays.asList("$dailySar", 0)), 1, 0))))
+                .append("k18Sar", new Document("$sum", "$k18Sar"))
+                .append("k18Wt",  new Document("$sum", "$k18Wt"))
+                .append("k21Sar", new Document("$sum", "$k21Sar"))
+                .append("k21Wt",  new Document("$sum", "$k21Wt"))
+                .append("k22Sar", new Document("$sum", "$k22Sar"))
+                .append("k22Wt",  new Document("$sum", "$k22Wt"))
+                .append("k24Sar", new Document("$sum", "$k24Sar"))
+                .append("k24Wt",  new Document("$sum", "$k24Wt")));
+
+        return mongo.aggregate(Aggregation.newAggregation(match, groupByDay, groupByBranch),
             V3SaleTransaction.class, Document.class).getMappedResults();
     }
 
@@ -791,7 +813,7 @@ public class V3CalculationService {
         AggregationOperation match = Aggregation.match(
             Criteria.where("tenantId").is(tenantId)
                 .and("transactionDate").gte(from).lte(to)
-                .and("weightDebitG").gt(0));
+                .and("amountSar").gt(0));
         AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$branchCode")
             .append("mothanSar", new Document("$sum", "$amountSar"))
             .append("mothanWt",  new Document("$sum", "$weightDebitG")));
@@ -822,7 +844,7 @@ public class V3CalculationService {
         AggregationOperation match = Aggregation.match(
             Criteria.where("tenantId").is(tenantId)
                 .and("transactionDate").gte(from).lte(to)
-                .and("weightDebitG").gt(0));
+                .and("amountSar").gt(0));
         AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$transactionDate")
             .append("totalSar", new Document("$sum", "$amountSar")));
         return mongo.aggregate(Aggregation.newAggregation(match, group),
@@ -848,12 +870,6 @@ public class V3CalculationService {
     private static long lng(Document d, String key) {
         Object v = d.get(key);
         return v instanceof Number n ? n.longValue() : 0L;
-    }
-
-    private static int returnDays(Document d) {
-        Object v = d.get("returnDates");
-        if (!(v instanceof List<?> list)) return 0;
-        return (int) list.stream().filter(x -> x != null).count();
     }
 
     private static String toDateString(Object id) {

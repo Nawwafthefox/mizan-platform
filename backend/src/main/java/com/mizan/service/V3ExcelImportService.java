@@ -470,15 +470,21 @@ public class V3ExcelImportService {
 
     private List<V3MothanTransaction> parseMothan(Sheet sheet, String tenantId, String src) {
         List<V3MothanTransaction> result = new ArrayList<>();
+        int rejected = 0;
         for (Row row : sheet) {
             if (row == null) continue;
             String branchCode = getStr(row, 7).trim();
-            if (!branchCode.matches("\\d{4}")) continue;
+            double debitGold  = getNumRaw(row, 2);
+            double creditSar  = Math.abs(getNumRaw(row, 4));
 
-            double debitGold = getNumRaw(row, 2);
-            if (debitGold <= 0) continue;
+            // Match Dashboard-101: include row if amountSar > 500 (regardless of debitGold)
+            if (!branchCode.matches("\\d{4}") || creditSar <= 500) {
+                if (rejected++ < 10)
+                    log.info("Mothan rejected row {}: branchCode='{}' debitGold={} creditSar={}",
+                        row.getRowNum(), branchCode, debitGold, creditSar);
+                continue;
+            }
 
-            double creditSar   = Math.abs(getNumRaw(row, 4));
             double weightCredit = getNumRaw(row, 1);
             double balanceGold  = getNumRaw(row, 0);
             double balanceSar   = getNumRaw(row, 3);
@@ -486,9 +492,13 @@ public class V3ExcelImportService {
             String description  = getStr(row, 6);
             String docRef       = getStr(row, 8);
 
-            // Parse date from col9 (DD/MM/YYYY string or Excel serial)
             LocalDate date = parseMothanDate(row, 9);
-            if (date == null) continue;
+            if (date == null) {
+                if (rejected++ < 10)
+                    log.info("Mothan rejected row {}: null date, branchCode={} creditSar={}",
+                        row.getRowNum(), branchCode, creditSar);
+                continue;
+            }
 
             V3MothanTransaction t = new V3MothanTransaction();
             t.setTenantId(tenantId); t.setSourceFile(src);
@@ -501,6 +511,7 @@ public class V3ExcelImportService {
             t.setBalanceSar(balanceSar);
             result.add(t);
         }
+        log.info("Mothan parse done: {} accepted, {} rejected", result.size(), rejected);
         return result;
     }
 
