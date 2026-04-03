@@ -135,6 +135,9 @@ interface KaratTotal {
                 </div>
               }
             </div>
+            <div class="chart-insight">
+              كل شريحة تمثل نسبة عيار معين من إجمالي المبيعات — الشريحة الأكبر هي العيار الأكثر مبيعاً في الفترة المختارة. يساعدك هذا الرسم على توجيه قرارات الشراء والمخزون نحو الأعيار الأعلى طلباً.
+            </div>
           }
         </div>
 
@@ -146,6 +149,9 @@ interface KaratTotal {
           } @else {
             <div class="chart-wrap">
               <canvas #branchKaratCanvas></canvas>
+            </div>
+            <div class="chart-insight">
+              كل فرع يظهر كمجموعة أعمدة ملونة — كل لون يمثل عياراً مختلفاً (18K، 21K، 22K، 24K). يكشف هذا الرسم التخصص الأساسي لكل فرع، ويمكّنك من اكتشاف فرص توسيع تشكيلة الأعيار في الفروع التي تعتمد على عيار واحد فقط.
             </div>
           }
         </div>
@@ -364,6 +370,16 @@ interface KaratTotal {
 
     .chart-wrap { position: relative; height: 280px; }
     .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+    .chart-insight {
+      margin-top: 0.85rem;
+      font-size: 0.9rem;
+      color: rgba(232,228,220,0.65);
+      line-height: 1.75;
+      padding: 0.7rem 1rem;
+      background: rgba(201,168,76,0.05);
+      border-right: 3px solid rgba(201,168,76,0.35);
+      border-radius: 0 8px 8px 0;
+    }
 
     .skeleton-block {
       background: linear-gradient(90deg, var(--mizan-border) 25%, rgba(255,255,255,.04) 50%, var(--mizan-border) 75%);

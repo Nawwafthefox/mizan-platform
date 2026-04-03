@@ -192,6 +192,9 @@ type SortKey = 'totalSar' | 'net' | 'diffRate' | 'returns' | 'region';
           <div class="chart-wrap">
             <canvas #diffBarCanvas></canvas>
           </div>
+          <div class="chart-insight">
+            الأشرطة الخضراء تعني أن سعر البيع أعلى من سعر الشراء — أي أن الفرع يحقق هامش ربح إيجابي. الأشرطة الحمراء تنبّهك لفروع يُباع فيها بأقل من تكلفة الشراء وتستوجب المراجعة الفورية. كلما طال الشريط الأخضر، كان الهامش أفضل.
+          </div>
         }
       </div>
 
@@ -335,6 +338,16 @@ type SortKey = 'totalSar' | 'net' | 'diffRate' | 'returns' | 'region';
     }
     .chart-wrap { position: relative; height: 260px; }
     .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+    .chart-insight {
+      margin-top: 0.85rem;
+      font-size: 0.9rem;
+      color: rgba(232,228,220,0.65);
+      line-height: 1.75;
+      padding: 0.7rem 1rem;
+      background: rgba(201,168,76,0.05);
+      border-right: 3px solid rgba(201,168,76,0.35);
+      border-radius: 0 8px 8px 0;
+    }
 
     .skeleton-block {
       background: linear-gradient(90deg, var(--mizan-border) 25%, rgba(255,255,255,.04) 50%, var(--mizan-border) 75%);

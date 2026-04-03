@@ -111,6 +111,16 @@ type HeatmapSort = 'total' | 'diffRate' | 'k18' | 'k21' | 'k22' | 'k24';
 
     .chart-area { padding: 1.5rem; }
     .chart-container { position: relative; height: 300px; }
+    .chart-insight {
+      margin-top: 0.85rem;
+      font-size: 0.9rem;
+      color: rgba(232,228,220,0.65);
+      line-height: 1.75;
+      padding: 0.7rem 1rem;
+      background: rgba(201,168,76,0.05);
+      border-right: 3px solid rgba(201,168,76,0.35);
+      border-radius: 0 8px 8px 0;
+    }
 
     .state-box { padding: 3rem; text-align: center; color: var(--mizan-text-muted); }
     .spinner {
@@ -244,6 +254,9 @@ type HeatmapSort = 'total' | 'diffRate' | 'k18' | 'k21' | 'k22' | 'k24';
         <div class="chart-area">
           <div class="chart-container">
             <canvas #diffChart></canvas>
+          </div>
+          <div class="chart-insight">
+            الأشرطة الخضراء تشير إلى هامش إيجابي بين سعر البيع والشراء — أي أن الفرع يبيع بأعلى مما يشتري. الأشرطة الحمراء تنبّهك لفروع تحتاج مراجعة استراتيجية التسعير أو الشراء. قارن أطوال الأشرطة لتحديد الفروع الأفضل ربحاً وترتيب أولويات الدعم.
           </div>
         </div>
       </div>

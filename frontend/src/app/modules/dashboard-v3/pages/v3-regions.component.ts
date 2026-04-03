@@ -98,6 +98,9 @@ Chart.register(...registerables);
           <div class="chart-wrap">
             <canvas #comparisonCanvas></canvas>
           </div>
+          <div class="chart-insight">
+            كل منطقة تظهر بعمودين متجاورين — الأول للمبيعات والثاني للمشتريات. المنطقة التي يتجاوز فيها عمود المبيعات عمود المشتريات بفارق واضح تحقق أفضل أداء مالي. إذا تساوى العمودان فهذا يعني هامشاً ضيقاً يستوجب الاهتمام.
+          </div>
         }
       </div>
 
@@ -257,6 +260,16 @@ Chart.register(...registerables);
     }
     .chart-wrap { position: relative; height: 300px; }
     .chart-wrap canvas { width: 100% !important; height: 100% !important; }
+    .chart-insight {
+      margin-top: 0.85rem;
+      font-size: 0.9rem;
+      color: rgba(232,228,220,0.65);
+      line-height: 1.75;
+      padding: 0.7rem 1rem;
+      background: rgba(201,168,76,0.05);
+      border-right: 3px solid rgba(201,168,76,0.35);
+      border-radius: 0 8px 8px 0;
+    }
     .skeleton-block {
       background: linear-gradient(90deg, var(--mizan-border) 25%, rgba(255,255,255,.04) 50%, var(--mizan-border) 75%);
       background-size: 200% 100%;

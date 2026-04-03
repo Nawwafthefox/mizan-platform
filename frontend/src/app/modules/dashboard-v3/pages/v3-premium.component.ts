@@ -217,6 +217,18 @@ function regionColor(region: string): string {
     .season-box-val.best { color: var(--mizan-gold); }
     .season-box-val.worst { color: var(--mizan-danger); }
 
+    /* Chart insight text */
+    .chart-insight {
+      margin-top: 0.85rem;
+      font-size: 0.9rem;
+      color: rgba(232,228,220,0.65);
+      line-height: 1.75;
+      padding: 0.7rem 1rem;
+      background: rgba(201,168,76,0.05);
+      border-right: 3px solid rgba(201,168,76,0.35);
+      border-radius: 0 8px 8px 0;
+    }
+
     /* State */
     .state-box { padding: 3rem; text-align: center; color: var(--mizan-text-muted); }
     .spinner {
@@ -269,6 +281,9 @@ function regionColor(region: string): string {
             <div class="chart-wrap chart-wrap-sm" style="margin-top:0.75rem">
               <canvas #revEffChart></canvas>
             </div>
+            <div class="chart-insight">
+              يوضح هذا المنحنى كم ريال تحققه الشركة لكل جرام مباع يومياً. ارتفاع المنحنى يعني تحسّناً في كفاءة التسعير، وانخفاضه يشير إلى ضغط على الهوامش. ابحث عن الأيام التي يرتفع فيها المعدل لمعرفة متى تكون ظروف السوق أكثر ملاءمة.
+            </div>
           </div>
         </div>
 
@@ -288,6 +303,9 @@ function regionColor(region: string): string {
             <div class="chart-wrap chart-wrap-md">
               <canvas #matrixChart></canvas>
             </div>
+            <div class="chart-insight">
+              كل نقطة تمثل فرعاً — المحور الأفقي يعكس حجم المبيعات بالريال والمحور الرأسي يعكس هامش المعدل. الفروع في الزاوية اليمنى العليا (نجوم ⭐) تجمع بين مبيعات عالية وهامش ممتاز وهي الأفضل أداءً. الزاوية اليسرى السفلية (ضعيف 🐕) تحتاج دعماً أو إعادة توجيه.
+            </div>
           </div>
         </div>
 
@@ -300,6 +318,9 @@ function regionColor(region: string): string {
             </div>
             <div class="chart-wrap chart-wrap-md">
               <canvas #karatChart></canvas>
+            </div>
+            <div class="chart-insight">
+              يقارن سعر البيع بسعر الشراء لكل عيار — العيار الذي تكون فيه الفجوة بين العمودين أوسع يحقق أعلى هامش ربح بالجرام وهو الأجدر بالتركيز عليه. العيار ذو الفجوة الضيقة يستوجب مراجعة التسعير أو الشراء.
             </div>
             <div style="overflow-x:auto;margin-top:0.75rem">
               <table class="p-table">
@@ -340,6 +361,9 @@ function regionColor(region: string): string {
             </div>
             <div class="chart-wrap chart-wrap-md">
               <canvas #purchChart></canvas>
+            </div>
+            <div class="chart-insight">
+              الخط الذهبي هو سعر البيع اليومي والخط الأخضر هو متوسط سعر الشراء — المساحة المظللة بينهما هي هامشك الفعلي (السبريد). كلما اتسعت هذه المساحة، كانت قراراتك الشرائية أكثر ربحاً. انخفاض سعر البيع إلى ما دون سعر الشراء يعني خسارة محققة.
             </div>
             <div class="spread-annotation">
               spread أوسع = ربحية أعلى — السبريد الحالي:
@@ -406,6 +430,9 @@ function regionColor(region: string): string {
             <div class="chart-wrap chart-wrap-md">
               <canvas #exposureChart></canvas>
             </div>
+            <div class="chart-insight">
+              يعرض وزن الذهب المباع مقابل المشترى لكل فرع بالجرام — الشريط الذهبي للمبيعات والشريط الأخضر للمشتريات. الفرع الذي يبيع أكثر مما يشتري يحقق صافي انكشاف إيجابي ويُعدّ مُصفِّياً للمخزون. انعكاس النسبة قد يشير إلى تراكم مخزون يستوجب التحرك.
+            </div>
           </div>
         </div>
 
@@ -425,6 +452,9 @@ function regionColor(region: string): string {
             </div>
             <div class="chart-wrap chart-wrap-lg">
               <canvas #seasonChart></canvas>
+            </div>
+            <div class="chart-insight">
+              يوضح اتجاه المبيعات عبر الزمن وفق الفترة المختارة — الذرى تكشف مواسم الازدهار والقيعان تكشف فترات الركود. استخدم أزرار الفترة أعلاه لتغيير المنظور الزمني: "هذا الأسبوع" للتفاصيل اليومية، و"آخر 5 سنوات" لرؤية الصورة الكاملة وتحديد الأنماط الموسمية الدورية.
             </div>
             <div class="season-summary">
               <div class="season-box">
@@ -476,6 +506,9 @@ function regionColor(region: string): string {
             @if ((data()?.topPerformers?.length ?? 0) > 0) {
               <div class="chart-wrap chart-wrap-lg">
                 <canvas #perfChart></canvas>
+              </div>
+              <div class="chart-insight">
+                يرتب أفضل 10 موظفين تنازلياً حسب هامش الربح أو إجمالي المبيعات — الشريط الأطول في الأعلى يمثل الموظف الأكثر إسهاماً في الفترة المختارة. يساعدك هذا الرسم على تحديد النجوم ومكافأتهم، واكتشاف الفجوة بين أفضل موظف وبقية الفريق.
               </div>
             } @else {
               <div style="text-align:center;padding:2rem;color:var(--mizan-text-muted)">لا توجد بيانات موظفين للفترة المحددة</div>

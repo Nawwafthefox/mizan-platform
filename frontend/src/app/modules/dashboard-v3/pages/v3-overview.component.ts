@@ -130,6 +130,9 @@ Chart.register(...registerables);
             <div class="chart-wrap">
               <canvas #branchBarCanvas></canvas>
             </div>
+            <div class="chart-insight">
+              الشريط الأطول يعني مبيعات أعلى — قارن الأشرطة لتحديد الفروع الرائدة في الفترة المختارة. الفجوة بين أول شريط وآخر شريط تعكس مستوى التفاوت في الأداء بين الفروع.
+            </div>
           }
         </div>
         <div class="chart-card">
@@ -139,6 +142,9 @@ Chart.register(...registerables);
           } @else {
             <div class="chart-wrap">
               <canvas #trendLineCanvas></canvas>
+            </div>
+            <div class="chart-insight">
+              الخط الذهبي يمثل المبيعات اليومية والخط الأخضر يمثل المشتريات — ابحث عن أيام ترتفع فيها الخطوط للتعرف على أيام الذروة، وعن الانخفاضات الحادة لاكتشاف الأيام الضعيفة. التقاطع بين الخطين يشير إلى تعادل المبيعات والمشتريات.
             </div>
           }
         </div>
@@ -295,6 +301,16 @@ Chart.register(...registerables);
     .chart-wrap canvas {
       width: 100% !important;
       height: 100% !important;
+    }
+    .chart-insight {
+      margin-top: 0.85rem;
+      font-size: 0.9rem;
+      color: rgba(232,228,220,0.65);
+      line-height: 1.75;
+      padding: 0.7rem 1rem;
+      background: rgba(201,168,76,0.05);
+      border-right: 3px solid rgba(201,168,76,0.35);
+      border-radius: 0 8px 8px 0;
     }
     .skeleton-chart {
       height: 220px;
