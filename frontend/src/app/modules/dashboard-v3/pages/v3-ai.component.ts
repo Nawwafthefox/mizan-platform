@@ -269,6 +269,56 @@ interface AIFeature {
       border-radius: 0 8px 8px 0; margin-bottom: 1rem;
     }
 
+    /* ── Employee Advisor tables ── */
+    .advisor-section { margin-bottom: 1.5rem; }
+    .advisor-header {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.65rem 1rem; border-radius: 10px 10px 0 0;
+      font-size: 0.82rem; font-weight: 700;
+    }
+    .adv-training .advisor-header { background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3); border-bottom: none; color: #f87171; }
+    .adv-top      .advisor-header { background: rgba(201,168,76,0.12); border: 1px solid rgba(201,168,76,0.3); border-bottom: none; color: var(--mizan-gold); }
+    .adv-watch    .advisor-header { background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.3); border-bottom: none; color: #f59e0b; }
+    .adv-hiring   .advisor-header { background: rgba(99,179,255,0.12); border: 1px solid rgba(99,179,255,0.3); border-bottom: none; color: #93c5fd; }
+    .adv-term     .advisor-header { background: rgba(120,10,10,0.4);   border: 1px solid rgba(239,68,68,0.5); border-bottom: none; color: #fca5a5; }
+    .advisor-table-wrap { overflow-x: auto; }
+    .advisor-table {
+      width: 100%; border-collapse: collapse; font-size: 0.8rem;
+    }
+    .adv-training .advisor-table { border: 1px solid rgba(239,68,68,0.25); border-radius: 0 0 10px 10px; }
+    .adv-top      .advisor-table { border: 1px solid rgba(201,168,76,0.25); border-radius: 0 0 10px 10px; }
+    .adv-watch    .advisor-table { border: 1px solid rgba(245,158,11,0.25); border-radius: 0 0 10px 10px; }
+    .adv-hiring   .advisor-table { border: 1px solid rgba(99,179,255,0.25); border-radius: 0 0 10px 10px; }
+    .adv-term     .advisor-table { border: 1px solid rgba(239,68,68,0.4);   border-radius: 0 0 10px 10px; }
+    .advisor-table th {
+      text-align: right; padding: 0.5rem 0.75rem;
+      font-size: 0.71rem; font-weight: 700; letter-spacing: 0.03em;
+      color: var(--mizan-text-muted); background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--mizan-border); white-space: nowrap;
+    }
+    .advisor-table td {
+      padding: 0.55rem 0.75rem; vertical-align: top;
+      border-bottom: 1px solid rgba(255,255,255,0.04); color: var(--mizan-text);
+      line-height: 1.5;
+    }
+    .advisor-table tr:last-child td { border-bottom: none; }
+    .advisor-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .urgency-badge {
+      display: inline-block; font-size: 0.67rem; font-weight: 700;
+      padding: 0.12rem 0.5rem; border-radius: 10px; white-space: nowrap;
+    }
+    .urgency-high   { background: rgba(239,68,68,0.15); color: #f87171; }
+    .urgency-medium { background: rgba(245,158,11,0.15); color: #f59e0b; }
+    .urgency-low    { background: rgba(34,197,94,0.12);  color: var(--mizan-green); }
+    .adv-summary {
+      background: rgba(201,168,76,0.07); border: 1px solid rgba(201,168,76,0.3);
+      border-right: 4px solid var(--mizan-gold); border-radius: 0 12px 12px 0;
+      padding: 1.1rem 1.35rem; font-size: 0.9rem; line-height: 1.85;
+      color: var(--mizan-text);
+    }
+    .td-name { font-weight: 600; color: var(--mizan-text); }
+    .td-muted { color: var(--mizan-text-muted); font-size: 0.78rem; }
+
     /* ── Powered by footer ── */
     .ai-powered {
       display: flex; align-items: center; justify-content: center; gap: 0.4rem;
@@ -636,6 +686,166 @@ interface AIFeature {
         </div>
       }
 
+      <!-- ── EMPLOYEE ADVISOR ── -->
+      @if (activeFeature() === 'employee-advisor') {
+        <div class="ai-card">
+          <div class="ai-card-inner">
+            <div class="ai-card-header">
+              <span class="ai-card-icon">🎓</span>
+              <span class="ai-card-title">مستشار أداء الموظفين</span>
+            </div>
+
+            <!-- Needs Training -->
+            @if (result()?.needsTraining?.length) {
+              <div class="advisor-section adv-training">
+                <div class="advisor-header">🎓 بحاجة لتدريب ({{ result()?.needsTraining?.length }})</div>
+                <div class="advisor-table-wrap">
+                  <table class="advisor-table">
+                    <thead>
+                      <tr>
+                        <th>الموظف</th><th>الفرع</th><th>معدل البيع</th>
+                        <th>متوسط الفرع</th><th>الفجوة</th>
+                        <th>اقتراح التدريب</th><th>الأولوية</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (e of result()?.needsTraining; track $index) {
+                        <tr>
+                          <td><div class="td-name">{{ e.empName }}</div><div class="td-muted">{{ e.empId }}</div></td>
+                          <td>{{ e.branch }}</td>
+                          <td>{{ e.saleRate | number:'1.0-0' }}</td>
+                          <td>{{ e.branchAvg | number:'1.0-0' }}</td>
+                          <td style="color:var(--mizan-danger)">{{ e.gap | number:'1.0-0' }}</td>
+                          <td>{{ e.suggestedTraining }}</td>
+                          <td>
+                            <span class="urgency-badge"
+                              [class.urgency-high]="e.urgency==='high'"
+                              [class.urgency-medium]="e.urgency==='medium'"
+                              [class.urgency-low]="e.urgency==='low'">
+                              {{ e.urgency === 'high' ? 'عاجل' : e.urgency === 'medium' ? 'متوسط' : 'منخفض' }}
+                            </span>
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            }
+
+            <!-- Top Performers -->
+            @if (result()?.topPerformers?.length) {
+              <div class="advisor-section adv-top">
+                <div class="advisor-header">🌟 متميزون ({{ result()?.topPerformers?.length }})</div>
+                <div class="advisor-table-wrap">
+                  <table class="advisor-table">
+                    <thead>
+                      <tr><th>الموظف</th><th>الفرع</th><th>هامش الربح</th><th>سبب التميز</th><th>التوصية</th></tr>
+                    </thead>
+                    <tbody>
+                      @for (e of result()?.topPerformers; track $index) {
+                        <tr>
+                          <td><div class="td-name">{{ e.empName }}</div><div class="td-muted">{{ e.empId }}</div></td>
+                          <td>{{ e.branch }}</td>
+                          <td style="color:var(--mizan-gold);font-weight:600">{{ e.profitMargin | number:'1.0-0' }}</td>
+                          <td>{{ e.reason }}</td>
+                          <td><span class="urgency-badge urgency-low">{{ e.recommendation }}</span></td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            }
+
+            <!-- Watch List -->
+            @if (result()?.watchList?.length) {
+              <div class="advisor-section adv-watch">
+                <div class="advisor-header">👁 قائمة المراقبة ({{ result()?.watchList?.length }})</div>
+                <div class="advisor-table-wrap">
+                  <table class="advisor-table">
+                    <thead>
+                      <tr><th>الموظف</th><th>الفرع</th><th>المخاوف</th><th>المؤشر</th><th>الإجراء</th><th>المهلة</th></tr>
+                    </thead>
+                    <tbody>
+                      @for (e of result()?.watchList; track $index) {
+                        <tr>
+                          <td><div class="td-name">{{ e.empName }}</div><div class="td-muted">{{ e.empId }}</div></td>
+                          <td>{{ e.branch }}</td>
+                          <td>{{ e.concern }}</td>
+                          <td><span class="td-muted">{{ e.metric }}</span></td>
+                          <td>{{ e.actionNeeded }}</td>
+                          <td style="color:#f59e0b;white-space:nowrap">{{ e.deadline }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            }
+
+            <!-- Hiring Needed -->
+            @if (result()?.hiringNeeded?.length) {
+              <div class="advisor-section adv-hiring">
+                <div class="advisor-header">📢 بحاجة لتوظيف ({{ result()?.hiringNeeded?.length }} فرع)</div>
+                <div class="advisor-table-wrap">
+                  <table class="advisor-table">
+                    <thead>
+                      <tr><th>الفرع</th><th>الموظفون الحاليون</th><th>التوظيف المقترح</th><th>السبب</th><th>المبرر</th></tr>
+                    </thead>
+                    <tbody>
+                      @for (b of result()?.hiringNeeded; track $index) {
+                        <tr>
+                          <td class="td-name">{{ b.branch }}</td>
+                          <td style="text-align:center">{{ b.currentEmployees }}</td>
+                          <td style="text-align:center;color:#93c5fd;font-weight:700">+{{ b.suggestedHires }}</td>
+                          <td>{{ b.reason }}</td>
+                          <td>{{ b.justification }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            }
+
+            <!-- Termination Risk -->
+            @if (result()?.terminationRisk?.length) {
+              <div class="advisor-section adv-term">
+                <div class="advisor-header">⚠️ خطر إنهاء الخدمة ({{ result()?.terminationRisk?.length }})</div>
+                <div class="advisor-table-wrap">
+                  <table class="advisor-table">
+                    <thead>
+                      <tr><th>الموظف</th><th>الفرع</th><th>مدة الضعف</th><th>السبب</th><th>الفرصة الأخيرة</th></tr>
+                    </thead>
+                    <tbody>
+                      @for (e of result()?.terminationRisk; track $index) {
+                        <tr>
+                          <td><div class="td-name">{{ e.empName }}</div><div class="td-muted">{{ e.empId }}</div></td>
+                          <td>{{ e.branch }}</td>
+                          <td style="color:#f87171;white-space:nowrap">{{ e.monthsUnderperforming }} أشهر</td>
+                          <td>{{ e.reason }}</td>
+                          <td>{{ e.lastChanceAction }}</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            }
+
+            <!-- Summary -->
+            @if (result()?.summary) {
+              <div class="advisor-section">
+                <div class="bullet-title">📝 الملخص التنفيذي</div>
+                <div class="adv-summary">{{ result()?.summary }}</div>
+              </div>
+            }
+
+          </div>
+        </div>
+      }
+
       <div class="ai-powered">
         <span>⚡</span>
         <span>Powered by Google Gemini 2.0 Flash · MIZAN AI Engine</span>
@@ -660,7 +870,8 @@ export class V3AIComponent implements OnDestroy {
     { key: 'branches',    label: 'الفروع',           icon: '🏪', description: 'تحليل أداء جميع الفروع' },
     { key: 'employees',   label: 'الموظفون',         icon: '👥', description: 'رؤى حول أداء الفريق' },
     { key: 'karat',       label: 'العيار',            icon: '⚖️', description: 'ربحية الأعيار وتوصيات المخزون' },
-    { key: 'daily-trend', label: 'الاتجاه اليومي',  icon: '📈', description: 'أنماط المبيعات اليومية' },
+    { key: 'daily-trend',      label: 'الاتجاه اليومي',     icon: '📈', description: 'أنماط المبيعات اليومية' },
+    { key: 'employee-advisor', label: 'مستشار الموظفين',   icon: '🎓', description: 'تدريب، ترقية، مراقبة، توظيف' },
   ];
 
   constructor() {

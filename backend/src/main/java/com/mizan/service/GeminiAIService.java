@@ -44,12 +44,13 @@ public class GeminiAIService {
             return hit.data();
         }
         Map<String, Object> result = switch (feature) {
-            case "executive"   -> analyzeExecutive(tenantId, from, to);
-            case "branches"    -> analyzeBranches(tenantId, from, to);
-            case "employees"   -> analyzeEmployees(tenantId, from, to);
-            case "karat"       -> analyzeKarat(tenantId, from, to);
-            case "daily-trend" -> analyzeDailyTrend(tenantId, from, to);
-            default            -> errorMap("ميزة غير معروفة: " + feature);
+            case "executive"        -> analyzeExecutive(tenantId, from, to);
+            case "branches"         -> analyzeBranches(tenantId, from, to);
+            case "employees"        -> analyzeEmployees(tenantId, from, to);
+            case "karat"            -> analyzeKarat(tenantId, from, to);
+            case "daily-trend"      -> analyzeDailyTrend(tenantId, from, to);
+            case "employee-advisor" -> analyzeEmployeeAdvisor(tenantId, from, to);
+            default                 -> errorMap("ميزة غير معروفة: " + feature);
         };
         aiCache.put(key, new AiEntry(result, System.currentTimeMillis()));
         return result;
@@ -184,6 +185,65 @@ public class GeminiAIService {
         } catch (Exception e) {
             log.error("Daily trend analysis error: {}", e.getMessage());
             return errorMap("فشل تحليل الاتجاه اليومي");
+        }
+    }
+
+    private Map<String, Object> analyzeEmployeeAdvisor(String tenantId, LocalDate from, LocalDate to) {
+        try {
+            List<Map<String, Object>> groups   = calcService.getEmployeePerformance(tenantId, from, to);
+            List<Map<String, Object>> branches = calcService.getBranchSummaries(tenantId, from, to);
+            String ctx = buildEmployeeContext(groups, from, to) + "\n" + buildBranchContext(branches, from, to);
+            String prompt = """
+                You are a Saudi gold retail HR analytics expert with 15+ years experience.
+                Analyze employee performance data and return JSON with these exact sections.
+                Return valid JSON only — no text outside it.
+
+                {
+                  "needsTraining": [
+                    { "empId": "...", "empName": "...", "branch": "...",
+                      "reason": "Arabic reason why training is needed",
+                      "saleRate": 580, "branchAvg": 670, "gap": 90,
+                      "suggestedTraining": "Arabic training suggestion",
+                      "urgency": "high or medium or low" }
+                  ],
+                  "topPerformers": [
+                    { "empId": "...", "empName": "...", "branch": "...",
+                      "reason": "Arabic reason why they excel",
+                      "profitMargin": 50000, "recommendation": "ترقية أو مكافأة" }
+                  ],
+                  "watchList": [
+                    { "empId": "...", "empName": "...", "branch": "...",
+                      "concern": "Arabic concern description",
+                      "metric": "low weight or negative diff or high returns",
+                      "actionNeeded": "Arabic action",
+                      "deadline": "خلال أسبوعين" }
+                  ],
+                  "hiringNeeded": [
+                    { "branch": "...", "reason": "Arabic reason",
+                      "currentEmployees": 5, "suggestedHires": 2,
+                      "justification": "Arabic justification with numbers" }
+                  ],
+                  "terminationRisk": [
+                    { "empId": "...", "empName": "...", "branch": "...",
+                      "reason": "Arabic reason — consistently underperforming",
+                      "monthsUnderperforming": 3,
+                      "lastChanceAction": "Arabic suggestion before termination" }
+                  ],
+                  "summary": "Arabic executive summary paragraph covering all findings"
+                }
+
+                Rules:
+                - Rating weak (saleRate < 500) with > 30 days active = training needed
+                - Rating weak consistently = termination risk (consider Saudi labor law: إنذار أول then إنذار ثاني before termination)
+                - DiffRate > branch average by 20%+ = top performer
+                - Branch with fewer than 3 employees and high sales = hiring needed
+                - Returns > 5% of employee sales = watch list
+                - Always give actionable Arabic recommendations
+                """;
+            return callGemini(prompt, ctx, 0.3);
+        } catch (Exception e) {
+            log.error("Employee advisor error: {}", e.getMessage());
+            return errorMap("فشل تحليل مستشار الموظفين");
         }
     }
 
