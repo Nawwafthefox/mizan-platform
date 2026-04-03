@@ -911,8 +911,18 @@ public class V3CalculationService {
             row.put("dayCount", (long) arr[1]);
             seasonDow.add(row);
         }
+        List<Map<String,Object>> dailyTrendSeason = new ArrayList<>();
+        for (Map.Entry<String, double[]> e : dayRevMap.entrySet()) {
+            double[] v = e.getValue();
+            Map<String,Object> row = new LinkedHashMap<>();
+            row.put("date", e.getKey());
+            row.put("totalSar", r2(v[0]));
+            row.put("totalWeight", r2(v[1]));
+            dailyTrendSeason.add(row);
+        }
         Map<String,Object> seasonal = new LinkedHashMap<>();
         seasonal.put("byDayOfWeek", seasonDow);
+        seasonal.put("dailyTrend", dailyTrendSeason);
         result.put("seasonalPatterns", seasonal);
 
         // ── 8. Break-even ──────────────────────────────────────────────────────

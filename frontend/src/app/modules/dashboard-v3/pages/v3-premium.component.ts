@@ -612,10 +612,11 @@ export class V3PremiumComponent implements OnDestroy {
       next: (d) => {
         this.data.set(d);
         this.loading.set(false);
-        this.cdr.detectChanges(); // render @if blocks so canvases exist in DOM
+        this.cdr.detectChanges(); // render @else-if block so canvases are in DOM
+        this.cdr.markForCheck();  // ensure OnPush view is fully scheduled
         this.destroyAllCharts();
-        // 80ms: enough for Angular to finalize all @ViewChild updates after detectChanges
-        setTimeout(() => this.buildAllCharts(d), 80);
+        // 120ms: enough for Angular to finalize all @ViewChild updates
+        setTimeout(() => this.buildAllCharts(d), 120);
       },
       error: (e) => {
         this.error.set('تعذّر تحميل التحليلات المتقدمة: ' + (e?.message ?? ''));
@@ -833,9 +834,13 @@ export class V3PremiumComponent implements OnDestroy {
   }
 
   // ─── Chart 6: Seasonal Patterns Line (period-aware) ──────────────────────
-  private buildSeasonChart(seasonal: any): void {
+  private buildSeasonChart(seasonal: any, retries = 3): void {
     const canvas = this.ref(this.seasonRef);
-    if (!canvas || !seasonal) return;
+    if (!canvas) {
+      if (retries > 0 && seasonal) setTimeout(() => this.buildSeasonChart(seasonal, retries - 1), 80);
+      return;
+    }
+    if (!seasonal) return;
     const { labels, values } = this.getSeasonData(seasonal, this.seasonPeriod());
     const c = new Chart(canvas, {
       type: 'line',
