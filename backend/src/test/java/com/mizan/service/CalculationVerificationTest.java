@@ -1,7 +1,7 @@
 package com.mizan.service;
 
-import com.mizan.model.*;
-import com.mizan.repository.*;
+import com.mizan.repository.BranchPurchaseRateRepository;
+import org.bson.Document;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -9,6 +9,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
+import org.springframework.data.mongodb.core.aggregation.AggregationResults;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -68,17 +71,14 @@ class CalculationVerificationTest {
 
     // ── Mocks ─────────────────────────────────────────────────────
 
-    @Mock BranchSaleRepository       saleRepo;
-    @Mock BranchPurchaseRepository   purchRepo;
-    @Mock EmployeeSaleRepository     empRepo;
-    @Mock MothanTransactionRepository mothanRepo;
     @Mock BranchPurchaseRateRepository rateRepo;
+    @Mock MongoTemplate mongoTemplate;
 
     DashboardService svc;
 
     @BeforeEach
     void setUp() {
-        svc = new DashboardService(saleRepo, purchRepo, empRepo, mothanRepo, rateRepo);
+        svc = new DashboardService(rateRepo, mongoTemplate);
     }
 
     // ── Helpers ───────────────────────────────────────────────────
@@ -86,29 +86,50 @@ class CalculationVerificationTest {
     private static double r4(double v) { return Math.round(v * 10000.0) / 10000.0; }
     private static double r2(double v) { return Math.round(v * 100.0)   / 100.0; }
 
-    private BranchSale sale(String code, String name, double sar, double wt, int inv, boolean isReturn) {
-        BranchSale s = new BranchSale();
-        s.setTenantId(TENANT); s.setBranchCode(code); s.setBranchName(name);
-        s.setRegion("وسط"); s.setSaleDate(FROM);
-        s.setTotalSarAmount(sar); s.setNetWeight(wt);
-        s.setInvoiceCount(inv); s.setReturn(isReturn);
-        return s;
-    }
+    /**
+     * Stubs mongoTemplate.aggregate() for all three collections with pre-built Documents
+     * matching the test scenario. Mirrors what the aggregation pipelines would produce
+     * from the original BranchSale / BranchPurchase / MothanTransaction fixture data.
+     */
+    @SuppressWarnings("unchecked")
+    private void stubAggregations() {
+        // Sales: Branch A (normal) + Branch B (return)
+        Document salesA = new Document("_id", "A")
+            .append("branchName", "فرع ألفا").append("region", "وسط")
+            .append("sar", A_SAR).append("wn", A_WT).append("wp", 0.0)
+            .append("pcs", (long) A_INVOICES)
+            .append("returns", 0.0).append("returnDays", 0)
+            .append("k18Sar", 0.0).append("k18Wt", 0.0)
+            .append("k21Sar", 0.0).append("k21Wt", 0.0)
+            .append("k22Sar", 0.0).append("k22Wt", 0.0)
+            .append("k24Sar", 0.0).append("k24Wt", 0.0);
+        Document salesB = new Document("_id", "B")
+            .append("branchName", "فرع بيتا").append("region", "وسط")
+            .append("sar", B_SAR).append("wn", B_WT).append("wp", 0.0)
+            .append("pcs", 1L)
+            .append("returns", B_SAR).append("returnDays", 1)  // isReturn→true, returnSar=B_SAR
+            .append("k18Sar", 0.0).append("k18Wt", 0.0)
+            .append("k21Sar", 0.0).append("k21Wt", 0.0)
+            .append("k22Sar", 0.0).append("k22Wt", 0.0)
+            .append("k24Sar", 0.0).append("k24Wt", 0.0);
 
-    private BranchPurchase purchase(String code, String name, double sar, double wt) {
-        BranchPurchase p = new BranchPurchase();
-        p.setTenantId(TENANT); p.setBranchCode(code); p.setBranchName(name);
-        p.setRegion("وسط"); p.setPurchaseDate(FROM);
-        p.setTotalSarAmount(sar); p.setNetWeight(wt);
-        return p;
-    }
+        // Purchases: Branch A only
+        Document purchA = new Document("_id", "A")
+            .append("branchName", "فرع ألفا").append("region", "وسط")
+            .append("purch", A_PURCH).append("purchWt", A_PURCH_WT);
 
-    private MothanTransaction mothan(String code, String name, double sar, double wt) {
-        MothanTransaction m = new MothanTransaction();
-        m.setTenantId(TENANT); m.setBranchCode(code); m.setBranchName(name);
-        m.setTransactionDate(FROM);
-        m.setCreditSar(sar); m.setGoldWeightGrams(wt);
-        return m;
+        // Mothan: Branch A only
+        Document mothanA = new Document("_id", "A")
+            .append("branchName", "فرع ألفا")
+            .append("mothan", A_MOTHAN).append("mothanWt", A_MOTHAN_WT);
+
+        when(mongoTemplate.aggregate(any(Aggregation.class), eq("branch_sales"), eq(Document.class)))
+            .thenReturn(new AggregationResults<>(List.of(salesA, salesB), new Document()));
+        when(mongoTemplate.aggregate(any(Aggregation.class), eq("branch_purchases"), eq(Document.class)))
+            .thenReturn(new AggregationResults<>(List.of(purchA), new Document()));
+        when(mongoTemplate.aggregate(any(Aggregation.class), eq("mothan_transactions"), eq(Document.class)))
+            .thenReturn(new AggregationResults<>(List.of(mothanA), new Document()));
+        when(rateRepo.findByTenantId(TENANT)).thenReturn(List.of());
     }
 
     // ── Branch Summaries ──────────────────────────────────────────
@@ -119,17 +140,7 @@ class CalculationVerificationTest {
 
         @BeforeEach
         void stubRepos() {
-            when(saleRepo.findByTenantAndRange(eq(TENANT), any(), any())).thenReturn(List.of(
-                sale("A", "فرع ألفا", A_SAR, A_WT, A_INVOICES, false),
-                sale("B", "فرع بيتا", B_SAR, B_WT, 1, true)
-            ));
-            when(purchRepo.findByTenantAndRange(eq(TENANT), any(), any())).thenReturn(List.of(
-                purchase("A", "فرع ألفا", A_PURCH, A_PURCH_WT)
-            ));
-            when(mothanRepo.findByTenantAndRange(eq(TENANT), any(), any())).thenReturn(List.of(
-                mothan("A", "فرع ألفا", A_MOTHAN, A_MOTHAN_WT)
-            ));
-            when(rateRepo.findByTenantId(TENANT)).thenReturn(List.of());
+            stubAggregations();
         }
 
         @Test
@@ -237,17 +248,7 @@ class CalculationVerificationTest {
 
         @BeforeEach
         void buildBranches() {
-            when(saleRepo.findByTenantAndRange(eq(TENANT), any(), any())).thenReturn(List.of(
-                sale("A", "فرع ألفا", A_SAR, A_WT, A_INVOICES, false),
-                sale("B", "فرع بيتا", B_SAR, B_WT, 1, true)
-            ));
-            when(purchRepo.findByTenantAndRange(eq(TENANT), any(), any())).thenReturn(List.of(
-                purchase("A", "فرع ألفا", A_PURCH, A_PURCH_WT)
-            ));
-            when(mothanRepo.findByTenantAndRange(eq(TENANT), any(), any())).thenReturn(List.of(
-                mothan("A", "فرع ألفا", A_MOTHAN, A_MOTHAN_WT)
-            ));
-            when(rateRepo.findByTenantId(TENANT)).thenReturn(List.of());
+            stubAggregations();
             branches = svc.getBranchSummaries(TENANT, FROM, TO, null);
         }
 
