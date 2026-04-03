@@ -1,9 +1,9 @@
 import {
-  Component, OnInit, OnDestroy, inject, signal, ChangeDetectionStrategy, ChangeDetectorRef
+  Component, inject, signal, effect, ChangeDetectionStrategy, ChangeDetectorRef
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
 import { V3DashboardService } from '../services/v3-dashboard.service';
+import { V3DateRangeService } from '../services/v3-date-range.service';
 
 interface KpiMeta {
   key:   string;
@@ -16,7 +16,7 @@ interface KpiMeta {
 @Component({
   selector: 'app-v3-comparison',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styles: [`
     :host { display: block; direction: rtl; font-family: 'Segoe UI', Tahoma, sans-serif; }
@@ -25,42 +25,11 @@ interface KpiMeta {
     .page-title { font-size: 1.4rem; font-weight: 700; color: var(--mizan-gold); margin: 0 0 0.25rem 0; }
     .page-subtitle { font-size: 0.85rem; color: var(--mizan-text-muted); }
 
-    /* Date picker row */
-    .date-row {
-      display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;
-      background: var(--mizan-surface);
-      border: 1px solid var(--mizan-border);
-      border-radius: 12px;
-      padding: 1.25rem 1.5rem;
+    .date-hint {
+      font-size: 0.8rem; color: var(--mizan-text-muted);
       margin-bottom: 1.5rem;
     }
-    .date-field { display: flex; flex-direction: column; gap: 0.35rem; }
-    .date-label { font-size: 0.78rem; color: var(--mizan-text-muted); font-weight: 600; }
-    .date-input {
-      padding: 0.55rem 0.9rem;
-      background: var(--mizan-bg);
-      border: 1px solid var(--mizan-border);
-      border-radius: 8px;
-      color: var(--mizan-text);
-      font-size: 0.9rem;
-      outline: none;
-      transition: border 0.2s;
-    }
-    .date-input:focus { border-color: var(--mizan-gold); }
-    .load-btn {
-      padding: 0.55rem 1.5rem;
-      background: var(--mizan-gold);
-      border: none;
-      border-radius: 8px;
-      color: #1a1208;
-      font-weight: 700;
-      font-size: 0.9rem;
-      cursor: pointer;
-      transition: opacity 0.2s;
-      white-space: nowrap;
-    }
-    .load-btn:hover { opacity: 0.85; }
-    .load-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .date-hint strong { color: var(--mizan-gold); }
 
     /* KPI comparison cards */
     .kpi-grid {
@@ -168,19 +137,10 @@ interface KpiMeta {
       <div class="error-box">{{ error() }}</div>
     }
 
-    <!-- Date pickers -->
-    <div class="date-row">
-      <div class="date-field">
-        <label class="date-label">اليوم الأول</label>
-        <input type="date" class="date-input" [(ngModel)]="d1" />
-      </div>
-      <div class="date-field">
-        <label class="date-label">اليوم الثاني</label>
-        <input type="date" class="date-input" [(ngModel)]="d2" />
-      </div>
-      <button class="load-btn" (click)="loadData()" [disabled]="loading()">
-        @if (loading()) { جاري التحميل... } @else { مقارنة }
-      </button>
+    <div class="date-hint">
+      مقارنة يوم البداية <strong>{{ dateRange.from() | date:'dd/MM/yyyy' }}</strong>
+      بيوم النهاية <strong>{{ dateRange.to() | date:'dd/MM/yyyy' }}</strong>
+      من شريط التاريخ أعلاه
     </div>
 
     @if (loading()) {
@@ -282,16 +242,14 @@ interface KpiMeta {
     }
   `
 })
-export class V3ComparisonComponent implements OnInit {
+export class V3ComparisonComponent {
   private svc = inject(V3DashboardService);
   private cdr = inject(ChangeDetectorRef);
+  dateRange   = inject(V3DateRangeService);
 
   loading = signal(false);
   error   = signal<string | null>(null);
   data    = signal<any>(null);
-
-  d1 = '';
-  d2 = '';
 
   kpiMeta: KpiMeta[] = [
     { key: 'totalSar',    label: 'إجمالي المبيعات',  unit: 'ر.س', d1Key: 'totalSar',    d2Key: 'totalSar'    },
@@ -302,19 +260,19 @@ export class V3ComparisonComponent implements OnInit {
     { key: 'purchRate',   label: 'معدل الشراء',        unit: 'ر/ج', d1Key: 'purchRate',   d2Key: 'purchRate'   },
   ];
 
-  ngOnInit(): void {
-    const today     = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    this.d2 = this.fmtDate(today);
-    this.d1 = this.fmtDate(yesterday);
+  constructor() {
+    effect(() => {
+      const d1 = this.dateRange.from();
+      const d2 = this.dateRange.to();
+      if (!d1 || !d2) return;
+      this.load(d1, d2);
+    });
   }
 
-  loadData(): void {
-    if (!this.d1 || !this.d2) return;
+  private load(d1: string, d2: string): void {
     this.loading.set(true);
     this.error.set(null);
-    this.svc.getComparison(this.d1, this.d2).subscribe({
+    this.svc.getComparison(d1, d2).subscribe({
       next: (d) => {
         this.data.set(d);
         this.loading.set(false);
@@ -354,7 +312,4 @@ export class V3ComparisonComponent implements OnInit {
     return n?.toLocaleString('ar', { maximumFractionDigits: 0 }) ?? '0';
   }
 
-  private fmtDate(d: Date): string {
-    return d.toISOString().split('T')[0];
-  }
 }
