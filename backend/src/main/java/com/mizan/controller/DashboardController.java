@@ -18,6 +18,7 @@ import com.mizan.repository.BranchPurchaseRepository;
 import com.mizan.service.DashboardService;
 import com.mizan.service.DashboardService.BranchData;
 import com.mizan.service.UploadService;
+import com.mizan.service.V3CacheService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -40,6 +41,7 @@ public class DashboardController {
     private final DailySaleRepository dailySaleRepo;
     private final MonthlySummaryRepository monthlySummaryRepo;
     private final EmployeeTransferRepository empTransferRepo;
+    private final V3CacheService cache;
 
     public DashboardController(DashboardService dashSvc,
             EmployeeSaleRepository empRepo,
@@ -51,7 +53,8 @@ public class DashboardController {
             UploadService uploadSvc,
             DailySaleRepository dailySaleRepo,
             MonthlySummaryRepository monthlySummaryRepo,
-            EmployeeTransferRepository empTransferRepo) {
+            EmployeeTransferRepository empTransferRepo,
+            V3CacheService cache) {
         this.dashSvc = dashSvc;
         this.empRepo = empRepo;
         this.mothanRepo = mothanRepo;
@@ -63,6 +66,14 @@ public class DashboardController {
         this.dailySaleRepo = dailySaleRepo;
         this.monthlySummaryRepo = monthlySummaryRepo;
         this.empTransferRepo = empTransferRepo;
+        this.cache = cache;
+    }
+
+    // ── Cache helpers ─────────────────────────────────────────────────────────
+
+    private String scopeKey(List<String> scoped) {
+        if (scoped == null) return "all";
+        return scoped.stream().sorted().collect(Collectors.joining(","));
     }
 
     @GetMapping("/summary")
@@ -76,6 +87,10 @@ public class DashboardController {
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",emptyKpi(from,to)));
 
         List<String> scoped = dashSvc.resolveScopedBranches(principal);
+        String cKey = tenantId + ":dash:summary:" + from + ":" + to + ":" + scopeKey(scoped);
+        Object hit = cache.get(cKey);
+        if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
+
         List<BranchData> branches = dashSvc.getBranchSummaries(tenantId, from, to, scoped);
 
         double totalSar = branches.stream().mapToDouble(BranchData::sar).sum();
@@ -93,7 +108,7 @@ public class DashboardController {
         double totalBranchPurchWt = branches.stream().mapToDouble(BranchData::purchWt).sum();
         double totalMothanSar     = branches.stream().mapToDouble(BranchData::mothan).sum();
         double totalMothanWt      = branches.stream().mapToDouble(BranchData::mothanWt).sum();
-        long   mothanTxnCount     = mothanRepo.findByTenantAndRange(tenantId, from, to).size();
+        long   mothanTxnCount     = mothanRepo.countByTenantAndRange(tenantId, from, to);
         double totalReturns       = branches.stream().mapToDouble(BranchData::returns).sum();
         long   returnBranchCount  = branches.stream().filter(b -> b.returns() > 0).count();
         long   negativeBranches   = branches.stream().filter(b -> b.diffRate() < 0).count();
@@ -128,6 +143,7 @@ public class DashboardController {
         kpi.put("negativeBranches", negativeBranches);
         kpi.put("dateRange", Map.of("from", from.toString(), "to", to.toString()));
 
+        cache.put(cKey, kpi);
         return ResponseEntity.ok(Map.of("success",true,"data",kpi));
     }
 
@@ -141,9 +157,13 @@ public class DashboardController {
         String tenantId = TenantContext.getTenantId();
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
         List<String> scoped = dashSvc.resolveScopedBranches(principal);
+        String cKey = tenantId + ":dash:branches:" + from + ":" + to + ":" + scopeKey(scoped) + ":" + (region != null ? region : "");
+        Object hit = cache.get(cKey);
+        if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
         List<BranchData> data = dashSvc.getBranchSummaries(tenantId, from, to, scoped);
         if (region != null && !region.isBlank())
             data = data.stream().filter(b->region.equals(b.region())).collect(Collectors.toList());
+        cache.put(cKey, data);
         return ResponseEntity.ok(Map.of("success",true,"data",data));
     }
 
@@ -158,6 +178,10 @@ public class DashboardController {
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
 
         List<String> scoped = dashSvc.resolveScopedBranches(principal);
+        String cKey = tenantId + ":dash:employees:" + from + ":" + to + ":" + scopeKey(scoped)
+            + ":" + (branchCode != null ? branchCode : "") + ":" + (region != null ? region : "");
+        Object hit = cache.get(cKey);
+        if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
 
         // Load targets for the month of `from`
         Map<String, com.mizan.model.BranchTarget> targetByBranch =
@@ -245,6 +269,7 @@ public class DashboardController {
         // Sort by totalSar desc
         result.sort((a,b) -> Double.compare((double)b.get("totalSar"), (double)a.get("totalSar")));
 
+        cache.put(cKey, result);
         return ResponseEntity.ok(Map.of("success",true,"data",result));
     }
 
@@ -255,7 +280,11 @@ public class DashboardController {
             @AuthenticationPrincipal MizanUserDetails principal) {
         String tenantId = TenantContext.getTenantId();
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",Map.of()));
-        List<BranchData> branches = dashSvc.getBranchSummaries(tenantId, from, to, dashSvc.resolveScopedBranches(principal));
+        List<String> scoped = dashSvc.resolveScopedBranches(principal);
+        String cKey = tenantId + ":dash:karat:" + from + ":" + to + ":" + scopeKey(scoped);
+        Object hit = cache.get(cKey);
+        if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
+        List<BranchData> branches = dashSvc.getBranchSummaries(tenantId, from, to, scoped);
 
         double k18Sar = branches.stream().mapToDouble(BranchData::k18Sar).sum();
         double k18Wt = branches.stream().mapToDouble(BranchData::k18Wt).sum();
@@ -297,6 +326,7 @@ public class DashboardController {
         }
         karat.put("byBranch", byBranch);
 
+        cache.put(cKey, karat);
         return ResponseEntity.ok(Map.of("success",true,"data",karat));
     }
 
@@ -307,6 +337,10 @@ public class DashboardController {
             @AuthenticationPrincipal MizanUserDetails principal) {
         String tenantId = TenantContext.getTenantId();
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",Map.of()));
+
+        String cKey = tenantId + ":dash:mothan:" + from + ":" + to;
+        Object hit = cache.get(cKey);
+        if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
 
         List<MothanTransaction> transactions = mothanRepo.findByTenantAndRange(tenantId, from, to);
 
@@ -343,6 +377,7 @@ public class DashboardController {
         result.put("txnCount", transactions.size());
         result.put("byBranch", branchSummary);
 
+        cache.put(cKey, result);
         return ResponseEntity.ok(Map.of("success",true,"data",result));
     }
 
@@ -355,6 +390,9 @@ public class DashboardController {
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
 
         List<String> scoped = dashSvc.resolveScopedBranches(principal);
+        String cKey = tenantId + ":dash:regions:" + from + ":" + to + ":" + scopeKey(scoped);
+        Object hit = cache.get(cKey);
+        if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
         List<BranchData> branches = dashSvc.getBranchSummaries(tenantId, from, to, scoped);
 
         // Group by region
@@ -390,6 +428,7 @@ public class DashboardController {
         }
 
         result.sort((a,b) -> Double.compare((double)b.get("totalSar"), (double)a.get("totalSar")));
+        cache.put(cKey, result);
         return ResponseEntity.ok(Map.of("success",true,"data",result));
     }
 
@@ -490,7 +529,11 @@ public class DashboardController {
             @AuthenticationPrincipal MizanUserDetails principal) {
         String tenantId = TenantContext.getTenantId();
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
-        List<BranchData> branches = dashSvc.getBranchSummaries(tenantId, from, to, dashSvc.resolveScopedBranches(principal));
+        List<String> scopedA = dashSvc.resolveScopedBranches(principal);
+        String cKeyA = tenantId + ":dash:alerts:" + from + ":" + to + ":" + scopeKey(scopedA);
+        Object hitA = cache.get(cKeyA);
+        if (hitA != null) return ResponseEntity.ok(Map.of("success", true, "data", hitA, "cached", true));
+        List<BranchData> branches = dashSvc.getBranchSummaries(tenantId, from, to, scopedA);
         List<Map<String,Object>> alerts = new ArrayList<>();
         for (BranchData b : branches) {
             if (b.purchRate() > 0 && b.diffRate() < 0)
@@ -524,6 +567,7 @@ public class DashboardController {
                     "Returns for " + b.returnDays() + " days — requires investigation",
                     b.sar() > 0 ? (b.returns() / b.sar()) * 100 : 0));
         }
+        cache.put(cKeyA, alerts);
         return ResponseEntity.ok(Map.of("success",true,"data",alerts));
     }
 
@@ -794,6 +838,9 @@ public class DashboardController {
         String tenantId = TenantContext.getTenantId();
         if (tenantId == null) return ResponseEntity.ok(Map.of("success",true,"data",List.of()));
         List<String> scoped = dashSvc.resolveScopedBranches(principal);
+        String cKey = tenantId + ":dash:daily-trend:" + from + ":" + to + ":" + scopeKey(scoped);
+        Object hit = cache.get(cKey);
+        if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
         List<BranchSale> rawSales = scoped == null
             ? saleRepo.findByTenantAndRange(tenantId, from, to)
             : saleRepo.findByTenantAndRangeAndBranches(tenantId, from, to, scoped);
@@ -808,6 +855,7 @@ public class DashboardController {
         for (Map.Entry<String,double[]> e : byDate.entrySet()) {
             trend.add(Map.of("date", e.getKey(), "sar", e.getValue()[0], "wt", e.getValue()[1]));
         }
+        cache.put(cKey, trend);
         return ResponseEntity.ok(Map.of("success",true,"data",trend));
     }
 

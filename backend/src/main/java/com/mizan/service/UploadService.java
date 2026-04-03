@@ -32,6 +32,7 @@ public class UploadService {
     private final Executor uploadExecutor;
     private final com.mizan.repository.BranchPurchaseRateRepository rateRepo;
     private final MongoTemplate mongoTemplate;
+    private final V3CacheService cache;
 
     public UploadService(ExcelParserService parser, UploadProgressService progress,
             BranchSaleRepository saleRepo, BranchPurchaseRepository purchRepo,
@@ -39,12 +40,14 @@ public class UploadService {
             UploadLogRepository logRepo,
             @Qualifier("uploadExecutor") Executor uploadExecutor,
             com.mizan.repository.BranchPurchaseRateRepository rateRepo,
-            MongoTemplate mongoTemplate) {
+            MongoTemplate mongoTemplate,
+            V3CacheService cache) {
         this.parser = parser; this.progress = progress;
         this.saleRepo = saleRepo; this.purchRepo = purchRepo;
         this.empRepo = empRepo; this.mothanRepo = mothanRepo;
         this.logRepo = logRepo; this.uploadExecutor = uploadExecutor;
         this.rateRepo = rateRepo; this.mongoTemplate = mongoTemplate;
+        this.cache = cache;
     }
 
     // ─── Internal data holders ────────────────────────────────────────────────
@@ -165,6 +168,8 @@ public class UploadService {
 
         long elapsed = System.currentTimeMillis() - t0;
         log.info("Upload {} done in {}ms — saved={}, skipped={}", uploadId, elapsed, totalSaved, totalSkipped);
+
+        cache.invalidate(tenantId);
 
         // ── Phase 6: Send final SSE "complete" event ─────────────────────────
         progress.send(uploadId, "complete", Map.of(
@@ -455,6 +460,8 @@ public class UploadService {
 
         long elapsed = System.currentTimeMillis() - t0;
         log.info("Typed upload {} ({}) done in {}ms — saved={}", uploadId, fileType, elapsed, totalSaved);
+
+        cache.invalidate(tenantId);
 
         progress.send(uploadId, "complete", Map.of(
             "uploadId",   uploadId,
