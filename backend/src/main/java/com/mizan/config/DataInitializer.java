@@ -7,31 +7,33 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
- * DataInitializer — seeds / updates the 8 fixed demo users.
+ * DataInitializer — seeds / resets the 8 fixed demo users on every startup.
  *
- * Fires on ApplicationReadyEvent (after Atlas TLS handshake completes),
- * not CommandLineRunner (which fires too early on Render and causes
- * MongoTimeoutException before the connection pool is established).
+ * Uses MongoTemplate.updateFirst() keyed on email (case-insensitive regex)
+ * so the same document that AuthController's findByEmailIgnoreCase reads is
+ * always the one whose passwordHash we write. No _id mapping involved.
  *
- * Strategy: upsert by email — update if exists, create if missing.
- * Never deletes other users; never creates duplicates.
- *
- * Env var DEMO_TENANT_ID must be set in Render dashboard.
- * superadmin@mizan.com is platform-level (tenantId = null).
+ * If no document exists for an email, a fresh User is inserted via the repo.
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class DataInitializer {
 
-    private final UserRepository userRepo;
+    private final UserRepository  userRepo;
+    private final MongoTemplate   mongo;
 
     @Value("${mizan.demo.tenant-id:demo-goldco}")
     private String demoTenantId;
@@ -75,17 +77,15 @@ public class DataInitializer {
     }
 
     private void upsert(DemoUser spec) {
-        String hash = encoder.encode(spec.password());
+        String hash  = encoder.encode(spec.password());
+        // Case-insensitive regex anchored to full email — same as findByEmailIgnoreCase
+        Query  query = Query.query(
+            Criteria.where("email").regex("^" + Pattern.quote(spec.email()) + "$", "i")
+        );
+        long count = mongo.count(query, User.class);
 
-        List<User> all = userRepo.findAllByEmailIgnoreCase(spec.email());
-
-        if (all.size() > 1) {
-            // Delete all duplicates, keep only the first
-            log.warn("DataInitializer: found {} duplicates for {} — deleting extras", all.size(), spec.email());
-            all.subList(1, all.size()).forEach(userRepo::delete);
-        }
-
-        if (all.isEmpty()) {
+        if (count == 0) {
+            // No document exists — create a fresh one
             User u = new User();
             u.setEmail(spec.email());
             u.setPasswordHash(hash);
@@ -99,19 +99,23 @@ public class DataInitializer {
             userRepo.save(u);
             log.info("DataInitializer: created  {}", spec.email());
         } else {
-            User existing = all.get(0);
-            existing.setPasswordHash(hash);
-            existing.setRole(spec.role());
-            existing.setFullNameAr(spec.nameAr());
-            existing.setActive(true);
-            existing.setMustChangePassword(false);
-            if (spec.tenantId() != null) existing.setTenantId(spec.tenantId());
-            userRepo.save(existing);
-            // Read back to confirm the write actually persisted
-            userRepo.findById(existing.getUserId()).ifPresent(reloaded -> {
-                boolean ok = encoder.matches(spec.password(), reloaded.getPasswordHash());
-                log.info("DataInitializer: updated {} — verify={}", spec.email(), ok ? "OK" : "FAIL");
-            });
+            if (count > 1) {
+                // Delete all but the first duplicate
+                log.warn("DataInitializer: {} duplicates for {} — removing extras", count, spec.email());
+                List<User> all = mongo.find(query, User.class);
+                all.subList(1, all.size()).forEach(dup -> mongo.remove(dup));
+            }
+            // Update the remaining document in-place using the same query
+            Update update = new Update()
+                .set("passwordHash",       hash)
+                .set("role",               spec.role())
+                .set("fullNameAr",         spec.nameAr())
+                .set("active",             true)
+                .set("mustChangePassword", false);
+            if (spec.tenantId() != null) update.set("tenantId", spec.tenantId());
+
+            mongo.updateFirst(query, update, User.class);
+            log.info("DataInitializer: updated  {}", spec.email());
         }
     }
 
