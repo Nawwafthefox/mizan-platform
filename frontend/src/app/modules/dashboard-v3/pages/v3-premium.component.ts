@@ -919,7 +919,7 @@ export class V3PremiumComponent implements OnDestroy {
     this.seasonPeriod.set(p);
     const old = this.charts.get('season');
     if (old) { old.destroy(); this.charts.delete('season'); }
-    setTimeout(() => this.buildSeasonChart(this.data()?.seasonalPatterns), 50);
+    setTimeout(() => this.buildSeasonChart(this.data()?.seasonalPatterns), 80);
   }
 
   // ─── Chart 7: Top Performers Horizontal Bar ──────────────────────────────

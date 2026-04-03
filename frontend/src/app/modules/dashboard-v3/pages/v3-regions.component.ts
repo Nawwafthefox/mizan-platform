@@ -319,7 +319,7 @@ export class V3RegionsComponent implements OnDestroy {
         this.regions.set(regions ?? []);
         this.expanded.set(new Set());
         this.loading.set(false);
-        setTimeout(() => this.buildCompChart(regions ?? []), 50);
+        setTimeout(() => this.buildCompChart(regions ?? []), 80);
       },
       error: (err) => {
         this.error.set('فشل تحميل بيانات المناطق: ' + (err?.message ?? 'خطأ'));

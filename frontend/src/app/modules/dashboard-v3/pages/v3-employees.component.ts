@@ -504,7 +504,7 @@ export class V3EmployeesComponent implements OnDestroy {
         this.ratingFilter = '';
         this.applyFilters();
         this.loading.set(false);
-        setTimeout(() => this.buildProfitChart(flat), 50);
+        setTimeout(() => this.buildProfitChart(flat), 80);
       },
       error: (err) => {
         this.error.set('فشل تحميل بيانات الموظفين: ' + (err?.message ?? 'خطأ'));

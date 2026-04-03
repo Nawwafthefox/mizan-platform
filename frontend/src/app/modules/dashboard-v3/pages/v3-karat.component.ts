@@ -492,7 +492,7 @@ export class V3KaratComponent implements OnDestroy {
         setTimeout(() => {
           this.buildDoughnut(res?.totals ?? {});
           this.buildBranchKaratChart(res?.byBranch ?? []);
-        }, 50);
+        }, 80);
       },
       error: (err) => {
         this.error.set('فشل تحميل بيانات الأعيار: ' + (err?.message ?? 'خطأ'));

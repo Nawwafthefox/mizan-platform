@@ -431,7 +431,7 @@ export class V3BranchesComponent implements OnDestroy {
         this.sortKey      = 'totalSar';
         this.applyFilters();
         this.loading.set(false);
-        setTimeout(() => this.buildDiffChart(), 50);
+        setTimeout(() => this.buildDiffChart(), 80);
       },
       error: (err) => {
         this.error.set('فشل تحميل بيانات الفروع: ' + (err?.message ?? 'خطأ'));
@@ -457,7 +457,7 @@ export class V3BranchesComponent implements OnDestroy {
       return (b[this.sortKey] ?? 0) - (a[this.sortKey] ?? 0);
     });
     this.filtered.set(data);
-    setTimeout(() => this.buildDiffChart(), 50);
+    setTimeout(() => this.buildDiffChart(), 80);
   }
 
   private buildDiffChart(): void {
