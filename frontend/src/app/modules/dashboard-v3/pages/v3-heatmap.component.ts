@@ -384,8 +384,6 @@ export class V3HeatmapComponent implements OnDestroy {
             borderColor: colors.map(c => c.replace('0.75', '1')),
             borderWidth: 1,
             borderRadius: 4,
-            barPercentage: 0.72,
-            categoryPercentage: 0.85,
           }]
         },
         options: {

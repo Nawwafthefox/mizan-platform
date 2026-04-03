@@ -141,8 +141,6 @@ export class HeatmapComponent implements OnInit, OnDestroy, AfterViewInit {
             return 'rgba(220,53,69,.8)';
           }),
           borderRadius: 4,
-          barPercentage: 0.72,
-          categoryPercentage: 0.85,
         }]
       },
       options: {

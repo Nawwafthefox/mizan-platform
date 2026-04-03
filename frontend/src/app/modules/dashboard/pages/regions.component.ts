@@ -142,8 +142,6 @@ export class RegionsComponent implements OnInit, OnDestroy, AfterViewInit {
       data: {
         labels: rs.map(r => r.region),
         datasets: [
-          { label: 'المبيعات', data: rs.map(r => r.totalSar), backgroundColor: rs.map(r => this.ana.getRegionColor(r.region)), borderRadius: 4, barPercentage: 0.72, categoryPercentage: 0.85 },
-          { label: 'المشتريات', data: rs.map(r => r.totalPurch), backgroundColor: 'rgba(16,185,129,.4)', borderRadius: 4, barPercentage: 0.72, categoryPercentage: 0.85 },
         ]
       },
       options: {

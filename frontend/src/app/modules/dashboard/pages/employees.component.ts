@@ -397,8 +397,6 @@ export class EmployeesComponent implements OnInit, OnDestroy, AfterViewInit {
       },
       options: {
         responsive: true,
-        barPercentage: 0.72,
-        categoryPercentage: 0.85,
         plugins: {
           legend: { position: 'top', labels: { boxWidth: 12, font: { size: 10 }, color: 'rgba(255,255,255,0.6)' } },
           datalabels: barDataLabels()

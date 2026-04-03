@@ -476,8 +476,6 @@ export class V3BranchesComponent implements OnDestroy {
           borderColor:     data.map(b => (b.diffRate ?? 0) >= 0 ? '#22c55e' : '#ef4444'),
           borderWidth: 1,
           borderRadius: 4,
-          barPercentage: 0.72,
-          categoryPercentage: 0.85,
         }]
       },
       options: {

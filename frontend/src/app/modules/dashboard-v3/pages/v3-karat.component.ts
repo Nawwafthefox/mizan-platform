@@ -551,8 +551,6 @@ export class V3KaratComponent implements OnDestroy {
           borderColor: KARAT_COLORS[k],
           borderWidth: 1,
           borderRadius: 4,
-          barPercentage: 0.72,
-          categoryPercentage: 0.85,
         }))
       },
       options: {

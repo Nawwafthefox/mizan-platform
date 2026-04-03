@@ -555,8 +555,6 @@ export class V3EmployeesComponent implements OnDestroy {
           borderColor:     top10.map(e => e.profitMargin >= 0 ? '#c9a84c' : '#ef4444'),
           borderWidth: 1,
           borderRadius: 4,
-          barPercentage: 0.72,
-          categoryPercentage: 0.85,
         }]
       },
       options: {

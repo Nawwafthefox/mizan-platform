@@ -26,12 +26,12 @@ export function barDataLabels(opts?: {
     offset: 2,
     font: {
       size: opts?.fontSize ?? 10,
-      weight: '700' as const,
+      weight: 'bold' as const,
       family: "'IBM Plex Sans Arabic', 'IBM Plex Sans', sans-serif",
     },
     formatter: (value: number) => fmtCompact(value, 1),
     clip: false,
-  };
+  } as any;
 }
 
 // ── Reusable datalabels config for doughnut / pie charts ──────────────────
@@ -39,7 +39,7 @@ export function pieDataLabels() {
   return {
     display: true,
     color: 'rgba(240,237,232,0.85)',
-    font: { size: 10, weight: '700' as const },
+    font: { size: 10, weight: 'bold' as const },
     formatter: (value: number, ctx: any) => {
       const total = (ctx.chart.data.datasets[0]?.data as number[]).reduce((a: number, b: number) => a + b, 0);
       if (!total) return '';
@@ -140,12 +140,14 @@ export function configureCharts(lang: 'ar' | 'en'): void {
   Chart.defaults.animation = { duration: 600, easing: 'easeOutQuart' as const };
 
   // ── Bar dataset defaults ──────────────────────────────────────────────────
-  Chart.defaults.datasets.bar = {
+  (Chart.defaults.datasets as any).bar = {
     ...Chart.defaults.datasets.bar,
     hoverBorderWidth: 2,
     hoverBorderColor: 'rgba(201,168,76,0.8)',
     borderRadius: 4,
     borderSkipped: 'bottom',
+    barPercentage: 0.72,
+    categoryPercentage: 0.85,
   };
 
   // ── Line dataset defaults ─────────────────────────────────────────────────

@@ -556,8 +556,6 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
         },
         options: {
           responsive: true,
-          barPercentage: 0.72,
-          categoryPercentage: 0.85,
           interaction: { mode: 'index', intersect: false },
           plugins: {
             legend: { position: 'top' },

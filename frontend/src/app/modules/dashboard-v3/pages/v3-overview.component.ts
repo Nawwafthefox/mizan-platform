@@ -510,8 +510,6 @@ export class V3OverviewComponent implements OnDestroy {
           borderColor: '#c9a84c',
           borderWidth: 1,
           borderRadius: 4,
-          barPercentage: 0.72,
-          categoryPercentage: 0.85,
         }]
       },
       options: {

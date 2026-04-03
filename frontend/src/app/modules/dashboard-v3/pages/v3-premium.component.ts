@@ -722,8 +722,6 @@ export class V3PremiumComponent implements OnDestroy {
             borderColor: '#c9a84c',
             borderWidth: 1,
             borderRadius: 4,
-            barPercentage: 0.72,
-            categoryPercentage: 0.85,
           },
           {
             label: 'سعر الشراء',
@@ -732,8 +730,6 @@ export class V3PremiumComponent implements OnDestroy {
             borderColor: '#14b8a6',
             borderWidth: 1,
             borderRadius: 4,
-            barPercentage: 0.72,
-            categoryPercentage: 0.85,
           }
         ]
       },
@@ -810,16 +806,12 @@ export class V3PremiumComponent implements OnDestroy {
             data: sorted.map((b: any) => useWt ? (b.salesWt ?? 0) : b.salesSar),
             backgroundColor: 'rgba(201,168,76,0.75)',
             borderRadius: 4,
-            barPercentage: 0.72,
-            categoryPercentage: 0.85,
           },
           {
             label: 'مشتريات (جرام)',
             data: sorted.map((b: any) => useWt ? (b.purchWt ?? 0) : b.purchSar),
             backgroundColor: 'rgba(20,184,166,0.65)',
             borderRadius: 4,
-            barPercentage: 0.72,
-            categoryPercentage: 0.85,
           }
         ]
       },
@@ -950,8 +942,6 @@ export class V3PremiumComponent implements OnDestroy {
             i === 0 ? 'rgba(201,168,76,0.9)' : `rgba(201,168,76,${0.5 - i * 0.04})`
           ),
           borderRadius: 4,
-          barPercentage: 0.72,
-          categoryPercentage: 0.85,
         }]
       },
       options: {

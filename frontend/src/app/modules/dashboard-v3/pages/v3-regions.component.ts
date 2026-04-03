@@ -354,8 +354,6 @@ export class V3RegionsComponent implements OnDestroy {
             borderColor: '#c9a84c',
             borderWidth: 1,
             borderRadius: 4,
-            barPercentage: 0.72,
-            categoryPercentage: 0.85,
           },
           {
             label: 'المشتريات',
@@ -364,8 +362,6 @@ export class V3RegionsComponent implements OnDestroy {
             borderColor: '#14b8a6',
             borderWidth: 1,
             borderRadius: 4,
-            barPercentage: 0.72,
-            categoryPercentage: 0.85,
           }
         ]
       },
