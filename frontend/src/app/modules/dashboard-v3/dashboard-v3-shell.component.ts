@@ -8,6 +8,7 @@ interface V3Tab {
   path: string;
   premium?: boolean;
   upload?: boolean;
+  back?: boolean;
 }
 
 @Component({
@@ -21,15 +22,26 @@ interface V3Tab {
       <nav class="v3-topnav" role="navigation" aria-label="V3 Dashboard Navigation">
         <div class="v3-topnav-inner">
           @for (tab of tabs; track tab.path) {
-            <a
-              [routerLink]="tab.path"
-              routerLinkActive="active"
-              class="v3-tab"
-              [class.premium-tab]="tab.premium"
-              [class.upload-tab]="tab.upload"
-            >
-              {{ tab.label }}
-            </a>
+            @if (tab.back) {
+              <a
+                [routerLink]="tab.path"
+                class="v3-tab back-tab"
+                title="العودة إلى الداشبورد الكلاسيكي"
+              >
+                {{ tab.label }}
+              </a>
+              <div class="tab-divider"></div>
+            } @else {
+              <a
+                [routerLink]="tab.path"
+                routerLinkActive="active"
+                class="v3-tab"
+                [class.premium-tab]="tab.premium"
+                [class.upload-tab]="tab.upload"
+              >
+                {{ tab.label }}
+              </a>
+            }
           }
         </div>
       </nav>
@@ -171,6 +183,31 @@ interface V3Tab {
       text-shadow: 0 0 12px rgba(201,168,76,.5);
     }
 
+    /* Back-to-classic tab */
+    .v3-tab.back-tab {
+      color: rgba(138,154,143,.55);
+      font-size: .8rem;
+      letter-spacing: .02em;
+      padding-right: .75rem;
+      padding-left: .75rem;
+      border-bottom-color: transparent !important;
+    }
+    .v3-tab.back-tab:hover {
+      color: rgba(138,154,143,.9);
+      background: rgba(255,255,255,.04);
+      border-radius: 6px 6px 0 0;
+    }
+
+    /* Vertical divider between back tab and v3 tabs */
+    .tab-divider {
+      width: 1px;
+      height: 22px;
+      background: var(--mizan-border, rgba(255,255,255,.1));
+      align-self: center;
+      flex-shrink: 0;
+      margin: 0 .25rem;
+    }
+
     /* Upload tab styling */
     .v3-tab.upload-tab {
       color: rgba(100,180,255,.65);
@@ -303,6 +340,7 @@ export class DashboardV3ShellComponent implements OnInit {
   private router = inject(Router);
 
   tabs: V3Tab[] = [
+    { label: '← الكلاسيكي',  path: '/dashboard/overview', back: true },
     { label: 'نظرة عامة',    path: '/v3/overview' },
     { label: 'رفع الملفات',  path: '/v3/upload', upload: true },
     { label: 'التنبيهات',    path: '/v3/alerts' },
