@@ -31,10 +31,10 @@ import { Tenant } from '../../shared/models/models';
                           [title]="expandedTenantId() === t.tenantId ? 'إخفاء المستخدمين' : 'عرض المستخدمين'">
                     {{ expandedTenantId() === t.tenantId ? '▼' : '▶' }}
                   </button>
-                  <strong>{{ (t as any).companyNameAr ?? (t as any).companyNameEn ?? t.tenantId }}</strong>
+                  <strong>{{ t['companyNameAr'] ?? t['companyNameEn'] ?? t.tenantId }}</strong>
                   <br><small class="text-muted" dir="ltr">{{ t.tenantId }}</small>
                 </td>
-                <td><span class="badge badge--gold">{{ (t as any).subscriptionTierId ?? '—' }}</span></td>
+                <td><span class="badge badge--gold">{{ t['subscriptionTierId'] ?? '—' }}</span></td>
                 <td>
                   <span [class]="'badge badge--' + (t.suspended ? 'danger' : t.active ? 'success' : 'warning')">
                     {{ t.suspended ? 'موقوف' : t.active ? 'نشط' : 'غير نشط' }}
