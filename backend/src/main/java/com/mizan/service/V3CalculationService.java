@@ -33,7 +33,8 @@ public class V3CalculationService {
     // ─── Branch summaries ─────────────────────────────────────────────────────
 
     public List<Map<String, Object>> getBranchSummaries(String tenantId, LocalDate from, LocalDate to) {
-        // Use MongoDB aggregations — returns ~29 rows instead of loading 26K+ documents
+        long t0 = System.currentTimeMillis();
+        // MongoDB aggregations — returns ~29 rows instead of loading 26K+ documents
         Map<String, Document> sMap = toDocMap(aggSalesByBranch(tenantId, from, to));
         Map<String, Document> pMap = toDocMap(aggPurchasesByBranch(tenantId, from, to));
         Map<String, Document> mMap = toDocMap(aggMothanByBranch(tenantId, from, to));
@@ -98,6 +99,7 @@ public class V3CalculationService {
             result.add(row);
         }
         result.sort(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("totalSar")).reversed());
+        log.info("Branch summaries ({} branches) computed in {}ms", result.size(), System.currentTimeMillis() - t0);
         return result;
     }
 
@@ -172,45 +174,69 @@ public class V3CalculationService {
     // ─── Employee performance ─────────────────────────────────────────────────
 
     public List<Map<String, Object>> getEmployeePerformance(String tenantId, LocalDate from, LocalDate to) {
-        Query q = Query.query(Criteria.where("tenantId").is(tenantId)
-            .and("saleDate").gte(from).lte(to));
-        List<V3EmployeeSaleTransaction> empSales = mongo.find(q, V3EmployeeSaleTransaction.class);
+        long t0 = System.currentTimeMillis();
 
-        // Per-branch purch rates from branch summaries
+        // Per-branch purchase rates
         List<Map<String, Object>> branchSums = getBranchSummaries(tenantId, from, to);
         Map<String, Double> branchPurchRates = branchSums.stream()
-            .collect(Collectors.toMap(b -> (String)b.get("branchCode"), b -> (double)b.get("purchRate")));
+            .collect(Collectors.toMap(b -> (String) b.get("branchCode"), b -> mapDbl(b, "purchRate")));
 
-        // Aggregate per employee
-        Map<String, EmpAgg> empMap = new LinkedHashMap<>();
-        for (V3EmployeeSaleTransaction t : empSales) {
-            EmpAgg agg = empMap.computeIfAbsent(t.getEmpId(),
-                k -> new EmpAgg(t.getEmpId(), t.getEmpName(), t.getBranchCode()));
-            agg.add(t);
+        // Aggregation pipeline — returns ~few hundred rows instead of 21,896 documents
+        List<Document> empDocs = aggEmployeesByBranch(tenantId, from, to);
+
+        List<Map<String, Object>> empRows = new ArrayList<>();
+        for (Document d : empDocs) {
+            Object idObj = d.get("_id");
+            if (!(idObj instanceof Document id)) continue;
+            String empId      = id.getString("empId");
+            String branchCode = id.getString("branchCode");
+            if (empId == null || branchCode == null) continue;
+
+            double totalSar    = dbl(d, "totalSar");
+            double totalWeight = dbl(d, "totalWeight");
+            long   totalPieces = lng(d, "totalPieces");
+            double returns     = dbl(d, "returns");
+            long   returnDays  = lng(d, "returnDays");
+
+            double saleRate     = totalWeight != 0 ? r4(totalSar / totalWeight) : 0;
+            double purchRate    = branchPurchRates.getOrDefault(branchCode, 0.0);
+            double diffRate     = Math.round((saleRate - purchRate) * 10) / 10.0;
+            double profitMargin = purchRate > 0 ? r2(totalWeight * diffRate) : 0;
+            double avgInvoice   = totalPieces > 0 ? r2(totalSar / totalPieces) : 0;
+            String rating = saleRate >= 700 ? "excellent" : saleRate >= 600 ? "good"
+                          : saleRate >= 500 ? "average" : "weak";
+
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("empId", empId); row.put("empName", d.getString("empName"));
+            row.put("branchCode", branchCode); row.put("branchName", BranchMaps.getName(branchCode));
+            row.put("region", BranchMaps.getRegion(branchCode));
+            row.put("totalSar", totalSar); row.put("totalWeight", totalWeight);
+            row.put("totalPieces", totalPieces); row.put("returns", returns);
+            row.put("returnDays", returnDays); row.put("saleRate", saleRate);
+            row.put("purchRate", purchRate); row.put("diffRate", diffRate);
+            row.put("profitMargin", profitMargin); row.put("avgInvoice", avgInvoice);
+            row.put("achieved", saleRate > purchRate); row.put("rating", rating);
+            empRows.add(row);
         }
-
-        List<Map<String, Object>> result = empMap.values().stream()
-            .map(a -> a.toMap(branchPurchRates))
-            .sorted(Comparator.comparingDouble((Map<String, Object> r) -> (double)r.get("totalSar")).reversed())
-            .collect(Collectors.toList());
+        empRows.sort(Comparator.comparingDouble((Map<String, Object> r) -> mapDbl(r, "totalSar")).reversed());
 
         // Group by branch
-        Map<String, List<Map<String,Object>>> byBranch = result.stream()
-            .collect(Collectors.groupingBy(e -> (String)e.get("branchCode"), LinkedHashMap::new, Collectors.toList()));
+        Map<String, List<Map<String, Object>>> byBranch = empRows.stream()
+            .collect(Collectors.groupingBy(e -> (String) e.get("branchCode"), LinkedHashMap::new, Collectors.toList()));
 
-        List<Map<String,Object>> branches = new ArrayList<>();
-        for (Map.Entry<String, List<Map<String,Object>>> e : byBranch.entrySet()) {
-            List<Map<String,Object>> emps = e.getValue();
-            Map<String,Object> br = new LinkedHashMap<>();
-            br.put("branchCode",     e.getKey());
-            br.put("branchName",     BranchMaps.getName(e.getKey()));
-            br.put("region",         BranchMaps.getRegion(e.getKey()));
-            br.put("employeeCount",  emps.size());
-            br.put("totalSar",       emps.stream().mapToDouble(x -> (double)x.get("totalSar")).sum());
-            br.put("employees",      emps);
+        List<Map<String, Object>> branches = new ArrayList<>();
+        for (Map.Entry<String, List<Map<String, Object>>> e : byBranch.entrySet()) {
+            List<Map<String, Object>> emps = e.getValue();
+            Map<String, Object> br = new LinkedHashMap<>();
+            br.put("branchCode", e.getKey()); br.put("branchName", BranchMaps.getName(e.getKey()));
+            br.put("region", BranchMaps.getRegion(e.getKey()));
+            br.put("employeeCount", emps.size());
+            br.put("totalSar", emps.stream().mapToDouble(x -> mapDbl(x, "totalSar")).sum());
+            br.put("employees", emps);
             branches.add(br);
         }
-        branches.sort(Comparator.comparingDouble((Map<String,Object> b) -> (double)b.get("totalSar")).reversed());
+        branches.sort(Comparator.comparingDouble((Map<String, Object> b) -> mapDbl(b, "totalSar")).reversed());
+        log.info("Employee performance computed in {}ms", System.currentTimeMillis() - t0);
         return branches;
     }
 
@@ -343,30 +369,36 @@ public class V3CalculationService {
     // ─── Karat Breakdown ─────────────────────────────────────────────────────
 
     public Map<String, Object> getKaratBreakdown(String tenantId, LocalDate from, LocalDate to) {
-        List<V3SaleTransaction> sales     = querySales(tenantId, from, to);
-        List<V3PurchaseTransaction> purch = queryPurchases(tenantId, from, to);
+        long t0 = System.currentTimeMillis();
         List<String> karats = List.of("18", "21", "22", "24");
 
-        Map<String, double[]> ks = new LinkedHashMap<>(); // [saleSar, saleWt, purchSar, purchWt]
-        karats.forEach(k -> ks.put(k, new double[4]));
+        // getBranchSummaries already contains per-branch karat SAR+weight from the 2-stage pipeline
+        List<Map<String, Object>> branches = getBranchSummaries(tenantId, from, to);
 
-        for (V3SaleTransaction s : sales) {
-            String k = s.getKarat(); if (k == null || !ks.containsKey(k)) continue;
-            double[] t = ks.get(k);
-            t[0] += Math.abs(s.getSarAmount()); t[1] += Math.abs(s.getPureWeightG());
+        // Purchase karat breakdown (already aggregation-based)
+        Map<String, Map<String, double[]>> purchKaratMap = aggPurchasesByBranchAndKarat(tenantId, from, to);
+
+        // Sum karat totals across all branches — [saleSar, saleWt, purchSar, purchWt]
+        Map<String, double[]> ks = new LinkedHashMap<>();
+        karats.forEach(k -> ks.put(k, new double[4]));
+        for (Map<String, Object> b : branches) {
+            for (String k : karats) {
+                ks.get(k)[0] += mapDbl(b, "k" + k + "Sar");
+                ks.get(k)[1] += mapDbl(b, "k" + k + "Wt");
+            }
         }
-        for (V3PurchaseTransaction p : purch) {
-            String k = p.getKarat(); if (k == null || !ks.containsKey(k)) continue;
-            double[] t = ks.get(k);
-            t[2] += p.getSarAmount(); t[3] += p.getPureWeightG();
+        for (Map<String, double[]> bk : purchKaratMap.values()) {
+            for (String k : karats) {
+                double[] pk = bk.getOrDefault(k, new double[2]);
+                ks.get(k)[2] += pk[0]; ks.get(k)[3] += pk[1];
+            }
         }
         double grandSar = ks.values().stream().mapToDouble(t -> t[0]).sum();
 
         Map<String, Object> totals = new LinkedHashMap<>();
         for (Map.Entry<String, double[]> e : ks.entrySet()) {
             double[] t = e.getValue();
-            double sr = t[1] > 0 ? r2(t[0] / t[1]) : 0;
-            double pr = t[3] > 0 ? r2(t[2] / t[3]) : 0;
+            double sr = t[1] > 0 ? r2(t[0] / t[1]) : 0, pr = t[3] > 0 ? r2(t[2] / t[3]) : 0;
             Map<String, Object> km = new LinkedHashMap<>();
             km.put("sar", t[0]); km.put("wt", t[1]); km.put("purchSar", t[2]); km.put("purchWt", t[3]);
             km.put("saleRate", sr); km.put("purchRate", pr);
@@ -375,72 +407,75 @@ public class V3CalculationService {
             totals.put("k" + e.getKey(), km);
         }
 
-        Map<String, Map<String, double[]>> branchKarat = new LinkedHashMap<>();
-        for (V3SaleTransaction s : sales) {
-            String k = s.getKarat(); if (k == null || !ks.containsKey(k)) continue;
-            Map<String, double[]> bm = branchKarat.computeIfAbsent(s.getBranchCode(), bc -> {
-                Map<String, double[]> m = new LinkedHashMap<>();
-                karats.forEach(kk -> m.put(kk, new double[2]));
-                return m;
-            });
-            bm.get(k)[0] += Math.abs(s.getSarAmount());
-            bm.get(k)[1] += Math.abs(s.getPureWeightG());
-        }
-        List<Map<String, Object>> byBranch = branchKarat.entrySet().stream().map(e -> {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("branchCode", e.getKey()); row.put("branchName", BranchMaps.getName(e.getKey()));
-            row.put("region", BranchMaps.getRegion(e.getKey()));
-            karats.forEach(k -> { double[] t = e.getValue().get(k); row.put("k"+k+"Sar", t[0]); row.put("k"+k+"Wt", t[1]); });
-            return row;
-        }).sorted(Comparator.comparingDouble((Map<String,Object> r) ->
-            -karats.stream().mapToDouble(k -> (double) r.get("k"+k+"Sar")).sum()))
-          .collect(Collectors.toList());
+        // byBranch — already in branch summaries (no extra query needed)
+        List<Map<String, Object>> byBranch = branches.stream()
+            .filter(b -> karats.stream().anyMatch(k -> mapDbl(b, "k" + k + "Sar") > 0))
+            .map(b -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("branchCode", b.get("branchCode")); row.put("branchName", b.get("branchName"));
+                row.put("region", b.get("region"));
+                karats.forEach(k -> {
+                    row.put("k" + k + "Sar", mapDbl(b, "k" + k + "Sar"));
+                    row.put("k" + k + "Wt",  mapDbl(b, "k" + k + "Wt"));
+                });
+                return row;
+            })
+            .sorted(Comparator.comparingDouble((Map<String, Object> r) ->
+                -karats.stream().mapToDouble(k -> mapDbl(r, "k" + k + "Sar")).sum()))
+            .collect(Collectors.toList());
 
+        log.info("Karat breakdown computed in {}ms", System.currentTimeMillis() - t0);
         return Map.of("totals", totals, "byBranch", byBranch);
     }
 
     // ─── Mothan Detail ────────────────────────────────────────────────────────
 
     public Map<String, Object> getMothanDetail(String tenantId, LocalDate from, LocalDate to) {
-        List<V3MothanTransaction> txns = queryMothan(tenantId, from, to)
-            .stream().filter(m -> m.getWeightDebitG() > 0).collect(Collectors.toList());
-        double totalSar = txns.stream().mapToDouble(V3MothanTransaction::getAmountSar).sum();
-        double totalWt  = txns.stream().mapToDouble(V3MothanTransaction::getWeightDebitG).sum();
-        List<Map<String, Object>> transactions = txns.stream().map(m -> {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("date",         m.getTransactionDate() != null ? m.getTransactionDate().toString() : "");
-            row.put("branchCode",   m.getBranchCode()); row.put("branchName", BranchMaps.getName(m.getBranchCode()));
-            row.put("region",       BranchMaps.getRegion(m.getBranchCode()));
-            row.put("docRef",       m.getDocReference()); row.put("description", m.getDescription());
-            row.put("amountSar",    m.getAmountSar()); row.put("weightDebitG", m.getWeightDebitG());
-            row.put("rate",         m.getWeightDebitG() > 0 ? r2(m.getAmountSar() / m.getWeightDebitG()) : 0);
-            return row;
-        }).sorted(Comparator.comparing(r -> ((String) r.get("date")), Comparator.reverseOrder())).collect(Collectors.toList());
+        long t0 = System.currentTimeMillis();
 
+        // Individual transactions — mothan collection is small (~379 rows total across all dates)
+        Query q = Query.query(Criteria.where("tenantId").is(tenantId)
+            .and("transactionDate").gte(from).lte(to)
+            .and("weightDebitG").gt(0))
+            .with(org.springframework.data.domain.Sort.by(
+                org.springframework.data.domain.Sort.Direction.DESC, "transactionDate"))
+            .limit(500);
+        List<V3MothanTransaction> txns = mongo.find(q, V3MothanTransaction.class);
+
+        List<Map<String, Object>> transactions = new ArrayList<>();
         Map<String, double[]> bbMap = new LinkedHashMap<>();
-        Map<String, Integer>  bbCnt = new LinkedHashMap<>();
+        double totalSar = 0, totalWt = 0;
         for (V3MothanTransaction m : txns) {
             String bc = m.getBranchCode();
-            bbMap.computeIfAbsent(bc, k -> new double[2]);
-            bbMap.get(bc)[0] += m.getAmountSar(); bbMap.get(bc)[1] += m.getWeightDebitG();
-            bbCnt.merge(bc, 1, Integer::sum);
+            totalSar += m.getAmountSar(); totalWt += m.getWeightDebitG();
+            double[] t = bbMap.computeIfAbsent(bc, k -> new double[3]); // [sar, wt, count]
+            t[0] += m.getAmountSar(); t[1] += m.getWeightDebitG(); t[2]++;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("date",        m.getTransactionDate() != null ? m.getTransactionDate().toString() : "");
+            row.put("branchCode",  bc); row.put("branchName", BranchMaps.getName(bc));
+            row.put("region",      BranchMaps.getRegion(bc));
+            row.put("docRef",      m.getDocReference()); row.put("description", m.getDescription());
+            row.put("amountSar",   m.getAmountSar()); row.put("weightDebitG", m.getWeightDebitG());
+            row.put("rate",        m.getWeightDebitG() > 0 ? r2(m.getAmountSar() / m.getWeightDebitG()) : 0);
+            transactions.add(row);
         }
         List<Map<String, Object>> byBranch = bbMap.entrySet().stream().map(e -> {
-            double[] t = e.getValue();
+            double[] t = e.getValue(); String bc = e.getKey();
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("branchCode", e.getKey()); row.put("branchName", BranchMaps.getName(e.getKey()));
-            row.put("region", BranchMaps.getRegion(e.getKey()));
+            row.put("branchCode", bc); row.put("branchName", BranchMaps.getName(bc));
+            row.put("region", BranchMaps.getRegion(bc));
             row.put("totalSar", t[0]); row.put("totalWt", t[1]);
-            row.put("avgRate", t[1] > 0 ? r2(t[0] / t[1]) : 0);
-            row.put("txnCount", bbCnt.getOrDefault(e.getKey(), 0));
+            row.put("avgRate", t[1] > 0 ? r2(t[0] / t[1]) : 0); row.put("txnCount", (long) t[2]);
             return row;
-        }).sorted(Comparator.comparingDouble((Map<String,Object> r) -> (double) r.get("totalSar")).reversed()).collect(Collectors.toList());
+        }).sorted(Comparator.comparingDouble((Map<String, Object> r) -> mapDbl(r, "totalSar")).reversed())
+          .collect(Collectors.toList());
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("totalSar", totalSar); result.put("totalWt", totalWt);
         result.put("avgRate",  totalWt > 0 ? r2(totalSar / totalWt) : 0);
-        result.put("txnCount", txns.size());
+        result.put("txnCount", (long) txns.size());
         result.put("transactions", transactions); result.put("byBranch", byBranch);
+        log.info("Mothan detail computed in {}ms", System.currentTimeMillis() - t0);
         return result;
     }
 
@@ -546,9 +581,14 @@ public class V3CalculationService {
         return m;
     }
 
-    // ─── Premium Analytics ───────────────────────────────────────────────────
+    // ─── Premium Analytics (delegates to aggregation-based implementation) ─────
 
     public Map<String, Object> getPremiumAnalytics(String tenantId, LocalDate from, LocalDate to) {
+        return getPremiumDashboard(tenantId, from, to);
+    }
+
+    @SuppressWarnings("unused") // kept for reference; no longer called
+    private Map<String, Object> getPremiumAnalyticsLegacy(String tenantId, LocalDate from, LocalDate to) {
         List<Map<String, Object>> branches  = getBranchSummaries(tenantId, from, to);
         List<V3SaleTransaction>   sales     = querySales(tenantId, from, to);
         List<V3PurchaseTransaction> purchases = queryPurchases(tenantId, from, to);
@@ -1058,6 +1098,26 @@ public class V3CalculationService {
                .put(karat, new double[]{ dbl(d, "totalSar"), dbl(d, "totalWt") });
         }
         return map;
+    }
+
+    private List<Document> aggEmployeesByBranch(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId).and("saleDate").gte(from).lte(to));
+        // Group by {empId, branchCode} — returns a few hundred rows instead of 21,896 documents
+        AggregationOperation group = ctx -> new Document("$group",
+            new Document("_id", new Document("empId", "$empId").append("branchCode", "$branchCode"))
+                .append("empName",     new Document("$first", "$empName"))
+                .append("totalSar",    new Document("$sum", "$sarAmount"))
+                .append("totalWeight", new Document("$sum", "$pureWeightG"))
+                .append("totalPieces", new Document("$sum", new Document("$abs",
+                    new Document("$ifNull", Arrays.asList("$pieces", 0)))))
+                .append("returns", new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$lt", Arrays.asList("$sarAmount", 0)),
+                    new Document("$abs", "$sarAmount"), 0))))
+                .append("returnDays", new Document("$sum", new Document("$cond", Arrays.asList(
+                    new Document("$lt", Arrays.asList("$sarAmount", 0)), 1, 0)))));
+        return mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3EmployeeSaleTransaction.class, Document.class).getMappedResults();
     }
 
     private List<Document> aggMothanByBranch(String tenantId, LocalDate from, LocalDate to) {
