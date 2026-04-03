@@ -1,6 +1,6 @@
 import {
   Component, OnDestroy,
-  inject, signal, effect, ViewChildren, QueryList, ElementRef,
+  inject, signal, effect, ViewChildren, ViewChild, QueryList, ElementRef,
   ChangeDetectionStrategy, ChangeDetectorRef
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -197,6 +197,18 @@ function regionColor(region: string): string {
     .net-exposure-label { font-size: 0.8rem; color: var(--mizan-text-muted); }
     .net-exposure-val { font-size: 1.5rem; font-weight: 800; color: var(--mizan-gold); }
 
+    /* Period selector */
+    .period-btns { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .period-btn {
+      background: rgba(255,255,255,0.04); border: 1px solid var(--mizan-border);
+      border-radius: 16px; color: var(--mizan-text-muted);
+      padding: 0.25rem 0.75rem; font-size: 0.75rem; font-weight: 500;
+      cursor: pointer; white-space: nowrap; font-family: inherit;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+    .period-btn:hover { background: rgba(201,168,76,0.1); color: var(--mizan-gold); border-color: rgba(201,168,76,0.3); }
+    .period-btn.active { background: rgba(201,168,76,0.15); color: var(--mizan-gold); border-color: rgba(201,168,76,0.5); }
+
     /* Season best/worst */
     .season-summary { display: flex; gap: 1rem; margin-top: 0.75rem; }
     .season-box { flex: 1; padding: 0.65rem; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--mizan-border); }
@@ -384,7 +396,11 @@ function regionColor(region: string): string {
             <div class="net-exposure-row">
               <div>
                 <div class="net-exposure-label">صافي الانكشاف الإجمالي</div>
-                <div class="net-exposure-val">{{ fmt(data()?.goldExposure?.netExposure) }} ر.س</div>
+                <div class="net-exposure-val">{{ fmtWt(data()?.goldExposure?.netExposureWt) }} جرام</div>
+              </div>
+              <div style="margin-right:auto;text-align:left;font-size:0.75rem;color:var(--mizan-text-muted)">
+                <div>مبيعات: {{ fmtWt(data()?.goldExposure?.totalSalesWt) }} ج</div>
+                <div>مشتريات: {{ fmtWt(data()?.goldExposure?.totalPurchWt) }} ج</div>
               </div>
             </div>
             <div class="chart-wrap chart-wrap-md">
@@ -394,13 +410,20 @@ function regionColor(region: string): string {
         </div>
 
         <!-- Card 7: Seasonal Patterns -->
-        <div class="p-card">
+        <div class="p-card card-full">
           <div class="p-card-inner">
             <div class="p-card-header">
               <span class="p-card-icon">📅</span>
               <span class="p-card-title">الأنماط الموسمية</span>
             </div>
-            <div class="chart-wrap chart-wrap-md">
+            <div class="period-btns">
+              @for (p of periodOptions; track p.value) {
+                <button class="period-btn" [class.active]="seasonPeriod() === p.value" (click)="changePeriod(p.value)">
+                  {{ p.label }}
+                </button>
+              }
+            </div>
+            <div class="chart-wrap chart-wrap-lg">
               <canvas #seasonChart></canvas>
             </div>
             <div class="season-summary">
@@ -504,8 +527,10 @@ function regionColor(region: string): string {
   `
 })
 export class V3PremiumComponent implements OnDestroy {
-  @ViewChildren('revEffChart,matrixChart,karatChart,purchChart,exposureChart,seasonChart,perfChart')
+  @ViewChildren('revEffChart,matrixChart,karatChart,purchChart,exposureChart,seasonChart')
   canvases!: QueryList<ElementRef<HTMLCanvasElement>>;
+
+  @ViewChild('perfChart') perfChartRef?: ElementRef<HTMLCanvasElement>;
 
   private svc       = inject(V3DashboardService);
   private dateRange = inject(V3DateRangeService);
@@ -514,12 +539,21 @@ export class V3PremiumComponent implements OnDestroy {
   loading = signal(true);
   error   = signal<string | null>(null);
   data    = signal<any>(null);
+  seasonPeriod = signal<string>('full');
+
+  periodOptions = [
+    { label: 'هذا الأسبوع',   value: 'week'    },
+    { label: 'هذا الشهر',     value: 'month'   },
+    { label: 'كامل الفترة',   value: 'full'    },
+    { label: 'هذا العام',     value: 'year'    },
+    { label: 'آخر 5 سنوات',  value: '5years'  },
+  ];
 
   private charts: Map<string, Chart> = new Map();
 
   private canvasMap: Record<string, number> = {
     revEffChart: 0, matrixChart: 1, karatChart: 2,
-    purchChart: 3, exposureChart: 4, seasonChart: 5, perfChart: 6
+    purchChart: 3, exposureChart: 4, seasonChart: 5
   };
 
   constructor() {
@@ -546,7 +580,7 @@ export class V3PremiumComponent implements OnDestroy {
       next: (d) => {
         this.data.set(d);
         this.loading.set(false);
-        this.cdr.markForCheck();
+        this.cdr.detectChanges(); // force DOM update so @if blocks render canvases
         this.destroyAllCharts();
         this.buildAllCharts(d);
       },
@@ -570,7 +604,7 @@ export class V3PremiumComponent implements OnDestroy {
       this.buildKaratChart(d?.karatProfitability);
       this.buildPurchChart(d?.purchaseTiming);
       this.buildExposureChart(d?.goldExposure?.byBranch);
-      this.buildSeasonChart(d?.seasonalPatterns?.byDayOfWeek);
+      this.buildSeasonChart(d?.seasonalPatterns);
       this.buildPerfChart(d?.topPerformers);
     }, 0);
   }
@@ -726,26 +760,27 @@ export class V3PremiumComponent implements OnDestroy {
     this.charts.set('purch', c);
   }
 
-  // ─── Chart 5: Gold Exposure Horizontal Bar ────────────────────────────────
+  // ─── Chart 5: Gold Exposure Horizontal Bar (grams) ───────────────────────
   private buildExposureChart(byBranch: any[]): void {
     const canvas = this.getCanvas('exposureChart');
     if (!canvas || !byBranch) return;
-    const sorted = [...byBranch].sort((a, b) => b.salesSar - a.salesSar).slice(0, 15);
+    const sorted = [...byBranch].sort((a, b) => (b.salesWt ?? b.salesSar) - (a.salesWt ?? a.salesSar)).slice(0, 15);
     const labels = sorted.map((b: any) => b.branchName);
+    const useWt  = sorted.some((b: any) => (b.salesWt ?? 0) > 0);
     const c = new Chart(canvas, {
       type: 'bar',
       data: {
         labels,
         datasets: [
           {
-            label: 'المبيعات',
-            data: sorted.map((b: any) => b.salesSar),
+            label: 'مبيعات (جرام)',
+            data: sorted.map((b: any) => useWt ? (b.salesWt ?? 0) : b.salesSar),
             backgroundColor: 'rgba(201,168,76,0.75)',
             borderRadius: 3,
           },
           {
-            label: 'المشتريات',
-            data: sorted.map((b: any) => b.purchSar),
+            label: 'مشتريات (جرام)',
+            data: sorted.map((b: any) => useWt ? (b.purchWt ?? 0) : b.purchSar),
             backgroundColor: 'rgba(20,184,166,0.65)',
             borderRadius: 3,
           }
@@ -754,9 +789,12 @@ export class V3PremiumComponent implements OnDestroy {
       options: {
         indexAxis: 'y' as any,
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 }, boxWidth: 10 } } },
+        plugins: {
+          legend: { labels: { color: '#9ca3af', font: { size: 10 }, boxWidth: 10 } },
+          tooltip: { callbacks: { label: ctx => ` ${(ctx.parsed.x as number).toFixed(1)} جرام` } }
+        },
         scales: {
-          x: { ticks: { color: '#6b7280', callback: (v: any) => `${(v / 1000).toFixed(0)}K` }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          x: { ticks: { color: '#6b7280', callback: (v: any) => `${v.toFixed(0)}ج` }, grid: { color: 'rgba(255,255,255,0.04)' } },
           y: { ticks: { color: '#9ca3af', font: { size: 9 } }, grid: { display: false } }
         }
       }
@@ -764,32 +802,34 @@ export class V3PremiumComponent implements OnDestroy {
     this.charts.set('exposure', c);
   }
 
-  // ─── Chart 6: Seasonal Patterns Bar ──────────────────────────────────────
-  private buildSeasonChart(byDow: any[]): void {
+  // ─── Chart 6: Seasonal Patterns Line (period-aware) ──────────────────────
+  private buildSeasonChart(seasonal: any): void {
     const canvas = this.getCanvas('seasonChart');
-    if (!canvas || !byDow) return;
-    const maxVal = Math.max(...byDow.map((d: any) => d.avgSar));
-    const colors = byDow.map((d: any) =>
-      d.avgSar === maxVal ? 'rgba(201,168,76,0.9)' : 'rgba(201,168,76,0.35)'
-    );
+    if (!canvas || !seasonal) return;
+    const { labels, values } = this.getSeasonData(seasonal, this.seasonPeriod());
     const c = new Chart(canvas, {
-      type: 'bar',
+      type: 'line',
       data: {
-        labels: byDow.map((d: any) => d.day),
+        labels,
         datasets: [{
-          label: 'متوسط المبيعات',
-          data: byDow.map((d: any) => d.avgSar),
-          backgroundColor: colors,
-          borderColor: colors.map(c => c.replace('0.35', '0.8').replace('0.9', '1')),
-          borderWidth: 1,
-          borderRadius: 5,
+          label: 'المبيعات',
+          data: values,
+          borderColor: '#c9a84c',
+          backgroundColor: 'rgba(201,168,76,0.10)',
+          borderWidth: 2,
+          pointRadius: values.length > 60 ? 0 : 3,
+          fill: true,
+          tension: 0.4,
         }]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${this.fmt(ctx.parsed.y)} ر.س` } }
+        },
         scales: {
-          x: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,0.03)' } },
+          x: { ticks: { color: '#9ca3af', font: { size: 9 }, maxRotation: 45, maxTicksLimit: 20 }, grid: { color: 'rgba(255,255,255,0.03)' } },
           y: { ticks: { color: '#6b7280', callback: (v: any) => `${(v / 1000).toFixed(0)}K` }, grid: { color: 'rgba(255,255,255,0.05)' } }
         }
       }
@@ -797,9 +837,60 @@ export class V3PremiumComponent implements OnDestroy {
     this.charts.set('season', c);
   }
 
+  private getSeasonData(seasonal: any, period: string): { labels: string[]; values: number[] } {
+    const daily: any[] = seasonal?.dailyTrend ?? [];
+    const byDow: any[] = seasonal?.byDayOfWeek ?? [];
+    const today = new Date();
+
+    if (period === 'week') {
+      const cutoff = new Date(today); cutoff.setDate(cutoff.getDate() - 7);
+      const f = daily.filter(d => d.date && new Date(d.date) >= cutoff);
+      return { labels: f.map(d => d.date?.slice(5) ?? ''), values: f.map(d => d.totalSar ?? 0) };
+    }
+    if (period === 'month') {
+      const cutoff = new Date(today); cutoff.setDate(cutoff.getDate() - 30);
+      const f = daily.filter(d => d.date && new Date(d.date) >= cutoff);
+      return { labels: f.map(d => d.date?.slice(5) ?? ''), values: f.map(d => d.totalSar ?? 0) };
+    }
+    if (period === 'year') {
+      const yr = today.getFullYear();
+      const map = new Map<string, number>();
+      for (const d of daily) {
+        if (!d.date) continue;
+        const [y, m] = d.date.split('-');
+        if (parseInt(y) === yr) { const k = `${y}-${m}`; map.set(k, (map.get(k) ?? 0) + (d.totalSar ?? 0)); }
+      }
+      const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+      return { labels: sorted.map(([k]) => k.slice(5)), values: sorted.map(([, v]) => v) };
+    }
+    if (period === '5years') {
+      const map = new Map<string, number>();
+      for (const d of daily) {
+        if (!d.date) continue;
+        const y = d.date.slice(0, 4);
+        map.set(y, (map.get(y) ?? 0) + (d.totalSar ?? 0));
+      }
+      const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+      return { labels: sorted.map(([k]) => k), values: sorted.map(([, v]) => v) };
+    }
+    // 'full' — all daily data
+    if (daily.length > 0) {
+      return { labels: daily.map(d => d.date?.slice(5) ?? ''), values: daily.map(d => d.totalSar ?? 0) };
+    }
+    // fallback to day-of-week averages
+    return { labels: byDow.map(d => d.day), values: byDow.map(d => d.avgSar ?? 0) };
+  }
+
+  changePeriod(p: string): void {
+    this.seasonPeriod.set(p);
+    const old = this.charts.get('season');
+    if (old) { old.destroy(); this.charts.delete('season'); }
+    setTimeout(() => this.buildSeasonChart(this.data()?.seasonalPatterns), 0);
+  }
+
   // ─── Chart 7: Top Performers Horizontal Bar ──────────────────────────────
   private buildPerfChart(performers: any[]): void {
-    const canvas = this.getCanvas('perfChart');
+    const canvas = this.perfChartRef?.nativeElement ?? null;
     if (!canvas || !performers?.length) return;
     // Use profitMargin when purchase rates are available; fall back to totalSar otherwise
     const hasMarginData = performers.some((p: any) => (p.profitMargin ?? 0) > 0);
@@ -867,5 +958,8 @@ export class V3PremiumComponent implements OnDestroy {
   }
   fmtRate(n: number | null | undefined): string {
     return (n ?? 0).toFixed(1);
+  }
+  fmtWt(n: number | null | undefined): string {
+    return (n ?? 0).toLocaleString('ar', { maximumFractionDigits: 1 });
   }
 }

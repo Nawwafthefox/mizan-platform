@@ -303,18 +303,18 @@ export class DashboardV3ShellComponent implements OnInit {
   private router = inject(Router);
 
   tabs: V3Tab[] = [
-    { label: 'نظرة عامة',    path: 'overview' },
-    { label: 'رفع الملفات',  path: 'upload', upload: true },
-    { label: 'التنبيهات',    path: 'alerts' },
-    { label: 'الفروع',       path: 'branches' },
-    { label: 'المناطق',      path: 'regions' },
-    { label: 'الموظفون',     path: 'employees' },
-    { label: 'العيار',       path: 'karat' },
-    { label: 'موطن الذهب',   path: 'mothan' },
-    { label: 'الخارطة',      path: 'heatmap' },
-    { label: 'مقارنة',       path: 'comparison' },
-    { label: 'الأهداف',      path: 'targets' },
-    { label: '⭐ بريميوم',   path: 'premium', premium: true },
+    { label: 'نظرة عامة',    path: '/v3/overview' },
+    { label: 'رفع الملفات',  path: '/v3/upload', upload: true },
+    { label: 'التنبيهات',    path: '/v3/alerts' },
+    { label: 'الفروع',       path: '/v3/branches' },
+    { label: 'المناطق',      path: '/v3/regions' },
+    { label: 'الموظفون',     path: '/v3/employees' },
+    { label: 'العيار',       path: '/v3/karat' },
+    { label: 'موطن الذهب',   path: '/v3/mothan' },
+    { label: 'الخارطة',      path: '/v3/heatmap' },
+    { label: 'مقارنة',       path: '/v3/comparison' },
+    { label: 'الأهداف',      path: '/v3/targets' },
+    { label: '⭐ بريميوم',   path: '/v3/premium', premium: true },
   ];
 
   ngOnInit(): void {

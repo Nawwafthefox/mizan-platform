@@ -1179,16 +1179,22 @@ public class V3CalculationService {
         // ── 6. Gold exposure ──────────────────────────────────────────────────
         List<Map<String,Object>> byBranchExp = branches.stream().map(b -> {
             double bS = mapDbl(b, "totalSar"), bP = mapDbl(b, "purchCombined");
+            double bSWt = mapDbl(b, "totalWeight"), bPWt = mapDbl(b, "combinedWt");
             Map<String,Object> row = new LinkedHashMap<>();
             row.put("branchCode", b.get("branchCode")); row.put("branchName", b.get("branchName"));
             row.put("region", b.get("region")); row.put("salesSar", bS);
             row.put("purchSar", bP); row.put("netExposure", r2(bS - bP));
+            row.put("salesWt", bSWt); row.put("purchWt", bPWt);
+            row.put("netExposureWt", r2(bSWt - bPWt));
             return row;
-        }).sorted(Comparator.comparingDouble((Map<String,Object> r) -> mapDbl(r, "netExposure")).reversed())
+        }).sorted(Comparator.comparingDouble((Map<String,Object> r) -> mapDbl(r, "netExposureWt")).reversed())
           .collect(Collectors.toList());
         Map<String,Object> goldExp = new LinkedHashMap<>();
         goldExp.put("totalSalesSar", totalSar); goldExp.put("totalPurchSar", totalPurch);
-        goldExp.put("netExposure", r2(totalSar - totalPurch)); goldExp.put("byBranch", byBranchExp);
+        goldExp.put("netExposure", r2(totalSar - totalPurch));
+        goldExp.put("totalSalesWt", totalWt); goldExp.put("totalPurchWt", totalPurchWt);
+        goldExp.put("netExposureWt", r2(totalWt - totalPurchWt));
+        goldExp.put("byBranch", byBranchExp);
         result.put("goldExposure", goldExp);
 
         // ── 7. Seasonal patterns (from daily trend — parse date for DayOfWeek) ──
@@ -1233,6 +1239,9 @@ public class V3CalculationService {
             .sorted(Comparator.comparingDouble((Map<String,Object> r) -> mapDbl(r, "surplusPct")).reversed())
             .collect(Collectors.toList());
         result.put("breakEven", breakEven);
+
+        // add dailyTrend to seasonal so frontend can build different time-period views
+        ((Map<String,Object>) result.get("seasonalPatterns")).put("dailyTrend", dailyTrend);
 
         // ── 9. Top performers (flatten empGroups[].employees) ─────────────────
         List<Map<String,Object>> topP = new ArrayList<>();
