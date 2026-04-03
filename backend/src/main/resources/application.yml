@@ -23,3 +23,5 @@ mizan:
   jwt:
     secret: ${JWT_SECRET:mizan-super-secret-key-change-in-production-2026-very-long-string}
     expiration: 86400000
+  demo:
+    tenant-id: ${DEMO_TENANT_ID:demo-goldco}
