@@ -2,8 +2,11 @@ package com.mizan.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
@@ -18,10 +21,12 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class GeminiAIService {
 
-    private static final String API_KEY = "AIzaSyDMCW8XFMnnpGXsOJ5vGYyVDdVMIkF13kc";
-    private static final String GEMINI_URL =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" + API_KEY;
+    private static final String GEMINI_BASE_URL =
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=";
     private static final long AI_TTL_MS = 10 * 60 * 1000L; // 10 minutes
+
+    @Value("${mizan.gemini.api-key}")
+    private String apiKey;
 
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper  = new ObjectMapper();
@@ -1267,7 +1272,7 @@ public class GeminiAIService {
             headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
 
             org.springframework.http.ResponseEntity<java.util.Map> resp = restTemplate.postForEntity(
-                GEMINI_URL,
+                GEMINI_BASE_URL + apiKey,
                 new org.springframework.http.HttpEntity<>(body, headers),
                 java.util.Map.class);
 
@@ -1316,9 +1321,10 @@ public class GeminiAIService {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
+        String url = GEMINI_BASE_URL + apiKey;
         try {
             ResponseEntity<Map> resp = restTemplate.postForEntity(
-                GEMINI_URL, new HttpEntity<>(body, headers), Map.class);
+                url, new HttpEntity<>(body, headers), Map.class);
 
             List<Map<String, Object>> candidates =
                 (List<Map<String, Object>>) resp.getBody().get("candidates");
@@ -1331,6 +1337,12 @@ public class GeminiAIService {
             log.debug("Gemini responded with {} chars", text != null ? text.length() : 0);
             return objectMapper.readValue(text, Map.class);
 
+        } catch (HttpClientErrorException e) {
+            log.error("Gemini API client error: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return errorMap("خدمة الذكاء الاصطناعي غير متاحة مؤقتاً — AI service temporarily unavailable");
+        } catch (HttpServerErrorException e) {
+            log.error("Gemini API server error: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return errorMap("خدمة الذكاء الاصطناعي غير متاحة مؤقتاً — AI service temporarily unavailable");
         } catch (Exception e) {
             log.error("Gemini API call failed: {}", e.getMessage());
             return errorMap("خدمة الذكاء الاصطناعي غير متاحة مؤقتاً — AI service temporarily unavailable");
