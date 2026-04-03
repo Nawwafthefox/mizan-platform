@@ -35,6 +35,7 @@ public class V3ExcelImportService {
     private final V3BranchPurchaseRateRepository       rateRepo;
     private final V3BranchRepository                   branchRepo;
     private final V3EmployeeRepository                 empRepo;
+    private final V3CacheService                       cache;
 
     private static final DateTimeFormatter DD_MM_YYYY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final int PIECE_CAP = 500;
@@ -42,11 +43,13 @@ public class V3ExcelImportService {
     public V3ExcelImportService(MongoTemplate mongo,
                                  V3BranchPurchaseRateRepository rateRepo,
                                  V3BranchRepository branchRepo,
-                                 V3EmployeeRepository empRepo) {
+                                 V3EmployeeRepository empRepo,
+                                 V3CacheService cache) {
         this.mongo      = mongo;
         this.rateRepo   = rateRepo;
         this.branchRepo = branchRepo;
         this.empRepo    = empRepo;
+        this.cache      = cache;
     }
 
     // ─── Public entry points ──────────────────────────────────────────────────
@@ -93,6 +96,7 @@ public class V3ExcelImportService {
 
             int saved = bulkInsertSafe(txns, V3SaleTransaction.class);
             upsertBranches(txns.stream().map(V3SaleTransaction::getBranchCode).distinct().toList(), tenantId);
+            cache.invalidate(tenantId);
             log.info("V3 branch-sales DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
             return saved;
         }
@@ -123,6 +127,7 @@ public class V3ExcelImportService {
 
             int saved = bulkInsertSafe(txns, V3EmployeeSaleTransaction.class);
             upsertEmployees(txns, tenantId);
+            cache.invalidate(tenantId);
             log.info("V3 employee-sales DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
             return saved;
         }
@@ -153,6 +158,7 @@ public class V3ExcelImportService {
 
             int saved = bulkInsertSafe(txns, V3PurchaseTransaction.class);
             recomputePurchaseRates(tenantId);
+            cache.invalidate(tenantId);
             log.info("V3 purchases DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
             return saved;
         }
@@ -180,6 +186,7 @@ public class V3ExcelImportService {
 
             int saved = bulkInsertSafe(txns, V3MothanTransaction.class);
             recomputePurchaseRates(tenantId);
+            cache.invalidate(tenantId);
             log.info("V3 mothan DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
             return saved;
         }
