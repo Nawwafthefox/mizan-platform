@@ -492,9 +492,12 @@ export class V3OverviewComponent implements OnDestroy {
     });
   }
 
-  private buildBarChart(branches: any[]): void {
+  private buildBarChart(branches: any[], retries = 3): void {
     const el = this.branchBarCanvas?.nativeElement;
-    if (!el) return;
+    if (!el) {
+      if (retries > 0) setTimeout(() => this.buildBarChart(branches, retries - 1), 80);
+      return;
+    }
     this.barChart?.destroy();
     this.barChart = new Chart(el, {
       type: 'bar',
@@ -539,9 +542,12 @@ export class V3OverviewComponent implements OnDestroy {
     });
   }
 
-  private buildLineChart(trend: any[]): void {
+  private buildLineChart(trend: any[], retries = 3): void {
     const el = this.trendLineCanvas?.nativeElement;
-    if (!el) return;
+    if (!el) {
+      if (retries > 0) setTimeout(() => this.buildLineChart(trend, retries - 1), 80);
+      return;
+    }
     this.lineChart?.destroy();
     this.lineChart = new Chart(el, {
       type: 'line',
