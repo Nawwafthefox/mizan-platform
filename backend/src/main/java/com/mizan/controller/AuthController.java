@@ -57,9 +57,11 @@ public class AuthController {
             return ResponseEntity.status(403).body(Map.of("success",false,"message","Account disabled"));
         }
         boolean pwOk = encoder.matches(password, u.getPasswordHash());
-        log.info("LOGIN — email='{}' found=true active={} pwMatch={} hashPrefix='{}'",
+        log.info("LOGIN — email='{}' active={} pwMatch={} pwLen={} hashLen={} hashPrefix='{}'",
             emailOrUser, u.isActive(), pwOk,
-            u.getPasswordHash() != null ? u.getPasswordHash().substring(0, 7) : "null");
+            password != null ? password.length() : -1,
+            u.getPasswordHash() != null ? u.getPasswordHash().length() : -1,
+            u.getPasswordHash() != null ? u.getPasswordHash().substring(0, Math.min(7, u.getPasswordHash().length())) : "null");
         if (!pwOk)
             return ResponseEntity.status(401).body(Map.of("success",false,"message","Invalid credentials"));
         u.setLastLoginAt(LocalDateTime.now());
