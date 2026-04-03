@@ -9,6 +9,7 @@ interface V3Tab {
   premium?: boolean;
   upload?: boolean;
   back?: boolean;
+  ai?: boolean;
 }
 
 @Component({
@@ -41,11 +42,15 @@ interface V3Tab {
                 class="v3-tab"
                 [class.premium-tab]="tab.premium"
                 [class.upload-tab]="tab.upload"
+                [class.ai-tab]="tab.ai"
               >
                 <span class="v3-tab__pill"></span>
                 <span class="v3-tab__label">{{ tab.label }}</span>
                 @if (tab.premium) {
                   <span class="premium-glow-ring"></span>
+                }
+                @if (tab.ai) {
+                  <span class="ai-glow-ring"></span>
                 }
                 <span class="v3-tab__bar"></span>
               </a>
@@ -259,6 +264,27 @@ interface V3Tab {
       border-bottom-color: rgba(201,168,76,0.22);
     }
 
+    /* AI tab */
+    .v3-tab.ai-tab { color: rgba(99,179,255,.75); }
+    .v3-tab.ai-tab:hover { color: #93c5fd; }
+    .v3-tab.ai-tab.active {
+      color: #93c5fd;
+      text-shadow: 0 0 14px rgba(99,179,255,0.5);
+      .v3-tab__bar { background: linear-gradient(90deg, #63b3ff, #c9a84c); opacity: 1; transform: scaleX(1); }
+    }
+    .ai-glow-ring {
+      position: absolute; inset: 4px 2px; border-radius: 6px; pointer-events: none;
+      animation: aiPulse 2s cubic-bezier(0.4,0,0.6,1) infinite; z-index: 0;
+    }
+    @keyframes aiPulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(99,179,255,0.3), inset 0 0 8px rgba(99,179,255,0.06); }
+      50%      { box-shadow: 0 0 0 3px rgba(99,179,255,0), inset 0 0 12px rgba(99,179,255,0.12); }
+    }
+    .v3-tab.ai-tab .v3-tab__pill {
+      background: rgba(99,179,255,0.08); opacity: 1; transform: scaleY(1);
+      box-shadow: inset 0 0 0 1px rgba(99,179,255,0.18);
+    }
+
     /* Upload tab */
     .v3-tab.upload-tab { color: rgba(100,180,255,.6); }
     .v3-tab.upload-tab:hover { color: rgba(100,180,255,.9); }
@@ -412,6 +438,7 @@ export class DashboardV3ShellComponent implements OnInit {
     { label: 'مقارنة',       path: '/v3/comparison' },
     { label: 'الأهداف',      path: '/v3/targets' },
     { label: '⭐ بريميوم',   path: '/v3/premium', premium: true },
+    { label: '🤖 الذكاء الاصطناعي', path: '/v3/ai', ai: true },
   ];
 
   ngOnInit(): void {

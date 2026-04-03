@@ -65,6 +65,11 @@ export const DASHBOARD_V3_ROUTES: Routes = [
           import('./pages/v3-premium.component').then(m => m.V3PremiumComponent)
       },
       {
+        path: 'ai',
+        loadComponent: () =>
+          import('./pages/v3-ai.component').then(m => m.V3AIComponent)
+      },
+      {
         path: 'upload',
         loadComponent: () =>
           import('./pages/coming-soon.component').then(m => m.ComingSoonComponent)
