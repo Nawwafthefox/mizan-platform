@@ -6,13 +6,16 @@ import {
   inject,
   signal,
   effect,
+  afterNextRender,
+  Injector,
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Chart, registerables } from 'chart.js';
 import { V3DashboardService } from '../services/v3-dashboard.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
 import { V3KpiCardComponent } from '../shared/v3-kpi-card.component';
-import { forkJoin } from 'rxjs';
+import { forkJoin, of } from 'rxjs';
+import { catchError } from 'rxjs/operators';
 
 Chart.register(...registerables);
 
@@ -416,8 +419,11 @@ export class V3OverviewComponent implements OnDestroy {
   top5    = signal<any[]>([]);
   bottom5 = signal<any[]>([]);
 
-  private barChart:  Chart | null = null;
-  private lineChart: Chart | null = null;
+  private barChart:   Chart | null = null;
+  private lineChart:  Chart | null = null;
+  private pendingBar: any[] | null = null;
+  private pendingLine: any[] | null = null;
+  private injector = inject(Injector);
 
   constructor() {
     effect(() => {
@@ -434,26 +440,36 @@ export class V3OverviewComponent implements OnDestroy {
     this.destroyCharts();
 
     forkJoin({
-      overview: this.svc.getOverview(from, to),
-      branches: this.svc.getBranchSummary(from, to),
-      trend:    this.svc.getDailyTrend(from, to),
-      alerts:   this.svc.getAlerts(from, to),
+      overview: this.svc.getOverview(from, to).pipe(catchError(() => of(null))),
+      branches: this.svc.getBranchSummary(from, to).pipe(catchError(() => of([]))),
+      trend:    this.svc.getDailyTrend(from, to).pipe(catchError(() => of([]))),
+      alerts:   this.svc.getAlerts(from, to).pipe(catchError(() => of([]))),
     }).subscribe({
       next: ({ overview, branches, trend, alerts }) => {
+        if (!overview) {
+          this.error.set('فشل تحميل البيانات');
+          this.loading.set(false);
+          return;
+        }
         this.data.set(overview);
 
-        const sorted = [...branches].sort((a, b) => b.totalSar - a.totalSar);
+        const sorted = [...(branches as any[])].sort((a, b) => b.totalSar - a.totalSar);
         this.branches.set(sorted);
         this.top5.set(sorted.slice(0, 5));
         this.bottom5.set([...sorted].sort((a, b) => a.net - b.net).slice(0, 5));
-        this.trend.set(trend ?? []);
-        this.alerts.set(alerts ?? []);
+        this.trend.set(trend as any[] ?? []);
+        this.alerts.set(alerts as any[] ?? []);
+
+        this.pendingBar  = sorted.slice(0, 8);
+        this.pendingLine = trend as any[] ?? [];
         this.loading.set(false);
 
-        setTimeout(() => {
-          this.buildBarChart(sorted.slice(0, 8));
-          this.buildLineChart(trend ?? []);
-        }, 50);
+        // afterNextRender fires after Angular renders the @if/@else block,
+        // guaranteeing @ViewChild canvas refs are in the DOM
+        afterNextRender(() => {
+          if (this.pendingBar)  { this.buildBarChart(this.pendingBar);   this.pendingBar  = null; }
+          if (this.pendingLine) { this.buildLineChart(this.pendingLine); this.pendingLine = null; }
+        }, { injector: this.injector });
       },
       error: (err) => {
         this.error.set('فشل تحميل البيانات: ' + (err?.message ?? 'خطأ غير معروف'));
