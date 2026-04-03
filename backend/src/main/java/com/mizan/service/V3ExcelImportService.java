@@ -36,6 +36,7 @@ public class V3ExcelImportService {
     private final V3BranchRepository                   branchRepo;
     private final V3EmployeeRepository                 empRepo;
     private final V3CacheService                       cache;
+    private final V3ImportStatusService                statusSvc;
 
     private static final DateTimeFormatter DD_MM_YYYY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final int PIECE_CAP = 500;
@@ -44,12 +45,14 @@ public class V3ExcelImportService {
                                  V3BranchPurchaseRateRepository rateRepo,
                                  V3BranchRepository branchRepo,
                                  V3EmployeeRepository empRepo,
-                                 V3CacheService cache) {
+                                 V3CacheService cache,
+                                 V3ImportStatusService statusSvc) {
         this.mongo      = mongo;
         this.rateRepo   = rateRepo;
         this.branchRepo = branchRepo;
         this.empRepo    = empRepo;
         this.cache      = cache;
+        this.statusSvc  = statusSvc;
     }
 
     // ─── Public entry points ──────────────────────────────────────────────────
@@ -58,17 +61,17 @@ public class V3ExcelImportService {
     // Pattern: PARSE ALL → validate count → DELETE old range → INSERT new.
     // If parse produces 0 records, existing data is NEVER deleted.
 
-    public int importByType(String type, byte[] bytes, String filename, String tenantId) throws Exception {
+    public int importByType(String type, byte[] bytes, String filename, String tenantId, String importId) throws Exception {
         return switch (type) {
-            case "branch-sales"   -> importBranchSales(bytes, filename, tenantId);
-            case "employee-sales" -> importEmployeeSales(bytes, filename, tenantId);
-            case "purchases"      -> importPurchases(bytes, filename, tenantId);
-            case "mothan"         -> importMothan(bytes, filename, tenantId);
+            case "branch-sales"   -> importBranchSales(bytes, filename, tenantId, importId);
+            case "employee-sales" -> importEmployeeSales(bytes, filename, tenantId, importId);
+            case "purchases"      -> importPurchases(bytes, filename, tenantId, importId);
+            case "mothan"         -> importMothan(bytes, filename, tenantId, importId);
             default -> throw new IllegalArgumentException("Unknown import type: " + type);
         };
     }
 
-    public int importBranchSales(byte[] bytes, String filename, String tenantId) throws Exception {
+    public int importBranchSales(byte[] bytes, String filename, String tenantId, String importId) throws Exception {
         log.info("V3 branch-sales START: '{}' {} bytes, tenant={}", filename, bytes.length, tenantId);
         long t0 = System.currentTimeMillis();
         try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
@@ -85,6 +88,9 @@ public class V3ExcelImportService {
                 return 0;
             }
 
+            int total = txns.size();
+            statusSvc.update(importId, "deleting", total, 0, total);
+
             LocalDate minDate = txns.stream().map(V3SaleTransaction::getSaleDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
             LocalDate maxDate = txns.stream().map(V3SaleTransaction::getSaleDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
             log.info("V3 branch-sales date range: {} to {}, totalSar={}", minDate, maxDate,
@@ -94,7 +100,8 @@ public class V3ExcelImportService {
                 .and("saleDate").gte(minDate).lte(maxDate)), V3SaleTransaction.class).getDeletedCount();
             log.info("V3 branch-sales deleted {} existing records for range {} – {}", deleted, minDate, maxDate);
 
-            int saved = bulkInsertSafe(txns, V3SaleTransaction.class);
+            statusSvc.update(importId, "saving", total, 0, total);
+            int saved = bulkInsertSafe(txns, V3SaleTransaction.class, importId);
             upsertBranches(txns.stream().map(V3SaleTransaction::getBranchCode).distinct().toList(), tenantId);
             cache.invalidate(tenantId);
             log.info("V3 branch-sales DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
@@ -102,7 +109,7 @@ public class V3ExcelImportService {
         }
     }
 
-    public int importEmployeeSales(byte[] bytes, String filename, String tenantId) throws Exception {
+    public int importEmployeeSales(byte[] bytes, String filename, String tenantId, String importId) throws Exception {
         log.info("V3 employee-sales START: '{}' {} bytes", filename, bytes.length);
         long t0 = System.currentTimeMillis();
         try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
@@ -118,6 +125,9 @@ public class V3ExcelImportService {
                 return 0;
             }
 
+            int total = txns.size();
+            statusSvc.update(importId, "deleting", total, 0, total);
+
             LocalDate minDate = txns.stream().map(V3EmployeeSaleTransaction::getSaleDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
             LocalDate maxDate = txns.stream().map(V3EmployeeSaleTransaction::getSaleDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
 
@@ -125,7 +135,8 @@ public class V3ExcelImportService {
                 .and("saleDate").gte(minDate).lte(maxDate)), V3EmployeeSaleTransaction.class).getDeletedCount();
             log.info("V3 employee-sales deleted {} existing, range {} – {}", deleted, minDate, maxDate);
 
-            int saved = bulkInsertSafe(txns, V3EmployeeSaleTransaction.class);
+            statusSvc.update(importId, "saving", total, 0, total);
+            int saved = bulkInsertSafe(txns, V3EmployeeSaleTransaction.class, importId);
             upsertEmployees(txns, tenantId);
             cache.invalidate(tenantId);
             log.info("V3 employee-sales DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
@@ -133,7 +144,7 @@ public class V3ExcelImportService {
         }
     }
 
-    public int importPurchases(byte[] bytes, String filename, String tenantId) throws Exception {
+    public int importPurchases(byte[] bytes, String filename, String tenantId, String importId) throws Exception {
         log.info("V3 purchases START: '{}' {} bytes", filename, bytes.length);
         long t0 = System.currentTimeMillis();
         try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
@@ -149,6 +160,9 @@ public class V3ExcelImportService {
                 return 0;
             }
 
+            int total = txns.size();
+            statusSvc.update(importId, "deleting", total, 0, total);
+
             LocalDate minDate = txns.stream().map(V3PurchaseTransaction::getPurchaseDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
             LocalDate maxDate = txns.stream().map(V3PurchaseTransaction::getPurchaseDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
 
@@ -156,7 +170,8 @@ public class V3ExcelImportService {
                 .and("purchaseDate").gte(minDate).lte(maxDate)), V3PurchaseTransaction.class).getDeletedCount();
             log.info("V3 purchases deleted {} existing, range {} – {}", deleted, minDate, maxDate);
 
-            int saved = bulkInsertSafe(txns, V3PurchaseTransaction.class);
+            statusSvc.update(importId, "saving", total, 0, total);
+            int saved = bulkInsertSafe(txns, V3PurchaseTransaction.class, importId);
             recomputePurchaseRates(tenantId);
             cache.invalidate(tenantId);
             log.info("V3 purchases DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
@@ -164,7 +179,7 @@ public class V3ExcelImportService {
         }
     }
 
-    public int importMothan(byte[] bytes, String filename, String tenantId) throws Exception {
+    public int importMothan(byte[] bytes, String filename, String tenantId, String importId) throws Exception {
         log.info("V3 mothan START: '{}' {} bytes", filename, bytes.length);
         long t0 = System.currentTimeMillis();
         try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
@@ -177,6 +192,9 @@ public class V3ExcelImportService {
                 return 0;
             }
 
+            int total = txns.size();
+            statusSvc.update(importId, "deleting", total, 0, total);
+
             LocalDate minDate = txns.stream().map(V3MothanTransaction::getTransactionDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
             LocalDate maxDate = txns.stream().map(V3MothanTransaction::getTransactionDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
 
@@ -184,7 +202,8 @@ public class V3ExcelImportService {
                 .and("transactionDate").gte(minDate).lte(maxDate)), V3MothanTransaction.class).getDeletedCount();
             log.info("V3 mothan deleted {} existing, range {} – {}", deleted, minDate, maxDate);
 
-            int saved = bulkInsertSafe(txns, V3MothanTransaction.class);
+            statusSvc.update(importId, "saving", total, 0, total);
+            int saved = bulkInsertSafe(txns, V3MothanTransaction.class, importId);
             recomputePurchaseRates(tenantId);
             cache.invalidate(tenantId);
             log.info("V3 mothan DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
@@ -577,7 +596,7 @@ public class V3ExcelImportService {
             r.setComputedAt(LocalDateTime.now());
             rates.add(r);
         }
-        if (!rates.isEmpty()) bulkInsertSafe(rates, V3BranchPurchaseRate.class);
+        if (!rates.isEmpty()) bulkInsertSafe(rates, V3BranchPurchaseRate.class, null);
         log.info("V3 purchase rates recomputed for {} branches", rates.size());
     }
 
@@ -695,11 +714,12 @@ public class V3ExcelImportService {
 
     private static double round4(double v) { return Math.round(v * 10000.0) / 10000.0; }
 
-    private <T> int bulkInsertSafe(List<T> items, Class<T> clazz) {
+    private <T> int bulkInsertSafe(List<T> items, Class<T> clazz, String importId) {
         int saved = 0;
         int batchSz = 200;
-        for (int i = 0; i < items.size(); i += batchSz) {
-            List<T> batch = items.subList(i, Math.min(i + batchSz, items.size()));
+        int total = items.size();
+        for (int i = 0; i < total; i += batchSz) {
+            List<T> batch = items.subList(i, Math.min(i + batchSz, total));
             try {
                 mongo.insertAll(batch);
                 saved += batch.size();
@@ -710,8 +730,11 @@ public class V3ExcelImportService {
                     catch (Exception e) { log.error("Individual insert failed: {}", e.getMessage()); }
                 }
             }
+            if (importId != null && !importId.isEmpty()) {
+                statusSvc.update(importId, "saving", total, saved, total);
+            }
             if (i > 0 && i % 2000 == 0) {
-                log.info("  progress: {}/{} saved", saved, items.size());
+                log.info("  progress: {}/{} saved", saved, total);
             }
         }
         return saved;

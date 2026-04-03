@@ -50,6 +50,23 @@ export class UploadService {
     return this.http.post<ApiResponse<any>>(`${environment.apiUrl}/admin/wipe-data`, null);
   }
 
+  /** POST files to the V3 import endpoint; returns { importId } immediately. */
+  uploadV3(files: File[], type: string): Observable<ApiResponse<{ importId: string }>> {
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f, f.name));
+    return this.http.post<ApiResponse<{ importId: string }>>(
+      `${environment.apiUrl}/v3/import/${type}`, formData);
+  }
+
+  /** Poll V3 import progress by importId. */
+  getV3ImportStatus(importId: string): Observable<ApiResponse<{
+    status: string; parsed: number; saved: number; total: number;
+    error: string; startedAt: number; completedAt: number;
+  }>> {
+    return this.http.get<ApiResponse<any>>(
+      `${environment.apiUrl}/v3/import/status/${importId}`);
+  }
+
   exportNormalizedDb(): void {
     this.downloadFile(`${environment.apiUrl}/export/normalized-db`);
   }

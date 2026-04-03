@@ -447,14 +447,18 @@ export class UploadComponent implements OnDestroy {
   private eventSource?: EventSource;
   private progressMap = new Map<UploadType, UploadProgress>();
   private sseTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  private pollIntervals = new Map<UploadType, ReturnType<typeof setInterval>>();
 
-  private readonly SSE_TIMEOUT_MS = 120_000; // 120 s of silence → assume complete
+  private readonly SSE_TIMEOUT_MS    = 120_000;
+  private readonly POLL_INTERVAL_MS  = 3_000;
+  private readonly POLL_TIMEOUT_MS   = 300_000; // 5 min safety limit
 
   constructor() { this.loadHistory(); }
 
   ngOnDestroy() {
     this.eventSource?.close();
     if (this.sseTimeoutId) clearTimeout(this.sseTimeoutId);
+    this.pollIntervals.forEach(id => clearInterval(id));
   }
 
   getInput(type: UploadType): HTMLInputElement {
@@ -482,26 +486,122 @@ export class UploadComponent implements OnDestroy {
     card.error = '';
     card.savedCount = 0;
 
-    this.svc.requestToken().subscribe({
-      next: tokenRes => {
-        const { uploadId, token } = tokenRes.data!;
-        this.subscribeToProgress(uploadId, token, card);
-        this.svc.uploadTyped(card.files, uploadId, card.type).subscribe({
-          next: () => {
-            card.uploading = false;
-            card.files = [];
-          },
-          error: err => {
-            card.uploading = false;
-            card.error = err?.error?.message || 'فشل الرفع';
-          }
-        });
+    this.svc.uploadV3(card.files, card.type).subscribe({
+      next: res => {
+        const importId = res.data!.importId;
+        this.startV3Polling(importId, card);
       },
       error: err => {
         card.uploading = false;
         card.error = err?.error?.message || 'فشل الحصول على رمز الرفع';
       }
     });
+  }
+
+  private startV3Polling(importId: string, card: UploadCard): void {
+    this.allDone.set(false);
+
+    // Clear any previous poll for this card type
+    const existing = this.pollIntervals.get(card.type);
+    if (existing) clearInterval(existing);
+
+    // Set an initial "parsing" progress entry
+    const initProg: UploadProgress = {
+      uploadId: importId, fileName: card.files.map(f => f.name).join(', '),
+      fileType: card.type.toUpperCase().replace('-', '_'),
+      status: 'processing', percent: 0, phaseAr: 'جاري التحليل...'
+    };
+    this.progressMap.set(card.type, initProg);
+    this.progresses.update(list => [...list.filter(p => p.uploadId !== importId), initProg]);
+
+    const startTime = Date.now();
+
+    const poll = setInterval(() => {
+      // Safety timeout: 5 minutes
+      if (Date.now() - startTime > this.POLL_TIMEOUT_MS) {
+        clearInterval(poll);
+        this.pollIntervals.delete(card.type);
+        this.finishCard(card, importId, 0, false, true, 'انتهت مهلة الاستيراد');
+        return;
+      }
+
+      this.svc.getV3ImportStatus(importId).subscribe({
+        next: res => {
+          const s = res.data!;
+          const phaseAr = this.phaseLabel(s.status);
+          const pct     = s.total > 0 ? Math.min(Math.round(s.saved / s.total * 100), 99) : 0;
+
+          if (s.status === 'complete') {
+            clearInterval(poll);
+            this.pollIntervals.delete(card.type);
+            this.finishCard(card, importId, s.saved, false, false);
+          } else if (s.status === 'error') {
+            clearInterval(poll);
+            this.pollIntervals.delete(card.type);
+            this.finishCard(card, importId, s.saved, true, false, s.error);
+          } else {
+            const prog: UploadProgress = {
+              uploadId: importId,
+              fileName: card.files.map(f => f.name).join(', '),
+              fileType: card.type.toUpperCase().replace('-', '_'),
+              status: 'processing', percent: pct, phaseAr,
+              savedRecords: s.saved > 0 ? s.saved : undefined
+            };
+            this.progressMap.set(card.type, prog);
+            this.progresses.update(list => {
+              const copy = [...list];
+              const idx = copy.findIndex(p => p.uploadId === importId);
+              if (idx >= 0) copy[idx] = prog; else copy.push(prog);
+              return copy;
+            });
+          }
+        },
+        error: () => { /* keep polling — transient network error */ }
+      });
+    }, this.POLL_INTERVAL_MS);
+
+    this.pollIntervals.set(card.type, poll);
+  }
+
+  private finishCard(card: UploadCard, importId: string, savedCount: number,
+      isError: boolean, timedOut: boolean, errorMsg?: string): void {
+    card.uploading = false;
+    if (isError || timedOut) {
+      card.error = errorMsg || 'فشل الرفع';
+    } else {
+      card.done = true;
+      card.savedCount = savedCount;
+      card.files = [];
+    }
+    const prog: UploadProgress = {
+      uploadId: importId,
+      fileName: '',
+      fileType: card.type.toUpperCase().replace('-', '_'),
+      status:   isError ? 'error' : 'success',
+      percent:  isError ? 0 : 100,
+      savedRecords: savedCount,
+      phaseAr: isError ? 'خطأ' : timedOut ? 'انتهت المهلة' : 'اكتمل ✅'
+    };
+    this.progressMap.set(card.type, prog);
+    this.progresses.update(list => {
+      const copy = [...list];
+      const idx = copy.findIndex(p => p.uploadId === importId);
+      if (idx >= 0) copy[idx] = prog; else copy.push(prog);
+      return copy;
+    });
+    this.allDone.set(true);
+    setTimeout(() => this.loadHistory(), 1000);
+  }
+
+  private phaseLabel(status: string): string {
+    const map: Record<string, string> = {
+      parsing:  'جاري التحليل...',
+      deleting: 'جاري الحذف...',
+      saving:   'جاري الحفظ...',
+      complete: 'اكتمل ✅',
+      error:    'خطأ'
+    };
+    return map[status] ?? status;
   }
 
   private subscribeToProgress(uploadId: string, token: string, card: UploadCard): void {
