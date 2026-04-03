@@ -256,6 +256,8 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
   loading  = signal(false);
   alertsExpanded = signal(false);
 
+  private _pendingTrend: any[] | null = null;
+
   // Expose constant to template
   readonly CIRC = CIRC;
 
@@ -442,8 +444,11 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
 
   ngAfterViewInit(): void {
     this.viewReady = true;
-    if (this.branches().length > 0) {
-      setTimeout(() => this.buildCharts(), 0);
+    if (!this.loading() && this.branches().length > 0) {
+      setTimeout(() => {
+        this.buildCharts();
+        if (this._pendingTrend) this.buildTrendChart(this._pendingTrend);
+      }, 80);
     }
   }
 
@@ -455,9 +460,19 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
 
   load(): void {
     this.loading.set(true);
+    this._pendingTrend = null;
     const from = this.dr.getFrom(), to = this.dr.getTo();
     let done = 0;
-    const check = () => { if (++done === 4) this.loading.set(false); };
+    const check = () => {
+      if (++done === 4) {
+        this.loading.set(false);
+        // All data is loaded → canvases are now in the DOM; build charts
+        setTimeout(() => {
+          this.buildCharts();
+          if (this._pendingTrend) this.buildTrendChart(this._pendingTrend);
+        }, 80);
+      }
+    };
 
     this.svc.getSummary(from, to).subscribe({
       next: r => { this.summary.set(r.data ?? null); check(); },
@@ -465,11 +480,7 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
     });
 
     this.svc.getBranches(from, to).subscribe({
-      next: r => {
-        this.branches.set(r.data ?? []);
-        check();
-        if (this.viewReady) setTimeout(() => this.buildCharts(), 0);
-      },
+      next: r => { this.branches.set(r.data ?? []); check(); },
       error: () => check()
     });
 
@@ -479,10 +490,7 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
     });
 
     this.svc.getDailyTrend(from, to).subscribe({
-      next: r => {
-        if (this.viewReady) setTimeout(() => this.buildTrendChart(r.data ?? []), 0);
-        check();
-      },
+      next: r => { this._pendingTrend = r.data ?? []; check(); },
       error: () => check()
     });
   }
