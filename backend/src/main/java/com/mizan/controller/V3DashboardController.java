@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -36,6 +37,16 @@ public class V3DashboardController {
         Object data = compute.get();
         cache.put(key, data);
         return ResponseEntity.ok(Map.of("success", true, "data", data));
+    }
+
+    /** Returns cached data or computes+caches it, without wrapping in ResponseEntity. */
+    @SuppressWarnings("unchecked")
+    private <T> T fetch(String cacheKey, java.util.function.Supplier<T> compute) {
+        T hit = cache.get(cacheKey);
+        if (hit != null) return hit;
+        T data = compute.get();
+        cache.put(cacheKey, data);
+        return data;
     }
 
     // ── endpoints ─────────────────────────────────────────────────────────────
@@ -176,7 +187,23 @@ public class V3DashboardController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
         String tid = TenantContext.getTenantId();
-        return cached(tid, "premium", from, to,
-            () -> calcSvc.getPremiumDashboard(tid, from, to));
+        String premKey = key(tid, "premium", from, to);
+        Object hit = cache.get(premKey);
+        if (hit != null) return ResponseEntity.ok(Map.of("success", true, "data", hit, "cached", true));
+
+        // Each fetch() returns from cache or computes+caches — zero duplicate MongoDB calls
+        List<Map<String,Object>> branches  = fetch(key(tid, "branch-summary",        from, to),
+            () -> calcSvc.getBranchSummaries(tid, from, to));
+        List<Map<String,Object>> empGroups = fetch(key(tid, "employee-performance",   from, to),
+            () -> calcSvc.getEmployeePerformance(tid, from, to));
+        List<Map<String,Object>> trend     = fetch(key(tid, "daily-trend",            from, to),
+            () -> calcSvc.getDailyTrend(tid, from, to));
+        Map<String,Object>       karatData = fetch(key(tid, "karat-breakdown",        from, to),
+            () -> calcSvc.getKaratBreakdown(tid, from, to));
+
+        // Pure Java — zero MongoDB queries
+        Object data = calcSvc.buildPremiumFromData(branches, empGroups, trend, karatData, from, to);
+        cache.put(premKey, data);
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 }
