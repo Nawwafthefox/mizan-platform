@@ -77,31 +77,42 @@ public class DataInitializer {
     private void upsert(DemoUser spec) {
         String hash = encoder.encode(spec.password());
 
-        userRepo.findByEmailIgnoreCase(spec.email()).ifPresentOrElse(
-            existing -> {
-                existing.setPasswordHash(hash);
-                existing.setRole(spec.role());
-                existing.setFullNameAr(spec.nameAr());
-                existing.setActive(true);
-                if (spec.tenantId() != null) existing.setTenantId(spec.tenantId());
-                userRepo.save(existing);
-                log.info("DataInitializer: updated  {}", spec.email());
-            },
-            () -> {
-                User u = new User();
-                u.setEmail(spec.email());
-                u.setPasswordHash(hash);
-                u.setRole(spec.role());
-                u.setFullNameAr(spec.nameAr());
-                u.setTenantId(spec.tenantId());
-                u.setActive(true);
-                u.setMustChangePassword(false);
-                u.setCreatedAt(LocalDateTime.now());
-                u.setCreatedBy("system");
-                userRepo.save(u);
-                log.info("DataInitializer: created  {}", spec.email());
-            }
-        );
+        List<User> all = userRepo.findAllByEmailIgnoreCase(spec.email());
+
+        if (all.size() > 1) {
+            // Delete all duplicates, keep only the first
+            log.warn("DataInitializer: found {} duplicates for {} — deleting extras", all.size(), spec.email());
+            all.subList(1, all.size()).forEach(userRepo::delete);
+        }
+
+        if (all.isEmpty()) {
+            User u = new User();
+            u.setEmail(spec.email());
+            u.setPasswordHash(hash);
+            u.setRole(spec.role());
+            u.setFullNameAr(spec.nameAr());
+            u.setTenantId(spec.tenantId());
+            u.setActive(true);
+            u.setMustChangePassword(false);
+            u.setCreatedAt(LocalDateTime.now());
+            u.setCreatedBy("system");
+            userRepo.save(u);
+            log.info("DataInitializer: created  {}", spec.email());
+        } else {
+            User existing = all.get(0);
+            existing.setPasswordHash(hash);
+            existing.setRole(spec.role());
+            existing.setFullNameAr(spec.nameAr());
+            existing.setActive(true);
+            existing.setMustChangePassword(false);
+            if (spec.tenantId() != null) existing.setTenantId(spec.tenantId());
+            userRepo.save(existing);
+            // Read back to confirm the write actually persisted
+            userRepo.findById(existing.getUserId()).ifPresent(reloaded -> {
+                boolean ok = encoder.matches(spec.password(), reloaded.getPasswordHash());
+                log.info("DataInitializer: updated {} — verify={}", spec.email(), ok ? "OK" : "FAIL");
+            });
+        }
     }
 
     private record DemoUser(String email, String password, String role, String nameAr, String tenantId) {}
