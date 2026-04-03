@@ -5,7 +5,8 @@ import com.mizan.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Component;
 
@@ -13,18 +14,22 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * DataInitializer — seeds the 8 fixed demo users on every startup.
+ * DataInitializer — seeds / updates the 8 fixed demo users.
  *
- * Strategy: upsert by email (update if exists, create if missing).
- * Never deletes users not in this list; never creates duplicates.
+ * Fires on ApplicationReadyEvent (after Atlas TLS handshake completes),
+ * not CommandLineRunner (which fires too early on Render and causes
+ * MongoTimeoutException before the connection pool is established).
  *
- * Env var DEMO_TENANT_ID must be set in Render (or defaults to "demo-goldco").
- * superadmin@mizan.com is platform-level — tenantId set to null.
+ * Strategy: upsert by email — update if exists, create if missing.
+ * Never deletes other users; never creates duplicates.
+ *
+ * Env var DEMO_TENANT_ID must be set in Render dashboard.
+ * superadmin@mizan.com is platform-level (tenantId = null).
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class DataInitializer implements CommandLineRunner {
+public class DataInitializer {
 
     private final UserRepository userRepo;
 
@@ -33,58 +38,68 @@ public class DataInitializer implements CommandLineRunner {
 
     private static final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
-    @Override
-    public void run(String... args) {
+    @EventListener(ApplicationReadyEvent.class)
+    public void seed() {
         log.info("DataInitializer: seeding demo users (tenantId={}) …", demoTenantId);
 
         List<DemoUser> users = List.of(
-            new DemoUser("admin@goldco.com",      "Mizan@2024",      "COMPANY_ADMIN",   "مدير الشركة",       demoTenantId),
-            new DemoUser("ceo@goldco.com",         "Mizan@2024",      "CEO",             "الرئيس التنفيذي",   demoTenantId),
-            new DemoUser("headsales@goldco.com",   "Mizan@2024",      "HEAD_OF_SALES",   "مدير المبيعات",     demoTenantId),
-            new DemoUser("regionmgr@goldco.com",   "Mizan@2024",      "REGION_MANAGER",  "مدير المنطقة",      demoTenantId),
-            new DemoUser("branchmgr@goldco.com",   "Mizan@2024",      "BRANCH_MANAGER",  "مدير الفرع",        demoTenantId),
-            new DemoUser("employee@goldco.com",    "Mizan@2024",      "BRANCH_EMPLOYEE", "موظف المبيعات",     demoTenantId),
-            new DemoUser("dataentry@goldco.com",   "Mizan@2024",      "DATA_ENTRY",      "مدخل البيانات",     demoTenantId),
-            new DemoUser("superadmin@mizan.com",   "SuperAdmin@2024", "SUPER_ADMIN",     "مدير المنصة",       null)
+            new DemoUser("admin@goldco.com",     "Mizan@2024",      "COMPANY_ADMIN",   "مدير الشركة",       demoTenantId),
+            new DemoUser("ceo@goldco.com",        "Mizan@2024",      "CEO",             "الرئيس التنفيذي",   demoTenantId),
+            new DemoUser("headsales@goldco.com",  "Mizan@2024",      "HEAD_OF_SALES",   "مدير المبيعات",     demoTenantId),
+            new DemoUser("regionmgr@goldco.com",  "Mizan@2024",      "REGION_MANAGER",  "مدير المنطقة",      demoTenantId),
+            new DemoUser("branchmgr@goldco.com",  "Mizan@2024",      "BRANCH_MANAGER",  "مدير الفرع",        demoTenantId),
+            new DemoUser("employee@goldco.com",   "Mizan@2024",      "BRANCH_EMPLOYEE", "موظف المبيعات",     demoTenantId),
+            new DemoUser("dataentry@goldco.com",  "Mizan@2024",      "DATA_ENTRY",      "مدخل البيانات",     demoTenantId),
+            new DemoUser("superadmin@mizan.com",  "SuperAdmin@2024", "SUPER_ADMIN",     "مدير المنصة",       null)
         );
 
+        int ok = 0;
         for (DemoUser spec : users) {
-            try {
-                upsert(spec);
-            } catch (Exception e) {
-                log.error("DataInitializer: failed to upsert {} — {}", spec.email, e.getMessage());
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    upsert(spec);
+                    ok++;
+                    break;
+                } catch (Exception e) {
+                    log.warn("DataInitializer: attempt {}/3 failed for {} — {}", attempt, spec.email(), e.getMessage());
+                    if (attempt < 3) {
+                        try { Thread.sleep(2000L * attempt); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                    } else {
+                        log.error("DataInitializer: gave up on {}", spec.email());
+                    }
+                }
             }
         }
 
-        log.info("DataInitializer: done.");
+        log.info("DataInitializer: done — {}/{} users seeded.", ok, users.size());
     }
 
     private void upsert(DemoUser spec) {
-        String hash = encoder.encode(spec.password);
+        String hash = encoder.encode(spec.password());
 
-        userRepo.findByEmailIgnoreCase(spec.email).ifPresentOrElse(
+        userRepo.findByEmailIgnoreCase(spec.email()).ifPresentOrElse(
             existing -> {
                 existing.setPasswordHash(hash);
-                existing.setRole(spec.role);
-                existing.setFullNameAr(spec.nameAr);
+                existing.setRole(spec.role());
+                existing.setFullNameAr(spec.nameAr());
                 existing.setActive(true);
-                if (spec.tenantId != null) existing.setTenantId(spec.tenantId);
+                if (spec.tenantId() != null) existing.setTenantId(spec.tenantId());
                 userRepo.save(existing);
-                log.info("DataInitializer: updated  {}", spec.email);
+                log.info("DataInitializer: updated  {}", spec.email());
             },
             () -> {
                 User u = new User();
-                u.setEmail(spec.email);
+                u.setEmail(spec.email());
                 u.setPasswordHash(hash);
-                u.setRole(spec.role);
-                u.setFullNameAr(spec.nameAr);
-                u.setTenantId(spec.tenantId);
+                u.setRole(spec.role());
+                u.setFullNameAr(spec.nameAr());
+                u.setTenantId(spec.tenantId());
                 u.setActive(true);
                 u.setMustChangePassword(false);
                 u.setCreatedAt(LocalDateTime.now());
                 u.setCreatedBy("system");
                 userRepo.save(u);
-                log.info("DataInitializer: created  {}", spec.email);
+                log.info("DataInitializer: created  {}", spec.email());
             }
         );
     }
