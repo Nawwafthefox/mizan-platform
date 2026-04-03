@@ -5,4 +5,5 @@ import java.util.List;
 
 public interface UploadLogRepository extends MongoRepository<UploadLog, String> {
     List<UploadLog> findByTenantIdOrderByUploadedAtDesc(String tenantId);
+    List<UploadLog> findAllByOrderByUploadedAtDesc();
 }

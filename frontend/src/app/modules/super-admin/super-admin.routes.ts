@@ -8,9 +8,13 @@ export const SUPER_ADMIN_ROUTES: Routes = [
     component: SuperAdminShellComponent,
     canActivate: [superAdminGuard],
     children: [
-      { path: 'dashboard', loadComponent: () => import('./super-admin-dashboard.component').then(m => m.SuperAdminDashboardComponent) },
-      { path: 'tenants',   loadComponent: () => import('./tenants.component').then(m => m.TenantsComponent) },
-      { path: 'tiers',     loadComponent: () => import('./tiers.component').then(m => m.TiersComponent) },
+      { path: 'dashboard',   loadComponent: () => import('./super-admin-dashboard.component').then(m => m.SuperAdminDashboardComponent) },
+      { path: 'tenants',     loadComponent: () => import('./tenants.component').then(m => m.TenantsComponent) },
+      { path: 'tiers',       loadComponent: () => import('./tiers.component').then(m => m.TiersComponent) },
+      { path: 'users',       loadComponent: () => import('./users-management.component').then(m => m.UsersManagementComponent) },
+      { path: 'audit-logs',  loadComponent: () => import('./audit-logs.component').then(m => m.AuditLogsComponent) },
+      { path: 'upload-logs', loadComponent: () => import('./upload-logs.component').then(m => m.UploadLogsComponent) },
+      { path: 'system',      loadComponent: () => import('./system-controls.component').then(m => m.SystemControlsComponent) },
       { path: '', redirectTo: 'dashboard', pathMatch: 'full' }
     ]
   }
