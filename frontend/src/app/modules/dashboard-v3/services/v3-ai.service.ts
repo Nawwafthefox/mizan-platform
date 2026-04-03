@@ -26,4 +26,15 @@ export class V3AIService {
         return r.data;
       }));
   }
+
+  /** Free-form chat — never cached. */
+  chat(question: string, from: string, to: string): Observable<any> {
+    return this.http
+      .post<{ success: boolean; data: any }>(
+        `${environment.apiUrl}/v3/ai/chat`,
+        { question },
+        { params: { from, to } }
+      )
+      .pipe(map(r => r.data));
+  }
 }

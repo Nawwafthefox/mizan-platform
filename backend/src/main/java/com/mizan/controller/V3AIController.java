@@ -27,7 +27,7 @@ public class V3AIController {
     }
 
     /**
-     * Supported features: executive | branches | employees | karat | daily-trend
+     * Supported features: executive | branches | employees | karat | daily-trend | …
      */
     @GetMapping("/{feature}")
     public ResponseEntity<?> aiFeature(
@@ -39,6 +39,29 @@ public class V3AIController {
         log.info("AI request — feature={} tenant={} from={} to={}", feature, tenantId, from, to);
 
         Map<String, Object> result = aiService.processFeature(feature, tenantId, from, to);
+        return ResponseEntity.ok(Map.of("success", true, "data", result));
+    }
+
+    /**
+     * Free-form chat with MIZAN AI.
+     * Not cached — every question is unique.
+     */
+    @PostMapping("/chat")
+    public ResponseEntity<?> chat(
+            @RequestBody Map<String, String> body,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+
+        String question = body.get("question");
+        if (question == null || question.isBlank()) {
+            return ResponseEntity.badRequest()
+                .body(Map.of("success", false, "error", "question is required"));
+        }
+        String tenantId = TenantContext.getTenantId();
+        log.info("AI chat — tenant={} from={} to={} q='{}'", tenantId, from, to,
+            question.length() > 80 ? question.substring(0, 80) + "…" : question);
+
+        Map<String, Object> result = aiService.chat(question, tenantId, from, to);
         return ResponseEntity.ok(Map.of("success", true, "data", result));
     }
 }
