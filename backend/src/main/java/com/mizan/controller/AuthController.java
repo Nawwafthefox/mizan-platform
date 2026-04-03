@@ -4,6 +4,7 @@ import com.mizan.repository.UserRepository;
 import com.mizan.security.JwtTokenProvider;
 import com.mizan.security.MizanUserDetails;
 import com.mizan.security.TenantContext;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -45,12 +47,20 @@ public class AuthController {
         String emailOrUser = body.get("usernameOrEmail");
         String password = body.get("password");
         Optional<User> opt = userRepo.findByEmailIgnoreCase(emailOrUser);
-        if (opt.isEmpty())
+        if (opt.isEmpty()) {
+            log.warn("LOGIN FAIL — user not found: '{}'", emailOrUser);
             return ResponseEntity.status(401).body(Map.of("success",false,"message","Invalid credentials"));
+        }
         User u = opt.get();
-        if (!u.isActive())
+        if (!u.isActive()) {
+            log.warn("LOGIN FAIL — account disabled: '{}'", emailOrUser);
             return ResponseEntity.status(403).body(Map.of("success",false,"message","Account disabled"));
-        if (!encoder.matches(password, u.getPasswordHash()))
+        }
+        boolean pwOk = encoder.matches(password, u.getPasswordHash());
+        log.info("LOGIN — email='{}' found=true active={} pwMatch={} hashPrefix='{}'",
+            emailOrUser, u.isActive(), pwOk,
+            u.getPasswordHash() != null ? u.getPasswordHash().substring(0, 7) : "null");
+        if (!pwOk)
             return ResponseEntity.status(401).body(Map.of("success",false,"message","Invalid credentials"));
         u.setLastLoginAt(LocalDateTime.now());
         userRepo.save(u);
