@@ -3247,7 +3247,8 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
         // Replace typing indicator with real answer
         this.chatMessages.update(msgs => {
           const copy = [...msgs];
-          const idx  = copy.findLastIndex(m => m.isTyping);
+          let idx = -1;
+          for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].isTyping) { idx = i; break; } }
           if (idx >= 0) copy[idx] = { role: 'ai', data, ts: new Date() };
           return copy;
         });
@@ -3258,7 +3259,8 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
       error: () => {
         this.chatMessages.update(msgs => {
           const copy = [...msgs];
-          const idx  = copy.findLastIndex(m => m.isTyping);
+          let idx = -1;
+          for (let i = copy.length - 1; i >= 0; i--) { if (copy[i].isTyping) { idx = i; break; } }
           if (idx >= 0) copy[idx] = {
             role: 'ai',
             data: {
