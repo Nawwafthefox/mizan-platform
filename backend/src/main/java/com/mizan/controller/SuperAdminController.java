@@ -39,9 +39,10 @@ public class SuperAdminController {
         long active = all.stream().filter(t->"ACTIVE".equals(t.getSubscriptionStatus())).count();
         long trial = all.stream().filter(t->"TRIAL".equals(t.getSubscriptionStatus())).count();
         long suspended = all.stream().filter(t->"SUSPENDED".equals(t.getSubscriptionStatus())).count();
+        long totalUsers = userRepo.count();
         return ResponseEntity.ok(Map.of("success",true,"data",Map.of(
-            "tenantCount",all.size(),"activeCount",active,"trialCount",trial,
-            "suspendedCount",suspended,"mrr",0)));
+            "totalTenants",all.size(),"activeTenants",active+trial,
+            "suspendedTenants",suspended,"totalUsers",totalUsers)));
     }
 
     @GetMapping("/tenants")
