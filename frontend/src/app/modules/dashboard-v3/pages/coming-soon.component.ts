@@ -256,9 +256,9 @@ function blank(type: string, label: string, icon: string): CardState {
                 <tr>
                   <td>موطن الذهب</td>
                   <td>{{ diag().v3_mothan_transactions | number }}</td>
-                  <td class="exp">~385</td>
-                  <td [style.color]="diagColor(diag().v3_mothan_transactions, 385)">
-                    {{ diagPct(diag().v3_mothan_transactions, 385) }}%
+                  <td class="exp">~383</td>
+                  <td [style.color]="diagColor(diag().v3_mothan_transactions, 383)">
+                    {{ diagPct(diag().v3_mothan_transactions, 383) }}%
                   </td>
                 </tr>
                 @if (diag().sales_agg) {

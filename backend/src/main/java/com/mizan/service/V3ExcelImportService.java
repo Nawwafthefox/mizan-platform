@@ -541,17 +541,28 @@ public class V3ExcelImportService {
         return result;
     }
 
+    private static final java.time.format.DateTimeFormatter[] MOTHAN_DATE_FMTS = {
+        DD_MM_YYYY,                                                         // DD/MM/YYYY
+        java.time.format.DateTimeFormatter.ofPattern("d/M/yyyy"),           // D/M/YYYY (no zero-pad)
+        java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"),         // DD-MM-YYYY
+        java.time.format.DateTimeFormatter.ofPattern("d-M-yyyy"),           // D-M-YYYY
+        java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"),         // YYYY/MM/DD
+        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"),         // ISO
+        java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"),         // US MM/DD/YYYY
+    };
+
     private LocalDate parseMothanDate(Row row, int col) {
         Cell cell = row.getCell(col);
         if (cell == null) return null;
-        if (cell.getCellType() == CellType.STRING) {
-            String s = cell.getStringCellValue().trim();
-            try { return LocalDate.parse(s, DD_MM_YYYY); } catch (Exception ignored) {}
-            try { return LocalDate.parse(s); } catch (Exception ignored) {}
-        }
         if (cell.getCellType() == CellType.NUMERIC) {
             double v = cell.getNumericCellValue();
-            if (v > 40000 && v < 60000) return parseSerialDate(v);
+            if (v > 30000 && v < 70000) return parseSerialDate(v);   // widened from 40k-60k
+        }
+        if (cell.getCellType() == CellType.STRING) {
+            String s = cell.getStringCellValue().trim();
+            for (java.time.format.DateTimeFormatter fmt : MOTHAN_DATE_FMTS) {
+                try { return LocalDate.parse(s, fmt); } catch (Exception ignored) {}
+            }
         }
         return null;
     }
