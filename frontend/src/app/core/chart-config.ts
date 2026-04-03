@@ -46,7 +46,7 @@ export function pieDataLabels() {
       const pct = ((value / total) * 100);
       return pct < 3 ? '' : pct.toFixed(1) + '%';
     },
-  };
+  } as any;
 }
 
 // ── Crosshair plugin — vertical gold dashed line on hover ─────────────────
