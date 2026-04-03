@@ -3,7 +3,10 @@ package com.mizan.service;
 import com.mizan.config.BranchMaps;
 import com.mizan.model.*;
 import lombok.extern.slf4j.Slf4j;
+import org.bson.Document;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
+import org.springframework.data.mongodb.core.aggregation.AggregationOperation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
@@ -27,97 +30,75 @@ public class V3CalculationService {
         this.mongo = mongo;
     }
 
-    // ─── Internal aggregate holder ────────────────────────────────────────────
+    // ─── Branch summaries ─────────────────────────────────────────────────────
 
-    private static class BranchAgg {
-        String code;
-        double totalSar, totalWeight;
-        long   totalPieces;
-        double returns;
-        Set<LocalDate> returnDates = new HashSet<>();
-        double k18Sar, k18Wt, k21Sar, k21Wt, k22Sar, k22Wt, k24Sar, k24Wt;
-        double purchSar, purchWt, mothanSar, mothanWt;
+    public List<Map<String, Object>> getBranchSummaries(String tenantId, LocalDate from, LocalDate to) {
+        // Use MongoDB aggregations — returns ~29 rows instead of loading 26K+ documents
+        Map<String, Document> sMap = toDocMap(aggSalesByBranch(tenantId, from, to));
+        Map<String, Document> pMap = toDocMap(aggPurchasesByBranch(tenantId, from, to));
+        Map<String, Document> mMap = toDocMap(aggMothanByBranch(tenantId, from, to));
+        Map<String, Double>   rates = queryFallbackRates(tenantId);
 
-        BranchAgg(String code) { this.code = code; }
+        Set<String> codes = new LinkedHashSet<>(sMap.keySet());
+        codes.addAll(pMap.keySet());
+        codes.addAll(mMap.keySet());
 
-        void addSale(V3SaleTransaction s) {
-            totalSar    += s.getSarAmount();
-            totalWeight += s.getPureWeightG();
-            totalPieces += Math.abs(s.getPieces());
-            if (s.getSarAmount() < 0) {
-                returns += Math.abs(s.getSarAmount());
-                if (s.getSaleDate() != null) returnDates.add(s.getSaleDate());
-            }
-            String k = s.getKarat(); if (k == null) return;
-            switch (k) {
-                case "18" -> { k18Sar += Math.abs(s.getSarAmount()); k18Wt += Math.abs(s.getPureWeightG()); }
-                case "21" -> { k21Sar += Math.abs(s.getSarAmount()); k21Wt += Math.abs(s.getPureWeightG()); }
-                case "22" -> { k22Sar += Math.abs(s.getSarAmount()); k22Wt += Math.abs(s.getPureWeightG()); }
-                case "24" -> { k24Sar += Math.abs(s.getSarAmount()); k24Wt += Math.abs(s.getPureWeightG()); }
-            }
-        }
-        void addPurch(V3PurchaseTransaction p) { purchSar += p.getSarAmount(); purchWt += p.getPureWeightG(); }
-        void addMothan(V3MothanTransaction m)   { mothanSar += m.getAmountSar(); mothanWt += m.getWeightDebitG(); }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (String code : codes) {
+            Document s = sMap.getOrDefault(code, new Document());
+            Document p = pMap.getOrDefault(code, new Document());
+            Document m = mMap.getOrDefault(code, new Document());
 
-        Map<String, Object> toMap(Map<String, Double> fallbackRates) {
-            double combSar  = purchSar + mothanSar;
-            double combWt   = purchWt  + mothanWt;
-            double saleRate = totalWeight != 0 ? r4(totalSar / totalWeight) : 0;
-            double purchRate = combWt > 0 ? r4(combSar / combWt)
-                : fallbackRates.getOrDefault(code, 0.0);
+            double totalSar    = dbl(s, "totalSar");
+            double totalWeight = dbl(s, "totalWeight");
+            long   totalPieces = lng(s, "totalPieces");
+            double returns     = dbl(s, "returns");
+            int    returnDays  = returnDays(s);
+            double k18Sar = dbl(s,"k18Sar"), k18Wt = dbl(s,"k18Wt");
+            double k21Sar = dbl(s,"k21Sar"), k21Wt = dbl(s,"k21Wt");
+            double k22Sar = dbl(s,"k22Sar"), k22Wt = dbl(s,"k22Wt");
+            double k24Sar = dbl(s,"k24Sar"), k24Wt = dbl(s,"k24Wt");
+            double purchSar  = dbl(p, "purchSar");
+            double purchWt   = dbl(p, "purchWt");
+            double mothanSar = dbl(m, "mothanSar");
+            double mothanWt  = dbl(m, "mothanWt");
+
+            double combSar   = purchSar + mothanSar;
+            double combWt    = purchWt  + mothanWt;
+            double saleRate  = totalWeight != 0 ? r4(totalSar / totalWeight) : 0;
+            double purchRate = combWt > 0 ? r4(combSar / combWt) : rates.getOrDefault(code, 0.0);
             double diffRate  = purchRate > 0 ? r4(saleRate - purchRate) : 0;
             double net       = totalSar - combSar;
             double avgInv    = totalPieces > 0 ? r2(totalSar / totalPieces) : 0;
 
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("branchCode",   code);
-            m.put("branchName",   BranchMaps.getName(code));
-            m.put("region",       BranchMaps.getRegion(code));
-            m.put("totalSar",     totalSar);
-            m.put("totalWeight",  totalWeight);
-            m.put("totalPieces",  totalPieces);
-            m.put("returns",      returns);
-            m.put("returnDays",   returnDates.size());
-            m.put("k18Sar", k18Sar); m.put("k18Wt", k18Wt);
-            m.put("k21Sar", k21Sar); m.put("k21Wt", k21Wt);
-            m.put("k22Sar", k22Sar); m.put("k22Wt", k22Wt);
-            m.put("k24Sar", k24Sar); m.put("k24Wt", k24Wt);
-            m.put("purchSar",     purchSar);
-            m.put("purchWt",      purchWt);
-            m.put("mothanSar",    mothanSar);
-            m.put("mothanWt",     mothanWt);
-            m.put("purchCombined", combSar);
-            m.put("combinedWt",   combWt);
-            m.put("saleRate",     saleRate);
-            m.put("purchRate",    purchRate);
-            m.put("diffRate",     diffRate);
-            m.put("net",          net);
-            m.put("avgInvoice",   avgInv);
-            return m;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("branchCode",    code);
+            row.put("branchName",    BranchMaps.getName(code));
+            row.put("region",        BranchMaps.getRegion(code));
+            row.put("totalSar",      totalSar);
+            row.put("totalWeight",   totalWeight);
+            row.put("totalPieces",   totalPieces);
+            row.put("returns",       returns);
+            row.put("returnDays",    returnDays);
+            row.put("k18Sar", k18Sar); row.put("k18Wt", k18Wt);
+            row.put("k21Sar", k21Sar); row.put("k21Wt", k21Wt);
+            row.put("k22Sar", k22Sar); row.put("k22Wt", k22Wt);
+            row.put("k24Sar", k24Sar); row.put("k24Wt", k24Wt);
+            row.put("purchSar",      purchSar);
+            row.put("purchWt",       purchWt);
+            row.put("mothanSar",     mothanSar);
+            row.put("mothanWt",      mothanWt);
+            row.put("purchCombined", combSar);
+            row.put("combinedWt",    combWt);
+            row.put("saleRate",      saleRate);
+            row.put("purchRate",     purchRate);
+            row.put("diffRate",      diffRate);
+            row.put("net",           net);
+            row.put("avgInvoice",    avgInv);
+            result.add(row);
         }
-    }
-
-    // ─── Branch summaries ─────────────────────────────────────────────────────
-
-    public List<Map<String, Object>> getBranchSummaries(String tenantId, LocalDate from, LocalDate to) {
-        List<V3SaleTransaction>     sales     = querySales(tenantId, from, to);
-        List<V3PurchaseTransaction> purchases = queryPurchases(tenantId, from, to);
-        List<V3MothanTransaction>   mothan    = queryMothan(tenantId, from, to);
-        Map<String, Double>         rates     = queryFallbackRates(tenantId);
-
-        Map<String, BranchAgg> map = new LinkedHashMap<>();
-        for (V3SaleTransaction s : sales)
-            map.computeIfAbsent(s.getBranchCode(), BranchAgg::new).addSale(s);
-        for (V3PurchaseTransaction p : purchases)
-            map.computeIfAbsent(p.getBranchCode(), BranchAgg::new).addPurch(p);
-        for (V3MothanTransaction m : mothan)
-            if (m.getWeightDebitG() > 0)
-                map.computeIfAbsent(m.getBranchCode(), BranchAgg::new).addMothan(m);
-
-        return map.values().stream()
-            .map(a -> a.toMap(rates))
-            .sorted(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("totalSar")).reversed())
-            .collect(Collectors.toList());
+        result.sort(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("totalSar")).reversed());
+        return result;
     }
 
     // ─── Overview KPIs ────────────────────────────────────────────────────────
@@ -236,35 +217,38 @@ public class V3CalculationService {
     // ─── Daily trend ──────────────────────────────────────────────────────────
 
     public List<Map<String, Object>> getDailyTrend(String tenantId, LocalDate from, LocalDate to) {
-        List<V3SaleTransaction>     sales     = querySales(tenantId, from, to);
-        List<V3PurchaseTransaction> purchases = queryPurchases(tenantId, from, to);
-        List<V3MothanTransaction>   mothan    = queryMothan(tenantId, from, to);
+        // Use daily aggregations — returns ~90 rows instead of loading 26K+ documents
+        List<Document> salesDays  = aggSalesByDay(tenantId, from, to);
+        List<Document> purchDays  = aggPurchasesByDay(tenantId, from, to);
+        List<Document> mothanDays = aggMothanByDay(tenantId, from, to);
 
-        Map<LocalDate, double[]> dayMap = new TreeMap<>(); // [sar, wt, purch, mothan]
-        for (V3SaleTransaction s : sales) {
-            double[] d = dayMap.computeIfAbsent(s.getSaleDate(), k -> new double[4]);
-            d[0] += s.getSarAmount(); d[1] += s.getPureWeightG();
+        Map<String, double[]> dayMap = new TreeMap<>(); // [sar, wt, purch, mothan]
+        for (Document d : salesDays) {
+            String date = toDateString(d.get("_id"));
+            if (date.isEmpty()) continue;
+            double[] arr = dayMap.computeIfAbsent(date, k -> new double[4]);
+            arr[0] += dbl(d, "totalSar"); arr[1] += dbl(d, "totalWeight");
         }
-        for (V3PurchaseTransaction p : purchases) {
-            double[] d = dayMap.computeIfAbsent(p.getPurchaseDate(), k -> new double[4]);
-            d[2] += p.getSarAmount();
+        for (Document d : purchDays) {
+            String date = toDateString(d.get("_id"));
+            if (date.isEmpty()) continue;
+            dayMap.computeIfAbsent(date, k -> new double[4])[2] += dbl(d, "totalSar");
         }
-        for (V3MothanTransaction m : mothan) {
-            if (m.getWeightDebitG() > 0) {
-                double[] d = dayMap.computeIfAbsent(m.getTransactionDate(), k -> new double[4]);
-                d[3] += m.getAmountSar();
-            }
+        for (Document d : mothanDays) {
+            String date = toDateString(d.get("_id"));
+            if (date.isEmpty()) continue;
+            dayMap.computeIfAbsent(date, k -> new double[4])[3] += dbl(d, "totalSar");
         }
 
         List<Map<String, Object>> trend = new ArrayList<>();
-        for (Map.Entry<LocalDate, double[]> e : dayMap.entrySet()) {
+        for (Map.Entry<String, double[]> e : dayMap.entrySet()) {
             double[] d = e.getValue();
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("date",       e.getKey().toString());
-            row.put("totalSar",   d[0]);
+            row.put("date",        e.getKey());
+            row.put("totalSar",    d[0]);
             row.put("totalWeight", d[1]);
-            row.put("purchases",  d[2] + d[3]);
-            row.put("net",        d[0] - d[2] - d[3]);
+            row.put("purchases",   d[2] + d[3]);
+            row.put("net",         d[0] - d[2] - d[3]);
             trend.add(row);
         }
         return trend;
@@ -748,6 +732,135 @@ public class V3CalculationService {
         return mongo.find(Query.query(Criteria.where("tenantId").is(tenantId)), V3BranchPurchaseRate.class)
             .stream().collect(Collectors.toMap(V3BranchPurchaseRate::getBranchCode,
                 V3BranchPurchaseRate::getPurchaseRate, (a, b) -> a));
+    }
+
+    // ─── Aggregation helpers ──────────────────────────────────────────────────
+
+    private List<Document> aggSalesByBranch(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId).and("saleDate").gte(from).lte(to));
+        AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$branchCode")
+            .append("totalSar",    new Document("$sum", "$sarAmount"))
+            .append("totalWeight", new Document("$sum", "$pureWeightG"))
+            .append("totalPieces", new Document("$sum", new Document("$abs", "$pieces")))
+            .append("returns", new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$lt", Arrays.asList("$sarAmount", 0)),
+                new Document("$abs", "$sarAmount"), 0))))
+            .append("returnDates", new Document("$addToSet", new Document("$cond", Arrays.asList(
+                new Document("$lt", Arrays.asList("$sarAmount", 0)),
+                "$saleDate", null))))
+            .append("k18Sar", new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$eq", Arrays.asList("$karat", "18")),
+                new Document("$abs", "$sarAmount"), 0))))
+            .append("k18Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$eq", Arrays.asList("$karat", "18")),
+                new Document("$abs", "$pureWeightG"), 0))))
+            .append("k21Sar", new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$eq", Arrays.asList("$karat", "21")),
+                new Document("$abs", "$sarAmount"), 0))))
+            .append("k21Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$eq", Arrays.asList("$karat", "21")),
+                new Document("$abs", "$pureWeightG"), 0))))
+            .append("k22Sar", new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$eq", Arrays.asList("$karat", "22")),
+                new Document("$abs", "$sarAmount"), 0))))
+            .append("k22Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$eq", Arrays.asList("$karat", "22")),
+                new Document("$abs", "$pureWeightG"), 0))))
+            .append("k24Sar", new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$eq", Arrays.asList("$karat", "24")),
+                new Document("$abs", "$sarAmount"), 0))))
+            .append("k24Wt",  new Document("$sum", new Document("$cond", Arrays.asList(
+                new Document("$eq", Arrays.asList("$karat", "24")),
+                new Document("$abs", "$pureWeightG"), 0)))));
+        return mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3SaleTransaction.class, Document.class).getMappedResults();
+    }
+
+    private List<Document> aggPurchasesByBranch(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId).and("purchaseDate").gte(from).lte(to));
+        AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$branchCode")
+            .append("purchSar", new Document("$sum", "$sarAmount"))
+            .append("purchWt",  new Document("$sum", "$pureWeightG")));
+        return mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3PurchaseTransaction.class, Document.class).getMappedResults();
+    }
+
+    private List<Document> aggMothanByBranch(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId)
+                .and("transactionDate").gte(from).lte(to)
+                .and("weightDebitG").gt(0));
+        AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$branchCode")
+            .append("mothanSar", new Document("$sum", "$amountSar"))
+            .append("mothanWt",  new Document("$sum", "$weightDebitG")));
+        return mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3MothanTransaction.class, Document.class).getMappedResults();
+    }
+
+    private List<Document> aggSalesByDay(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId).and("saleDate").gte(from).lte(to));
+        AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$saleDate")
+            .append("totalSar",    new Document("$sum", "$sarAmount"))
+            .append("totalWeight", new Document("$sum", "$pureWeightG")));
+        return mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3SaleTransaction.class, Document.class).getMappedResults();
+    }
+
+    private List<Document> aggPurchasesByDay(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId).and("purchaseDate").gte(from).lte(to));
+        AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$purchaseDate")
+            .append("totalSar", new Document("$sum", "$sarAmount")));
+        return mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3PurchaseTransaction.class, Document.class).getMappedResults();
+    }
+
+    private List<Document> aggMothanByDay(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId)
+                .and("transactionDate").gte(from).lte(to)
+                .and("weightDebitG").gt(0));
+        AggregationOperation group = ctx -> new Document("$group", new Document("_id", "$transactionDate")
+            .append("totalSar", new Document("$sum", "$amountSar")));
+        return mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3MothanTransaction.class, Document.class).getMappedResults();
+    }
+
+    // ─── Document helpers ─────────────────────────────────────────────────────
+
+    private static Map<String, Document> toDocMap(List<Document> docs) {
+        Map<String, Document> map = new LinkedHashMap<>();
+        for (Document d : docs) {
+            String key = d.getString("_id");
+            if (key != null) map.put(key, d);
+        }
+        return map;
+    }
+
+    private static double dbl(Document d, String key) {
+        Object v = d.get(key);
+        return v instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    private static long lng(Document d, String key) {
+        Object v = d.get(key);
+        return v instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private static int returnDays(Document d) {
+        Object v = d.get("returnDates");
+        if (!(v instanceof List<?> list)) return 0;
+        return (int) list.stream().filter(x -> x != null).count();
+    }
+
+    private static String toDateString(Object id) {
+        if (id == null) return "";
+        if (id instanceof java.util.Date date)
+            return date.toInstant().atZone(java.time.ZoneOffset.UTC).toLocalDate().toString();
+        return id.toString();
     }
 
     // ─── Math ─────────────────────────────────────────────────────────────────
