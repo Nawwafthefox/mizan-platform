@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { DashboardService } from '../../../core/services/dashboard.service';
 import { DateRangeService } from '../../../core/services/date-range.service';
 import { DateFilterComponent } from '../../../shared/components/date-filter/date-filter.component';
+import { fmtCompact, barDataLabels, pieDataLabels } from '../../../core/chart-config';
 import { Chart, registerables } from 'chart.js';
 
 Chart.register(...registerables);
@@ -164,9 +165,16 @@ export class KaratComponent implements OnInit, OnDestroy, AfterViewInit {
           type: 'doughnut',
           data: {
             labels: list.map(x => x.label),
-            datasets: [{ data: list.map(x => x.wt), backgroundColor: list.map(x => x.color) }]
+            datasets: [{ data: list.map(x => x.wt), backgroundColor: list.map(x => x.color), hoverOffset: 8 }]
           },
-          options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+          options: {
+            responsive: true,
+            cutout: '65%',
+            plugins: {
+              legend: { position: 'bottom' },
+              datalabels: pieDataLabels()
+            }
+          }
         });
       }
     }
@@ -179,13 +187,25 @@ export class KaratComponent implements OnInit, OnDestroy, AfterViewInit {
         data: {
           labels: bs.map((b: any) => b.branchName),
           datasets: [
-            { label: 'عيار 18', data: bs.map((b: any) => b.k18Sar), backgroundColor: '#94a3b8' },
-            { label: 'عيار 21', data: bs.map((b: any) => b.k21Sar), backgroundColor: '#c9a84c' },
-            { label: 'عيار 22', data: bs.map((b: any) => b.k22Sar), backgroundColor: '#f59e0b' },
-            { label: 'عيار 24', data: bs.map((b: any) => b.k24Sar), backgroundColor: '#10b981' },
+            { label: 'عيار 18', data: bs.map((b: any) => b.k18Sar), backgroundColor: '#94a3b8', borderRadius: 4 },
+            { label: 'عيار 21', data: bs.map((b: any) => b.k21Sar), backgroundColor: '#c9a84c', borderRadius: 4 },
+            { label: 'عيار 22', data: bs.map((b: any) => b.k22Sar), backgroundColor: '#f59e0b', borderRadius: 4 },
+            { label: 'عيار 24', data: bs.map((b: any) => b.k24Sar), backgroundColor: '#10b981', borderRadius: 4 },
           ]
         },
-        options: { responsive: true, plugins: { legend: { position: 'top' } }, scales: { x: { stacked: true }, y: { stacked: true } } }
+        options: {
+          responsive: true,
+          barPercentage: 0.72,
+          categoryPercentage: 0.85,
+          plugins: {
+            legend: { position: 'top' },
+            datalabels: barDataLabels()
+          },
+          scales: {
+            x: { stacked: true },
+            y: { stacked: true, ticks: { callback: (v: any) => fmtCompact(+v) } }
+          }
+        }
       });
     }
   }

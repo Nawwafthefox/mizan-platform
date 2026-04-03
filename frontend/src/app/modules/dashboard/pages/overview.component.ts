@@ -13,6 +13,7 @@ import { MizanPipe } from '../../../shared/pipes/mizan.pipe';
 import { fmtN, fmtSar, fmtWt } from '../../../shared/utils/format.utils';
 import { UploadService } from '../../../core/services/upload.service';
 import { Chart, registerables } from 'chart.js';
+import { fmtCompact, barDataLabels, pieDataLabels } from '../../../core/chart-config';
 
 Chart.register(...registerables);
 
@@ -524,12 +525,14 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { position: 'top', labels: { boxWidth: 12, font: { size: 10 }, color: 'rgba(255,255,255,0.6)' } }
+          legend: { position: 'top', labels: { boxWidth: 12, font: { size: 10 }, color: 'rgba(255,255,255,0.6)' } },
+          datalabels: { display: false }
         },
         scales: {
           x: { grid: { display: false }, ticks: { maxTicksLimit: 10, maxRotation: 0, font: { size: 9 }, color: 'rgba(255,255,255,0.5)' } },
-          y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: (v: any) => fmtN(+v), font: { size: 9 }, color: 'rgba(255,255,255,0.5)' } }
+          y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { callback: (v: any) => fmtCompact(+v), font: { size: 9 }, color: 'rgba(255,255,255,0.5)' } }
         }
       }
     });
@@ -547,11 +550,26 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
         data: {
           labels: top8.map(b => b.name),
           datasets: [
-            { label: 'المبيعات',   data: top8.map(b => b.sar),             backgroundColor: 'rgba(201,168,76,.75)' },
-            { label: 'المشتريات', data: top8.map(b => b.purch + b.mothan), backgroundColor: 'rgba(52,211,153,.55)'  },
+            { label: 'المبيعات',   data: top8.map(b => b.sar),             backgroundColor: 'rgba(201,168,76,0.8)', borderRadius: 4 },
+            { label: 'المشتريات', data: top8.map(b => b.purch + b.mothan), backgroundColor: 'rgba(52,211,153,0.65)', borderRadius: 4 },
           ]
         },
-        options: { responsive: true, plugins: { legend: { position: 'top' } } }
+        options: {
+          responsive: true,
+          barPercentage: 0.72,
+          categoryPercentage: 0.85,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top' },
+            datalabels: barDataLabels()
+          },
+          scales: {
+            y: {
+              grid: { color: 'rgba(255,255,255,0.04)' },
+              ticks: { callback: (v: any) => fmtCompact(+v) }
+            }
+          }
+        }
       });
     }
 
@@ -564,9 +582,16 @@ export class OverviewComponent implements OnInit, OnDestroy, AfterViewInit {
         type: 'doughnut',
         data: {
           labels: regions,
-          datasets: [{ data: regions.map(r => regionMap[r]), backgroundColor: regions.map(r => this.ana.getRegionColor(r)) }]
+          datasets: [{ data: regions.map(r => regionMap[r]), backgroundColor: regions.map(r => this.ana.getRegionColor(r)), hoverOffset: 8 }]
         },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+        options: {
+          responsive: true,
+          cutout: '65%',
+          plugins: {
+            legend: { position: 'bottom' },
+            datalabels: pieDataLabels()
+          }
+        }
       });
     }
   }

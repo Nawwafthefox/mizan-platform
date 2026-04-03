@@ -11,6 +11,7 @@ import {
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Chart, registerables } from 'chart.js';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 import { V3DashboardService } from '../services/v3-dashboard.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
 import { forkJoin, of } from 'rxjs';
@@ -554,6 +555,8 @@ export class V3EmployeesComponent implements OnDestroy {
           borderColor:     top10.map(e => e.profitMargin >= 0 ? '#c9a84c' : '#ef4444'),
           borderWidth: 1,
           borderRadius: 4,
+          barPercentage: 0.72,
+          categoryPercentage: 0.85,
         }]
       },
       options: {
@@ -566,14 +569,15 @@ export class V3EmployeesComponent implements OnDestroy {
             callbacks: {
               label: ctx => ' هامش الربح: ' + Number(ctx.raw).toLocaleString('ar')
             }
-          }
+          },
+          datalabels: barDataLabels(),
         },
         scales: {
           x: {
             ticks: {
               color: 'rgba(255,255,255,.6)',
               font: { size: 10 },
-              callback: (v) => Number(v).toLocaleString('ar')
+              callback: (v: any) => fmtCompact(+v)
             },
             grid: { color: 'rgba(255,255,255,.08)' }
           },

@@ -6,6 +6,7 @@ import { DateRangeService } from '../../../core/services/date-range.service';
 import { DateFilterComponent } from '../../../shared/components/date-filter/date-filter.component';
 import { AuthService } from '../../../core/services/auth.service';
 import { Chart, registerables } from 'chart.js';
+import { fmtCompact } from '../../../core/chart-config';
 
 Chart.register(...registerables);
 
@@ -181,7 +182,18 @@ export class MyPerformanceComponent implements OnInit, OnDestroy, AfterViewInit 
           fill: true
         }]
       },
-      options: { responsive: true, plugins: { legend: { display: false } } }
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          datalabels: { display: false }
+        },
+        scales: {
+          y: {
+            ticks: { callback: (v: any) => fmtCompact(+v) }
+          }
+        }
+      }
     });
   }
 

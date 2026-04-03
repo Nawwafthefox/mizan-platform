@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Chart, registerables } from 'chart.js';
+import { fmtCompact, barDataLabels, pieDataLabels } from '../../../core/chart-config';
 import { V3DashboardService } from '../services/v3-dashboard.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
 
@@ -513,20 +514,21 @@ export class V3KaratComponent implements OnDestroy {
           backgroundColor: KARAT_KEYS.map(k => KARAT_BG[k]),
           borderColor:     KARAT_KEYS.map(k => KARAT_COLORS[k]),
           borderWidth: 2,
-          hoverOffset: 6,
+          hoverOffset: 8,
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: true,
-        cutout: '62%',
+        cutout: '65%',
         plugins: {
           legend: { display: false },
           tooltip: {
             callbacks: {
               label: ctx => ' ' + ctx.label + ': ' + Number(ctx.raw).toLocaleString('ar') + ' ريال (' + (totals[KARAT_KEYS[ctx.dataIndex]]?.pct ?? 0).toFixed(1) + '%)'
             }
-          }
+          },
+          datalabels: pieDataLabels(),
         }
       }
     });
@@ -548,7 +550,9 @@ export class V3KaratComponent implements OnDestroy {
           backgroundColor: KARAT_BG[k],
           borderColor: KARAT_COLORS[k],
           borderWidth: 1,
-          borderRadius: 2,
+          borderRadius: 4,
+          barPercentage: 0.72,
+          categoryPercentage: 0.85,
         }))
       },
       options: {
@@ -562,7 +566,8 @@ export class V3KaratComponent implements OnDestroy {
             callbacks: {
               label: ctx => ' ' + ctx.dataset.label + ': ' + Number(ctx.raw).toLocaleString('ar') + ' ريال'
             }
-          }
+          },
+          datalabels: barDataLabels(),
         },
         scales: {
           x: {
@@ -575,7 +580,7 @@ export class V3KaratComponent implements OnDestroy {
             ticks: {
               color: 'rgba(255,255,255,.6)',
               font: { size: 9 },
-              callback: (v) => Number(v).toLocaleString('ar')
+              callback: (v: any) => fmtCompact(+v)
             },
             grid: { color: 'rgba(255,255,255,.08)' }
           }

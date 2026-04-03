@@ -16,6 +16,7 @@ import { V3DateRangeService } from '../services/v3-date-range.service';
 import { V3KpiCardComponent } from '../shared/v3-kpi-card.component';
 import { forkJoin, of } from 'rxjs';
 import { catchError } from 'rxjs/operators';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 
 Chart.register(...registerables);
 
@@ -509,6 +510,8 @@ export class V3OverviewComponent implements OnDestroy {
           borderColor: '#c9a84c',
           borderWidth: 1,
           borderRadius: 4,
+          barPercentage: 0.72,
+          categoryPercentage: 0.85,
         }]
       },
       options: {
@@ -520,7 +523,8 @@ export class V3OverviewComponent implements OnDestroy {
             callbacks: {
               label: ctx => ' ' + Number(ctx.raw).toLocaleString('ar') + ' ريال'
             }
-          }
+          },
+          datalabels: barDataLabels(),
         },
         scales: {
           x: {
@@ -531,7 +535,7 @@ export class V3OverviewComponent implements OnDestroy {
             ticks: {
               color: 'rgba(255,255,255,.6)',
               font: { size: 10 },
-              callback: (v) => Number(v).toLocaleString('ar')
+              callback: (v: any) => fmtCompact(+v)
             },
             grid: { color: 'rgba(255,255,255,.08)' }
           }
@@ -584,7 +588,8 @@ export class V3OverviewComponent implements OnDestroy {
             callbacks: {
               label: ctx => ' ' + ctx.dataset.label + ': ' + Number(ctx.raw).toLocaleString('ar')
             }
-          }
+          },
+          datalabels: { display: false },
         },
         scales: {
           x: {
@@ -595,7 +600,7 @@ export class V3OverviewComponent implements OnDestroy {
             ticks: {
               color: 'rgba(255,255,255,.6)',
               font: { size: 10 },
-              callback: (v) => Number(v).toLocaleString('ar')
+              callback: (v: any) => fmtCompact(+v)
             },
             grid: { color: 'rgba(255,255,255,.06)' }
           }

@@ -13,6 +13,7 @@ import {
 } from 'chart.js';
 import { V3DashboardService } from '../services/v3-dashboard.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 
 Chart.register(
   LineController, LineElement, PointElement,
@@ -659,10 +660,10 @@ export class V3PremiumComponent implements OnDestroy {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${(ctx.parsed.y as number).toFixed(1)} ر/ج` } } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ` ${(ctx.parsed.y as number).toFixed(1)} ر/ج` } }, datalabels: { display: false } },
         scales: {
           x: { ticks: { color: '#6b7280', font: { size: 9 }, maxRotation: 0 }, grid: { color: 'rgba(255,255,255,0.03)' } },
-          y: { ticks: { color: '#6b7280', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,0.05)' } }
+          y: { ticks: { color: '#6b7280', font: { size: 9 }, callback: (v: any) => fmtCompact(+v) }, grid: { color: 'rgba(255,255,255,0.05)' } }
         }
       }
     } as ChartConfiguration);
@@ -721,6 +722,8 @@ export class V3PremiumComponent implements OnDestroy {
             borderColor: '#c9a84c',
             borderWidth: 1,
             borderRadius: 4,
+            barPercentage: 0.72,
+            categoryPercentage: 0.85,
           },
           {
             label: 'سعر الشراء',
@@ -729,15 +732,17 @@ export class V3PremiumComponent implements OnDestroy {
             borderColor: '#14b8a6',
             borderWidth: 1,
             borderRadius: 4,
+            barPercentage: 0.72,
+            categoryPercentage: 0.85,
           }
         ]
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 }, boxWidth: 10 } } },
+        plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 }, boxWidth: 10 } }, datalabels: barDataLabels() },
         scales: {
           x: { ticks: { color: '#6b7280' }, grid: { color: 'rgba(255,255,255,0.03)' } },
-          y: { ticks: { color: '#6b7280' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+          y: { ticks: { color: '#6b7280', callback: (v: any) => fmtCompact(+v) }, grid: { color: 'rgba(255,255,255,0.05)' } }
         }
       }
     } as ChartConfiguration);
@@ -778,10 +783,10 @@ export class V3PremiumComponent implements OnDestroy {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 }, boxWidth: 10 } } },
+        plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 }, boxWidth: 10 } }, datalabels: { display: false } },
         scales: {
           x: { ticks: { color: '#6b7280', font: { size: 9 }, maxRotation: 45 }, grid: { color: 'rgba(255,255,255,0.03)' } },
-          y: { ticks: { color: '#6b7280' }, grid: { color: 'rgba(255,255,255,0.05)' } }
+          y: { ticks: { color: '#6b7280', callback: (v: any) => fmtCompact(+v) }, grid: { color: 'rgba(255,255,255,0.05)' } }
         }
       }
     } as ChartConfiguration);
@@ -804,13 +809,17 @@ export class V3PremiumComponent implements OnDestroy {
             label: 'مبيعات (جرام)',
             data: sorted.map((b: any) => useWt ? (b.salesWt ?? 0) : b.salesSar),
             backgroundColor: 'rgba(201,168,76,0.75)',
-            borderRadius: 3,
+            borderRadius: 4,
+            barPercentage: 0.72,
+            categoryPercentage: 0.85,
           },
           {
             label: 'مشتريات (جرام)',
             data: sorted.map((b: any) => useWt ? (b.purchWt ?? 0) : b.purchSar),
             backgroundColor: 'rgba(20,184,166,0.65)',
-            borderRadius: 3,
+            borderRadius: 4,
+            barPercentage: 0.72,
+            categoryPercentage: 0.85,
           }
         ]
       },
@@ -819,10 +828,11 @@ export class V3PremiumComponent implements OnDestroy {
         responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { labels: { color: '#9ca3af', font: { size: 10 }, boxWidth: 10 } },
-          tooltip: { callbacks: { label: ctx => ` ${(ctx.parsed.x as number).toFixed(1)} جرام` } }
+          tooltip: { callbacks: { label: ctx => ` ${(ctx.parsed.x as number).toFixed(1)} جرام` } },
+          datalabels: barDataLabels({ anchor: 'end', align: 'end' }),
         },
         scales: {
-          x: { ticks: { color: '#6b7280', callback: (v: any) => `${v.toFixed(0)}ج` }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          x: { ticks: { color: '#6b7280', callback: (v: any) => fmtCompact(+v) }, grid: { color: 'rgba(255,255,255,0.04)' } },
           y: { ticks: { color: '#9ca3af', font: { size: 9 } }, grid: { display: false } }
         }
       }
@@ -854,11 +864,12 @@ export class V3PremiumComponent implements OnDestroy {
         responsive: true, maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
-          tooltip: { callbacks: { label: ctx => ` ${this.fmt(ctx.parsed.y)} ر.س` } }
+          tooltip: { callbacks: { label: ctx => ` ${this.fmt(ctx.parsed.y)} ر.س` } },
+          datalabels: { display: false },
         },
         scales: {
           x: { ticks: { color: '#9ca3af', font: { size: 9 }, maxRotation: 45, maxTicksLimit: 20 }, grid: { color: 'rgba(255,255,255,0.03)' } },
-          y: { ticks: { color: '#6b7280', callback: (v: any) => `${(v / 1000).toFixed(0)}K` }, grid: { color: 'rgba(255,255,255,0.05)' } }
+          y: { ticks: { color: '#6b7280', callback: (v: any) => fmtCompact(+v) }, grid: { color: 'rgba(255,255,255,0.05)' } }
         }
       }
     } as ChartConfiguration);
@@ -939,14 +950,16 @@ export class V3PremiumComponent implements OnDestroy {
             i === 0 ? 'rgba(201,168,76,0.9)' : `rgba(201,168,76,${0.5 - i * 0.04})`
           ),
           borderRadius: 4,
+          barPercentage: 0.72,
+          categoryPercentage: 0.85,
         }]
       },
       options: {
         indexAxis: 'y' as any,
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: { legend: { display: false }, datalabels: barDataLabels({ anchor: 'end', align: 'end' }) },
         scales: {
-          x: { ticks: { color: '#6b7280' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+          x: { ticks: { color: '#6b7280', callback: (v: any) => fmtCompact(+v) }, grid: { color: 'rgba(255,255,255,0.04)' } },
           y: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { display: false } }
         }
       }

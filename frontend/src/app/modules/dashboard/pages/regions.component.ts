@@ -5,6 +5,7 @@ import { AnalyticsService } from '../../../core/services/analytics.service';
 import { DateRangeService } from '../../../core/services/date-range.service';
 import { DateFilterComponent } from '../../../shared/components/date-filter/date-filter.component';
 import { Chart, registerables } from 'chart.js';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 
 Chart.register(...registerables);
 
@@ -141,11 +142,22 @@ export class RegionsComponent implements OnInit, OnDestroy, AfterViewInit {
       data: {
         labels: rs.map(r => r.region),
         datasets: [
-          { label: 'المبيعات', data: rs.map(r => r.totalSar), backgroundColor: rs.map(r => this.ana.getRegionColor(r.region)) },
-          { label: 'المشتريات', data: rs.map(r => r.totalPurch), backgroundColor: 'rgba(16,185,129,.4)' },
+          { label: 'المبيعات', data: rs.map(r => r.totalSar), backgroundColor: rs.map(r => this.ana.getRegionColor(r.region)), borderRadius: 4, barPercentage: 0.72, categoryPercentage: 0.85 },
+          { label: 'المشتريات', data: rs.map(r => r.totalPurch), backgroundColor: 'rgba(16,185,129,.4)', borderRadius: 4, barPercentage: 0.72, categoryPercentage: 0.85 },
         ]
       },
-      options: { responsive: true, plugins: { legend: { position: 'top' } } }
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'top' },
+          datalabels: barDataLabels(),
+        },
+        scales: {
+          y: {
+            ticks: { callback: (v: any) => fmtCompact(+v) }
+          }
+        }
+      }
     });
   }
 

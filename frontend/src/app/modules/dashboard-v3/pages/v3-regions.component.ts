@@ -12,6 +12,7 @@ import { Chart, registerables } from 'chart.js';
 import { V3DashboardService } from '../services/v3-dashboard.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
 import { V3KpiCardComponent } from '../shared/v3-kpi-card.component';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 
 Chart.register(...registerables);
 
@@ -353,6 +354,8 @@ export class V3RegionsComponent implements OnDestroy {
             borderColor: '#c9a84c',
             borderWidth: 1,
             borderRadius: 4,
+            barPercentage: 0.72,
+            categoryPercentage: 0.85,
           },
           {
             label: 'المشتريات',
@@ -361,6 +364,8 @@ export class V3RegionsComponent implements OnDestroy {
             borderColor: '#14b8a6',
             borderWidth: 1,
             borderRadius: 4,
+            barPercentage: 0.72,
+            categoryPercentage: 0.85,
           }
         ]
       },
@@ -375,7 +380,8 @@ export class V3RegionsComponent implements OnDestroy {
             callbacks: {
               label: ctx => ' ' + ctx.dataset.label + ': ' + Number(ctx.raw).toLocaleString('ar') + ' ريال'
             }
-          }
+          },
+          datalabels: barDataLabels(),
         },
         scales: {
           x: {
@@ -386,7 +392,7 @@ export class V3RegionsComponent implements OnDestroy {
             ticks: {
               color: 'rgba(255,255,255,.6)',
               font: { size: 10 },
-              callback: (v) => Number(v).toLocaleString('ar')
+              callback: (v: any) => fmtCompact(+v)
             },
             grid: { color: 'rgba(255,255,255,.08)' }
           }

@@ -8,6 +8,7 @@ import { UploadService } from '../../../core/services/upload.service';
 import { DateFilterComponent } from '../../../shared/components/date-filter/date-filter.component';
 import { MizanPipe } from '../../../shared/pipes/mizan.pipe';
 import { fmtN, fmtSar } from '../../../shared/utils/format.utils';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 import { Chart, registerables } from 'chart.js';
 
 Chart.register(...registerables);
@@ -390,13 +391,21 @@ export class EmployeesComponent implements OnInit, OnDestroy, AfterViewInit {
       data: {
         labels: top10.map(e => e.employeeName),
         datasets: [
-          { label: 'المبيعات (ر.س)',  data: top10.map(e => e.totalSar),     backgroundColor: 'rgba(201,168,76,.8)' },
-          { label: 'هامش الربح (ر.س)', data: top10.map(e => e.profitMargin ?? 0), backgroundColor: 'rgba(52,211,153,.55)' },
+          { label: 'المبيعات (ر.س)',  data: top10.map(e => e.totalSar),     backgroundColor: 'rgba(201,168,76,.8)',  borderRadius: 4 },
+          { label: 'هامش الربح (ر.س)', data: top10.map(e => e.profitMargin ?? 0), backgroundColor: 'rgba(52,211,153,.55)', borderRadius: 4 },
         ]
       },
       options: {
         responsive: true,
-        plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 10 }, color: 'rgba(255,255,255,0.6)' } } }
+        barPercentage: 0.72,
+        categoryPercentage: 0.85,
+        plugins: {
+          legend: { position: 'top', labels: { boxWidth: 12, font: { size: 10 }, color: 'rgba(255,255,255,0.6)' } },
+          datalabels: barDataLabels()
+        },
+        scales: {
+          y: { ticks: { callback: (v: any) => fmtCompact(+v) } }
+        }
       }
     });
   }

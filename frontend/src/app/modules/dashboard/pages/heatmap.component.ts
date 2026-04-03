@@ -5,6 +5,7 @@ import { AnalyticsService } from '../../../core/services/analytics.service';
 import { DateRangeService } from '../../../core/services/date-range.service';
 import { DateFilterComponent } from '../../../shared/components/date-filter/date-filter.component';
 import { Chart, registerables } from 'chart.js';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 
 Chart.register(...registerables);
 
@@ -138,13 +139,24 @@ export class HeatmapComponent implements OnInit, OnDestroy, AfterViewInit {
             if (b.diffRate >= 10) return 'rgba(16,185,129,.8)';
             if (b.diffRate >= 0) return 'rgba(245,158,11,.8)';
             return 'rgba(220,53,69,.8)';
-          })
+          }),
+          borderRadius: 4,
+          barPercentage: 0.72,
+          categoryPercentage: 0.85,
         }]
       },
       options: {
         responsive: true,
         indexAxis: 'y' as const,
-        plugins: { legend: { display: false } }
+        plugins: {
+          legend: { display: false },
+          datalabels: barDataLabels(),
+        },
+        scales: {
+          x: {
+            ticks: { callback: (v: any) => fmtCompact(+v) }
+          }
+        }
       }
     });
   }

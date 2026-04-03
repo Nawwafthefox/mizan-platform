@@ -7,6 +7,7 @@ import {
   Chart, ChartConfiguration, BarController, BarElement,
   CategoryScale, LinearScale, Tooltip, Legend
 } from 'chart.js';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 import { V3DashboardService } from '../services/v3-dashboard.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
 
@@ -383,6 +384,8 @@ export class V3HeatmapComponent implements OnDestroy {
             borderColor: colors.map(c => c.replace('0.75', '1')),
             borderWidth: 1,
             borderRadius: 4,
+            barPercentage: 0.72,
+            categoryPercentage: 0.85,
           }]
         },
         options: {
@@ -394,7 +397,8 @@ export class V3HeatmapComponent implements OnDestroy {
               callbacks: {
                 label: ctx => ` ${(ctx.parsed.y as number).toFixed(1)} ر/ج`
               }
-            }
+            },
+            datalabels: barDataLabels(),
           },
           scales: {
             x: {
@@ -402,7 +406,10 @@ export class V3HeatmapComponent implements OnDestroy {
               grid:  { color: 'rgba(255,255,255,0.04)' }
             },
             y: {
-              ticks: { color: '#9ca3af' },
+              ticks: {
+                color: '#9ca3af',
+                callback: (v: any) => fmtCompact(+v)
+              },
               grid:  { color: 'rgba(255,255,255,0.06)' }
             }
           }

@@ -9,6 +9,7 @@ import { DateFilterComponent } from '../../../shared/components/date-filter/date
 import { MizanPipe } from '../../../shared/pipes/mizan.pipe';
 import { fmtSar, fmtN } from '../../../shared/utils/format.utils';
 import { Chart, registerables } from 'chart.js';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 
 Chart.register(...registerables);
 
@@ -334,10 +335,26 @@ export class BranchesComponent implements OnInit, OnDestroy, AfterViewInit {
         datasets: [{
           label: 'فرق المعدل',
           data: bs.map(b => b.diffRate),
-          backgroundColor: bs.map(b => b.diffRate >= 0 ? 'rgba(16,185,129,.7)' : 'rgba(220,53,69,.7)')
+          backgroundColor: bs.map(b => b.diffRate >= 0 ? 'rgba(16,185,129,.7)' : 'rgba(220,53,69,.7)'),
+          borderRadius: 4
         }]
       },
-      options: { responsive: true, plugins: { legend: { display: false } } }
+      options: {
+        responsive: true,
+        barPercentage: 0.72,
+        categoryPercentage: 0.85,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          datalabels: barDataLabels()
+        },
+        scales: {
+          y: {
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            ticks: { callback: (v: any) => fmtCompact(+v) }
+          }
+        }
+      }
     });
   }
 

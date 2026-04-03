@@ -14,6 +14,7 @@ import { Chart, registerables } from 'chart.js';
 import { V3DashboardService } from '../services/v3-dashboard.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
 import { V3KpiCardComponent } from '../shared/v3-kpi-card.component';
+import { fmtCompact, barDataLabels } from '../../../core/chart-config';
 
 Chart.register(...registerables);
 
@@ -475,19 +476,28 @@ export class V3BranchesComponent implements OnDestroy {
           borderColor:     data.map(b => (b.diffRate ?? 0) >= 0 ? '#22c55e' : '#ef4444'),
           borderWidth: 1,
           borderRadius: 4,
+          barPercentage: 0.72,
+          categoryPercentage: 0.85,
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: false },
+          datalabels: barDataLabels(),
+        },
         scales: {
           x: {
             ticks: { color: 'rgba(255,255,255,.6)', font: { size: 10 } },
             grid:  { color: 'rgba(255,255,255,.08)' }
           },
           y: {
-            ticks: { color: 'rgba(255,255,255,.6)', font: { size: 10 } },
+            ticks: {
+              color: 'rgba(255,255,255,.6)',
+              font: { size: 10 },
+              callback: (v: any) => fmtCompact(+v)
+            },
             grid:  { color: 'rgba(255,255,255,.08)' }
           }
         }
