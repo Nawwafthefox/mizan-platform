@@ -1,6 +1,6 @@
 import {
   Component, OnDestroy,
-  inject, signal, effect, ViewChildren, ViewChild, QueryList, ElementRef,
+  inject, signal, effect, ViewChild, ElementRef,
   ChangeDetectionStrategy, ChangeDetectorRef
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -560,10 +560,13 @@ function regionColor(region: string): string {
   `
 })
 export class V3PremiumComponent implements OnDestroy {
-  @ViewChildren('revEffChart,matrixChart,karatChart,purchChart,exposureChart,seasonChart')
-  canvases!: QueryList<ElementRef<HTMLCanvasElement>>;
-
-  @ViewChild('perfChart') perfChartRef?: ElementRef<HTMLCanvasElement>;
+  @ViewChild('revEffChart')   revEffRef?:   ElementRef<HTMLCanvasElement>;
+  @ViewChild('matrixChart')   matrixRef?:   ElementRef<HTMLCanvasElement>;
+  @ViewChild('karatChart')    karatRef?:    ElementRef<HTMLCanvasElement>;
+  @ViewChild('purchChart')    purchRef?:    ElementRef<HTMLCanvasElement>;
+  @ViewChild('exposureChart') exposureRef?: ElementRef<HTMLCanvasElement>;
+  @ViewChild('seasonChart')   seasonRef?:   ElementRef<HTMLCanvasElement>;
+  @ViewChild('perfChart')     perfRef?:     ElementRef<HTMLCanvasElement>;
 
   private svc       = inject(V3DashboardService);
   private dateRange = inject(V3DateRangeService);
@@ -583,11 +586,6 @@ export class V3PremiumComponent implements OnDestroy {
   ];
 
   private charts: Map<string, Chart> = new Map();
-
-  private canvasMap: Record<string, number> = {
-    revEffChart: 0, matrixChart: 1, karatChart: 2,
-    purchChart: 3, exposureChart: 4, seasonChart: 5
-  };
 
   constructor() {
     effect(() => {
@@ -613,9 +611,10 @@ export class V3PremiumComponent implements OnDestroy {
       next: (d) => {
         this.data.set(d);
         this.loading.set(false);
-        this.cdr.detectChanges(); // force DOM update so @if blocks render canvases
+        this.cdr.detectChanges(); // render @if blocks so canvases exist in DOM
         this.destroyAllCharts();
-        this.buildAllCharts(d);
+        // 80ms: enough for Angular to finalize all @ViewChild updates after detectChanges
+        setTimeout(() => this.buildAllCharts(d), 80);
       },
       error: (e) => {
         this.error.set('تعذّر تحميل التحليلات المتقدمة: ' + (e?.message ?? ''));
@@ -624,27 +623,23 @@ export class V3PremiumComponent implements OnDestroy {
     });
   }
 
-  private getCanvas(name: string): HTMLCanvasElement | null {
-    const arr = this.canvases?.toArray() ?? [];
-    const idx = this.canvasMap[name];
-    return arr[idx]?.nativeElement ?? null;
+  private ref(r?: ElementRef<HTMLCanvasElement>): HTMLCanvasElement | null {
+    return r?.nativeElement ?? null;
   }
 
   private buildAllCharts(d: any): void {
-    setTimeout(() => {
-      this.buildRevEffChart(d?.revenueEfficiency);
-      this.buildMatrixChart(d?.branchQuadrant, d?.medianSar, d?.medianDiff);
-      this.buildKaratChart(d?.karatProfitability);
-      this.buildPurchChart(d?.purchaseTiming);
-      this.buildExposureChart(d?.goldExposure?.byBranch);
-      this.buildSeasonChart(d?.seasonalPatterns);
-      this.buildPerfChart(d?.topPerformers);
-    }, 0);
+    this.buildRevEffChart(d?.revenueEfficiency);
+    this.buildMatrixChart(d?.branchQuadrant, d?.medianSar, d?.medianDiff);
+    this.buildKaratChart(d?.karatProfitability);
+    this.buildPurchChart(d?.purchaseTiming);
+    this.buildExposureChart(d?.goldExposure?.byBranch);
+    this.buildSeasonChart(d?.seasonalPatterns);
+    this.buildPerfChart(d?.topPerformers);
   }
 
   // ─── Chart 1: Revenue Efficiency Line ─────────────────────────────────────
   private buildRevEffChart(eff: any): void {
-    const canvas = this.getCanvas('revEffChart');
+    const canvas = this.ref(this.revEffRef);
     if (!canvas || !eff?.trend) return;
     const labels = eff.trend.map((t: any) => t.date?.slice(5));
     const values = eff.trend.map((t: any) => t.value);
@@ -676,7 +671,7 @@ export class V3PremiumComponent implements OnDestroy {
 
   // ─── Chart 2: Branch Matrix Scatter ────────────────────────────────────────
   private buildMatrixChart(quadrant: any[], medianSar: number, medianDiff: number): void {
-    const canvas = this.getCanvas('matrixChart');
+    const canvas = this.ref(this.matrixRef);
     if (!canvas || !quadrant) return;
     const regionMap = new Map<string, { x: number; y: number; label: string }[]>();
     for (const b of quadrant) {
@@ -711,7 +706,7 @@ export class V3PremiumComponent implements OnDestroy {
 
   // ─── Chart 3: Karat Profitability Grouped Bar ──────────────────────────────
   private buildKaratChart(karats: any[]): void {
-    const canvas = this.getCanvas('karatChart');
+    const canvas = this.ref(this.karatRef);
     if (!canvas || !karats) return;
     const labels = karats.map((k: any) => `${k.karat}K`);
     const c = new Chart(canvas, {
@@ -751,7 +746,7 @@ export class V3PremiumComponent implements OnDestroy {
 
   // ─── Chart 4: Purchase Intelligence Dual Line ─────────────────────────────
   private buildPurchChart(timing: any): void {
-    const canvas = this.getCanvas('purchChart');
+    const canvas = this.ref(this.purchRef);
     if (!canvas || !timing?.trend) return;
     const labels = timing.trend.map((t: any) => t.date?.slice(5));
     const c = new Chart(canvas, {
@@ -795,7 +790,7 @@ export class V3PremiumComponent implements OnDestroy {
 
   // ─── Chart 5: Gold Exposure Horizontal Bar (grams) ───────────────────────
   private buildExposureChart(byBranch: any[]): void {
-    const canvas = this.getCanvas('exposureChart');
+    const canvas = this.ref(this.exposureRef);
     if (!canvas || !byBranch) return;
     const sorted = [...byBranch].sort((a, b) => (b.salesWt ?? b.salesSar) - (a.salesWt ?? a.salesSar)).slice(0, 15);
     const labels = sorted.map((b: any) => b.branchName);
@@ -837,7 +832,7 @@ export class V3PremiumComponent implements OnDestroy {
 
   // ─── Chart 6: Seasonal Patterns Line (period-aware) ──────────────────────
   private buildSeasonChart(seasonal: any): void {
-    const canvas = this.getCanvas('seasonChart');
+    const canvas = this.ref(this.seasonRef);
     if (!canvas || !seasonal) return;
     const { labels, values } = this.getSeasonData(seasonal, this.seasonPeriod());
     const c = new Chart(canvas, {
@@ -878,12 +873,12 @@ export class V3PremiumComponent implements OnDestroy {
     if (period === 'week') {
       const cutoff = new Date(today); cutoff.setDate(cutoff.getDate() - 7);
       const f = daily.filter(d => d.date && new Date(d.date) >= cutoff);
-      return { labels: f.map(d => d.date?.slice(5) ?? ''), values: f.map(d => d.totalSar ?? 0) };
+      if (f.length > 0) return { labels: f.map(d => d.date?.slice(5) ?? ''), values: f.map(d => d.totalSar ?? 0) };
     }
     if (period === 'month') {
       const cutoff = new Date(today); cutoff.setDate(cutoff.getDate() - 30);
       const f = daily.filter(d => d.date && new Date(d.date) >= cutoff);
-      return { labels: f.map(d => d.date?.slice(5) ?? ''), values: f.map(d => d.totalSar ?? 0) };
+      if (f.length > 0) return { labels: f.map(d => d.date?.slice(5) ?? ''), values: f.map(d => d.totalSar ?? 0) };
     }
     if (period === 'year') {
       const yr = today.getFullYear();
@@ -906,24 +901,27 @@ export class V3PremiumComponent implements OnDestroy {
       const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
       return { labels: sorted.map(([k]) => k), values: sorted.map(([, v]) => v) };
     }
-    // 'full' — all daily data
+    // 'full' — all daily data; fall back to day-of-week if dailyTrend not yet available
     if (daily.length > 0) {
       return { labels: daily.map(d => d.date?.slice(5) ?? ''), values: daily.map(d => d.totalSar ?? 0) };
     }
-    // fallback to day-of-week averages
-    return { labels: byDow.map(d => d.day), values: byDow.map(d => d.avgSar ?? 0) };
+    // fallback: day-of-week averages (always present)
+    if (byDow.length > 0) {
+      return { labels: byDow.map((d: any) => d.day), values: byDow.map((d: any) => d.avgSar ?? 0) };
+    }
+    return { labels: [], values: [] };
   }
 
   changePeriod(p: string): void {
     this.seasonPeriod.set(p);
     const old = this.charts.get('season');
     if (old) { old.destroy(); this.charts.delete('season'); }
-    setTimeout(() => this.buildSeasonChart(this.data()?.seasonalPatterns), 0);
+    setTimeout(() => this.buildSeasonChart(this.data()?.seasonalPatterns), 50);
   }
 
   // ─── Chart 7: Top Performers Horizontal Bar ──────────────────────────────
   private buildPerfChart(performers: any[]): void {
-    const canvas = this.perfChartRef?.nativeElement ?? null;
+    const canvas = this.ref(this.perfRef);
     if (!canvas || !performers?.length) return;
     // Use profitMargin when purchase rates are available; fall back to totalSar otherwise
     const hasMarginData = performers.some((p: any) => (p.profitMargin ?? 0) > 0);
