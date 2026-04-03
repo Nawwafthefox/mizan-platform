@@ -522,7 +522,13 @@ export class V3OverviewComponent implements OnDestroy {
               label: ctx => ' ' + Number(ctx.raw).toLocaleString('ar') + ' ريال'
             }
           },
-          datalabels: barDataLabels(),
+          datalabels: {
+            ...barDataLabels(),
+            anchor: 'center' as const,
+            align: 'center' as const,
+            offset: 0,
+            font: { size: 11, weight: 800 as any, family: "'IBM Plex Sans Arabic', 'IBM Plex Sans', sans-serif" },
+          },
         },
         scales: {
           x: {
