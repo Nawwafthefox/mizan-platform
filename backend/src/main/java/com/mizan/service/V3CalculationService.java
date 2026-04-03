@@ -435,8 +435,7 @@ public class V3CalculationService {
 
         // Individual transactions — mothan collection is small (~379 rows total across all dates)
         Query q = Query.query(Criteria.where("tenantId").is(tenantId)
-            .and("transactionDate").gte(from).lte(to)
-            .and("weightDebitG").gt(0))
+            .and("transactionDate").gte(from).lte(to))
             .with(org.springframework.data.domain.Sort.by(
                 org.springframework.data.domain.Sort.Direction.DESC, "transactionDate"))
             .limit(500);
@@ -982,8 +981,7 @@ public class V3CalculationService {
                                                      int page, int size) {
         long t0 = System.currentTimeMillis();
         Criteria criteria = Criteria.where("tenantId").is(tenantId)
-            .and("transactionDate").gte(from).lte(to)
-            .and("weightDebitG").gt(0);
+            .and("transactionDate").gte(from).lte(to);
 
         AggregationOperation matchOp = Aggregation.match(criteria);
         // $facet: all three branches in ONE MongoDB round-trip
