@@ -111,4 +111,28 @@ public class V3DashboardController {
         return ResponseEntity.ok(Map.of("success", true,
             "data", calcSvc.getPremiumAnalytics(TenantContext.getTenantId(), from, to)));
     }
+
+    @GetMapping("/mothan")
+    public ResponseEntity<?> mothan(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getMothanDetail(TenantContext.getTenantId(), from, to)));
+    }
+
+    @GetMapping("/heatmap")
+    public ResponseEntity<?> heatmap(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getHeatmapData(TenantContext.getTenantId(), from, to)));
+    }
+
+    @GetMapping("/targets")
+    public ResponseEntity<?> targets(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ResponseEntity.ok(Map.of("success", true,
+            "data", calcSvc.getTargetAchievement(TenantContext.getTenantId(), from, to)));
+    }
 }

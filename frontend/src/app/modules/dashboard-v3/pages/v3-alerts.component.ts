@@ -1,5 +1,5 @@
 import {
-  Component, OnInit, OnDestroy, inject, signal, effect, computed, ChangeDetectionStrategy
+  Component, inject, signal, effect, computed, ChangeDetectionStrategy
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { V3DashboardService } from '../services/v3-dashboard.service';
@@ -268,18 +268,12 @@ export class V3AlertsComponent implements OnInit, OnDestroy {
       .map(t => ({ type: t, items: map.get(t)! }));
   });
 
-  private effectRef: any;
-
-  ngOnInit(): void {
-    this.effectRef = effect(() => {
+  constructor() {
+    effect(() => {
       const from = this.dateRange.from();
       const to   = this.dateRange.to();
       if (from && to) this.load(from, to);
     });
-  }
-
-  ngOnDestroy(): void {
-    if (this.effectRef) this.effectRef.destroy();
   }
 
   private load(from: string, to: string): void {

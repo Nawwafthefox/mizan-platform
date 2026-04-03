@@ -74,6 +74,18 @@ export class V3DashboardService {
     return this.get<any[]>('alerts', { from, to });
   }
 
+  getMothan(from: string, to: string): Observable<any> {
+    return this.get<any>('mothan', { from, to });
+  }
+
+  getHeatmap(from: string, to: string): Observable<any[]> {
+    return this.get<any[]>('heatmap', { from, to });
+  }
+
+  getTargets(from: string, to: string): Observable<any[]> {
+    return this.get<any[]>('targets', { from, to });
+  }
+
   getPremiumAnalytics(from: string, to: string): Observable<any> {
     return this.get<any>('premium-analytics', { from, to });
   }

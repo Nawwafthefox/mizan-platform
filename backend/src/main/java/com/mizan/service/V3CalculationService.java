@@ -711,6 +711,26 @@ public class V3CalculationService {
         return result;
     }
 
+    // ─── Heatmap ─────────────────────────────────────────────────────────────
+
+    public List<Map<String, Object>> getHeatmapData(String tenantId, LocalDate from, LocalDate to) {
+        List<Map<String, Object>> branches = getBranchSummaries(tenantId, from, to);
+        Map<String, Map<String, double[]>> purchKarat = aggPurchasesByBranchAndKarat(tenantId, from, to);
+        return branches.stream().map(b -> {
+            String code = (String) b.get("branchCode");
+            Map<String, double[]> pk = purchKarat.getOrDefault(code, Map.of());
+            Map<String, Object> row = new LinkedHashMap<>(b);
+            for (String k : List.of("18", "21", "22", "24")) {
+                double kSar  = mapDbl(b, "k" + k + "Sar"), kWt = mapDbl(b, "k" + k + "Wt");
+                double kSaleRate  = kWt > 0 ? r4(kSar / kWt) : 0;
+                double[] p = pk.getOrDefault(k, new double[]{0, 0});
+                double kPurchRate = p[1] > 0 ? r4(p[0] / p[1]) : 0;
+                row.put("k" + k + "DiffRate", kPurchRate > 0 ? r2(kSaleRate - kPurchRate) : 0.0);
+            }
+            return row;
+        }).collect(Collectors.toList());
+    }
+
     // ─── Query helpers ────────────────────────────────────────────────────────
 
     private List<V3SaleTransaction> querySales(String tenantId, LocalDate from, LocalDate to) {
@@ -809,6 +829,28 @@ public class V3CalculationService {
             V3PurchaseTransaction.class, Document.class).getMappedResults();
     }
 
+    private Map<String, Map<String, double[]>> aggPurchasesByBranchAndKarat(String tenantId, LocalDate from, LocalDate to) {
+        AggregationOperation match = Aggregation.match(
+            Criteria.where("tenantId").is(tenantId).and("purchaseDate").gte(from).lte(to));
+        AggregationOperation group = ctx -> new Document("$group",
+            new Document("_id", new Document("branchCode", "$branchCode").append("karat", "$karat"))
+                .append("totalSar", new Document("$sum", "$sarAmount"))
+                .append("totalWt",  new Document("$sum", "$pureWeightG")));
+        List<Document> results = mongo.aggregate(Aggregation.newAggregation(match, group),
+            V3PurchaseTransaction.class, Document.class).getMappedResults();
+        Map<String, Map<String, double[]>> map = new LinkedHashMap<>();
+        for (Document d : results) {
+            Object idObj = d.get("_id");
+            if (!(idObj instanceof Document id)) continue;
+            String branch = id.getString("branchCode");
+            String karat  = id.getString("karat");
+            if (branch == null || karat == null) continue;
+            map.computeIfAbsent(branch, k -> new LinkedHashMap<>())
+               .put(karat, new double[]{ dbl(d, "totalSar"), dbl(d, "totalWt") });
+        }
+        return map;
+    }
+
     private List<Document> aggMothanByBranch(String tenantId, LocalDate from, LocalDate to) {
         AggregationOperation match = Aggregation.match(
             Criteria.where("tenantId").is(tenantId)
@@ -864,6 +906,11 @@ public class V3CalculationService {
 
     private static double dbl(Document d, String key) {
         Object v = d.get(key);
+        return v instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    private static double mapDbl(Map<String, Object> m, String key) {
+        Object v = m.get(key);
         return v instanceof Number n ? n.doubleValue() : 0.0;
     }
 

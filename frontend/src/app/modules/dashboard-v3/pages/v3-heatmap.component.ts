@@ -1,5 +1,5 @@
 import {
-  Component, OnInit, OnDestroy, OnChanges, AfterViewInit,
+  Component, OnDestroy,
   inject, signal, effect, ViewChild, ElementRef, ChangeDetectionStrategy, ChangeDetectorRef
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
@@ -265,7 +265,6 @@ export class V3HeatmapComponent implements OnInit, OnDestroy {
   maxTotal = signal(0);
 
   private chart: Chart | null = null;
-  private effectRef: any;
 
   sortOptions = [
     { value: 'total'   as HeatmapSort, label: 'إجمالي المبيعات' },
@@ -276,8 +275,8 @@ export class V3HeatmapComponent implements OnInit, OnDestroy {
     { value: 'k24'     as HeatmapSort, label: '24K' },
   ];
 
-  ngOnInit(): void {
-    this.effectRef = effect(() => {
+  constructor() {
+    effect(() => {
       const from = this.dateRange.from();
       const to   = this.dateRange.to();
       if (from && to) this.load(from, to);
@@ -285,14 +284,13 @@ export class V3HeatmapComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    if (this.effectRef) this.effectRef.destroy();
     if (this.chart) { this.chart.destroy(); this.chart = null; }
   }
 
   private load(from: string, to: string): void {
     this.loading.set(true);
     this.error.set(null);
-    this.svc.getBranchSummary(from, to).subscribe({
+    this.svc.getHeatmap(from, to).subscribe({
       next: (data) => {
         this.applySort(data);
         this.loading.set(false);

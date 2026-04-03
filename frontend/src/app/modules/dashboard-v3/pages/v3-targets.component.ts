@@ -1,5 +1,5 @@
 import {
-  Component, OnInit, OnDestroy, inject, signal, effect, computed, ChangeDetectionStrategy
+  Component, inject, signal, effect, computed, ChangeDetectionStrategy
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { V3DashboardService } from '../services/v3-dashboard.service';
@@ -255,24 +255,18 @@ export class V3TargetsComponent implements OnInit, OnDestroy {
     return this.allData().filter(d => d.status === f);
   });
 
-  private effectRef: any;
-
-  ngOnInit(): void {
-    this.effectRef = effect(() => {
+  constructor() {
+    effect(() => {
       const from = this.dateRange.from();
       const to   = this.dateRange.to();
       if (from && to) this.load(from, to);
     });
   }
 
-  ngOnDestroy(): void {
-    if (this.effectRef) this.effectRef.destroy();
-  }
-
   private load(from: string, to: string): void {
     this.loading.set(true);
     this.error.set(null);
-    this.svc.getTargetAchievement(from, to).subscribe({
+    this.svc.getTargets(from, to).subscribe({
       next: (data) => {
         this.allData.set(data ?? []);
         this.loading.set(false);

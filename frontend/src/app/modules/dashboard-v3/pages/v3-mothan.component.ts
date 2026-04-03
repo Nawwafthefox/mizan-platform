@@ -1,5 +1,5 @@
 import {
-  Component, OnInit, OnDestroy, inject, signal, effect, ChangeDetectionStrategy
+  Component, inject, signal, effect, ChangeDetectionStrategy
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { V3DashboardService } from '../services/v3-dashboard.service';
@@ -339,24 +339,18 @@ export class V3MothanComponent implements OnInit, OnDestroy {
 
   sortedTxns = signal<any[]>([]);
 
-  private effectRef: any;
-
-  ngOnInit(): void {
-    this.effectRef = effect(() => {
+  constructor() {
+    effect(() => {
       const from = this.dateRange.from();
       const to   = this.dateRange.to();
       if (from && to) this.load(from, to);
     });
   }
 
-  ngOnDestroy(): void {
-    if (this.effectRef) this.effectRef.destroy();
-  }
-
   private load(from: string, to: string): void {
     this.loading.set(true);
     this.error.set(null);
-    this.svc.getMothanDetail(from, to).subscribe({
+    this.svc.getMothan(from, to).subscribe({
       next: (d) => {
         this.data.set(d);
         this.rebuildSort(d?.transactions ?? []);
