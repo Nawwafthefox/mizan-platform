@@ -527,7 +527,8 @@ export class V3OverviewComponent implements OnDestroy {
             anchor: 'center' as const,
             align: 'center' as const,
             offset: 0,
-            font: { size: 11, weight: 800 as any, family: "'IBM Plex Sans Arabic', 'IBM Plex Sans', sans-serif" },
+            textAlign: 'center' as const,
+            font: { size: 13, weight: 900 as any, family: "'IBM Plex Sans Arabic', 'IBM Plex Sans', sans-serif" },
           },
         },
         scales: {
