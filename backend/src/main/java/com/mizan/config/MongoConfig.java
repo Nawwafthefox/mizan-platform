@@ -1,8 +1,11 @@
 package com.mizan.config;
 
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoClientSettings;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import lombok.extern.slf4j.Slf4j;
+import org.bson.Document;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
@@ -11,7 +14,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.config.AbstractMongoClientConfiguration;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.index.Index;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.repository.config.EnableMongoRepositories;
+import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Configuration
@@ -32,12 +37,36 @@ public class MongoConfig extends AbstractMongoClientConfiguration {
 
     @Override
     public MongoClient mongoClient() {
-        return MongoClients.create(mongoUri);
+        // 7A: Connection pool tuned for Render free tier (limited memory, 30s timeout)
+        return MongoClients.create(MongoClientSettings.builder()
+            .applyConnectionString(new ConnectionString(mongoUri))
+            .applyToConnectionPoolSettings(b -> b
+                .maxSize(5)                              // cap connections (Render free memory)
+                .minSize(1)                              // keep 1 alive to avoid cold reconnects
+                .maxConnectionIdleTime(60, TimeUnit.SECONDS))
+            .applyToSocketSettings(b -> b
+                .connectTimeout(5, TimeUnit.SECONDS)     // fail fast on connect
+                .readTimeout(30, TimeUnit.SECONDS))      // match Render's HTTP timeout
+            .applyToClusterSettings(b -> b
+                .serverSelectionTimeout(5, TimeUnit.SECONDS))
+            .build());
     }
 
     @Override
     protected boolean autoIndexCreation() {
         return false;
+    }
+
+    /** 7B: Warm-up ping — establishes MongoDB connection on boot so first request is fast. */
+    @Bean
+    CommandLineRunner mongoWarmup(MongoTemplate mt) {
+        return args -> {
+            long t0 = System.currentTimeMillis();
+            mt.getDb().runCommand(new Document("ping", 1));
+            log.info("MongoDB warm-up ping: {}ms", System.currentTimeMillis() - t0);
+            long salesCount = mt.count(new Query(), "v3_sale_transactions");
+            log.info("v3_sale_transactions count: {} ({}ms total)", salesCount, System.currentTimeMillis() - t0);
+        };
     }
 
     /** Compound indexes on tenantId + date fields — speeds up delete + range queries. */
