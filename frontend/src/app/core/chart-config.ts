@@ -19,18 +19,24 @@ export function barDataLabels(opts?: {
   fontSize?: number;
 }) {
   return {
-    display: true,
-    color: opts?.color ?? 'rgba(240,237,232,0.75)',
-    anchor: opts?.anchor ?? 'end',
-    align: opts?.align ?? 'top',
-    offset: 2,
+    display: (ctx: any) => {
+      // hide label if bar is too small to fit text inside
+      const val = ctx.dataset.data[ctx.dataIndex];
+      return typeof val === 'number' && Math.abs(val) > 0;
+    },
+    color: opts?.color ?? 'rgba(255,255,255,0.92)',
+    anchor: opts?.anchor ?? 'center',
+    align: opts?.align ?? 'center',
+    offset: 0,
     font: {
       size: opts?.fontSize ?? 10,
       weight: 'bold' as const,
       family: "'IBM Plex Sans Arabic', 'IBM Plex Sans', sans-serif",
     },
     formatter: (value: number) => fmtCompact(value, 1),
-    clip: false,
+    clip: true,
+    textShadowBlur: 3,
+    textShadowColor: 'rgba(0,0,0,0.6)',
   } as any;
 }
 

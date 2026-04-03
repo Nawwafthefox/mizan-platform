@@ -821,7 +821,7 @@ export class V3PremiumComponent implements OnDestroy {
         plugins: {
           legend: { labels: { color: '#9ca3af', font: { size: 10 }, boxWidth: 10 } },
           tooltip: { callbacks: { label: ctx => ` ${(ctx.parsed.x as number).toFixed(1)} جرام` } },
-          datalabels: barDataLabels({ anchor: 'end', align: 'end' }),
+          datalabels: barDataLabels({ anchor: 'center', align: 'center' }),
         },
         scales: {
           x: { ticks: { color: '#6b7280', callback: (v: any) => fmtCompact(+v) }, grid: { color: 'rgba(255,255,255,0.04)' } },
@@ -947,7 +947,7 @@ export class V3PremiumComponent implements OnDestroy {
       options: {
         indexAxis: 'y' as any,
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, datalabels: barDataLabels({ anchor: 'end', align: 'end' }) },
+        plugins: { legend: { display: false }, datalabels: barDataLabels({ anchor: 'center', align: 'center' }) },
         scales: {
           x: { ticks: { color: '#6b7280', callback: (v: any) => fmtCompact(+v) }, grid: { color: 'rgba(255,255,255,0.04)' } },
           y: { ticks: { color: '#9ca3af', font: { size: 10 } }, grid: { display: false } }
