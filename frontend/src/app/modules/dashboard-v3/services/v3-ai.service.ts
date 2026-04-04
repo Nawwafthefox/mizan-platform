@@ -10,7 +10,7 @@ interface CacheEntry { data: any; ts: number; }
 export class V3AIService {
   private http  = inject(HttpClient);
   private cache = new Map<string, CacheEntry>();
-  private TTL   = 10 * 60 * 1000; // 10 min — mirrors backend AI cache
+  private TTL   = 30 * 60 * 1000; // 30 min — mirrors backend AI cache
 
   getInsights(feature: string, from: string, to: string): Observable<any> {
     const key    = `ai:${feature}:${from}:${to}`;
@@ -35,6 +35,26 @@ export class V3AIService {
         { question },
         { params: { from, to } }
       )
+      .pipe(map(r => r.data));
+  }
+
+  // ── Usage tracking endpoints ────────────────────────────────────────────────
+
+  getUsageToday(): Observable<any> {
+    return this.http
+      .get<{ success: boolean; data: any }>(`${environment.apiUrl}/v3/ai/usage/today`)
+      .pipe(map(r => r.data));
+  }
+
+  getUsageRange(from: string, to: string): Observable<any[]> {
+    return this.http
+      .get<{ success: boolean; data: any[] }>(`${environment.apiUrl}/v3/ai/usage/range`, { params: { from, to } })
+      .pipe(map(r => r.data));
+  }
+
+  getUsageLogs(from: string, to: string): Observable<any[]> {
+    return this.http
+      .get<{ success: boolean; data: any[] }>(`${environment.apiUrl}/v3/ai/usage/logs`, { params: { from, to } })
       .pipe(map(r => r.data));
   }
 }

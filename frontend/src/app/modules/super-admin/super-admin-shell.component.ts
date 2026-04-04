@@ -66,6 +66,15 @@ import { TopnavComponent } from '../../shared/components/shell/topnav.component'
           <span class="sa-tab__bar"></span>
         </a>
 
+        <a routerLink="/super-admin/ai-usage"
+           routerLinkActive="active"
+           class="sa-tab"
+           data-tooltip="مراقبة استخدام Gemini AI والميزانيات">
+          <span class="sa-tab__pill"></span>
+          <span class="sa-tab__label">🤖 استخدام AI</span>
+          <span class="sa-tab__bar"></span>
+        </a>
+
         <a routerLink="/super-admin/system"
            routerLinkActive="active"
            class="sa-tab sa-tab--system"

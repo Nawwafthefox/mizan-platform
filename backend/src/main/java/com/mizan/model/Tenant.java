@@ -22,6 +22,7 @@ public class Tenant {
     private WhiteLabelConfig whiteLabelConfig;
     private BillingConfig billing = new BillingConfig();
     private TenantLimits limits = new TenantLimits();
+    private AiConfig aiConfig = new AiConfig();
     private LocalDateTime createdAt = LocalDateTime.now();
     private LocalDateTime updatedAt = LocalDateTime.now();
     private String createdBy;
@@ -58,5 +59,12 @@ public class Tenant {
         private int fromBranch;
         private int toBranch;
         private double pricePerBranch;
+    }
+
+    @Data public static class AiConfig {
+        /** Daily spend cap in USD (Gemini 2.0 Flash pricing). Default = $1.00 */
+        private double dailyBudgetUsd = 1.0;
+        /** Master kill-switch for AI features for this tenant. */
+        private boolean aiEnabled = true;
     }
 }

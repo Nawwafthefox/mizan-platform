@@ -1,13 +1,17 @@
 import {
   Component, OnDestroy, AfterViewChecked,
   ElementRef, ViewChild,
-  inject, signal, effect,
+  inject, signal, effect, computed,
   ChangeDetectionStrategy, ChangeDetectorRef
 } from '@angular/core';
 import { CommonModule, NgTemplateOutlet } from '@angular/common';
 import { Subscription } from 'rxjs';
 import { V3AIService } from '../services/v3-ai.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
+import { AuthService } from '../../../core/services/auth.service';
+
+/** Roles that are allowed to use AI features. */
+const AI_ROLES = new Set(['COMPANY_ADMIN', 'CEO', 'HEAD_OF_SALES', 'SUPER_ADMIN']);
 
 interface ChatMessage {
   role: 'user' | 'ai';
@@ -1287,6 +1291,23 @@ interface AIFeature {
       display: flex; align-items: center; justify-content: center; gap: 0.4rem;
       font-size: 0.7rem; color: rgba(255,255,255,0.2); padding: 0.5rem 0;
     }
+
+    /* ── Access Denied / Budget Exceeded ── */
+    .ai-access-denied, .ai-budget-exceeded {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 1rem; padding: 3rem 2rem; text-align: center;
+      background: rgba(15,45,31,.4); border: 1px solid rgba(201,168,76,.15);
+      border-radius: 18px; margin-top: 1rem;
+    }
+    .denied-icon { font-size: 3rem; }
+    .denied-title { font-size: 1.15rem; font-weight: 700; color: rgba(232,228,220,.8); }
+    .denied-sub { font-size: .87rem; color: rgba(232,228,220,.45); max-width: 400px; line-height: 1.7; }
+    .budget-exceeded-icon { font-size: 3rem; animation: pulse-red 2s ease-in-out infinite; }
+    @keyframes pulse-red { 0%,100% { filter: drop-shadow(0 0 0 rgba(239,68,68,0)); }
+                           50%      { filter: drop-shadow(0 0 12px rgba(239,68,68,0.5)); } }
+    .budget-msg { font-size: .9rem; color: #fca5a5; max-width: 420px; line-height: 1.75; }
+    .budget-reset-row { display: flex; align-items: center; gap: .6rem; font-size: .85rem; color: rgba(232,228,220,.55); }
+    .reset-counter { font-size: 1rem; font-weight: 700; color: #c9a84c; font-variant-numeric: tabular-nums; }
   `],
   template: `
     <!-- Header -->
@@ -1299,7 +1320,36 @@ interface AIFeature {
       <span class="ai-badge">GEMINI 2.0</span>
     </div>
 
+    <!-- Access denied for non-AI roles -->
+    @if (!hasAiAccess()) {
+      <div class="ai-access-denied">
+        <div class="denied-icon">🔒</div>
+        <div class="denied-title">الوصول مقيد</div>
+        <div class="denied-sub">
+          ميزات الذكاء الاصطناعي متاحة فقط لـ: مسؤول الشركة (COMPANY_ADMIN)، المدير التنفيذي (CEO)، ورئيس المبيعات (HEAD_OF_SALES).
+          <br>تواصل مع مسؤول الشركة لطلب الوصول.
+        </div>
+      </div>
+    }
+
+    <!-- Budget exceeded -->
+    @if (hasAiAccess() && budgetExceeded()) {
+      <div class="ai-budget-exceeded">
+        <div class="budget-exceeded-icon">⚡</div>
+        <div class="denied-title">تم استنفاد الحد اليومي للذكاء الاصطناعي</div>
+        <div class="budget-msg">
+          وصلت شركتك إلى الحد اليومي لاستخدام ميزات الذكاء الاصطناعي.
+          يرجى التواصل مع الإدارة لترقية الباقة، أو انتظر إعادة التعيين اليومية.
+        </div>
+        <div class="budget-reset-row">
+          <span>⏱️ إعادة التعيين خلال:</span>
+          <span class="reset-counter">{{ resetCountdown() }}</span>
+        </div>
+      </div>
+    }
+
     <!-- Feature tabs -->
+    @if (hasAiAccess() && !budgetExceeded()) {
     <div class="feature-tabs">
       @for (f of features; track f.key) {
         <button
@@ -2935,13 +2985,35 @@ interface AIFeature {
         <span>Powered by Google Gemini 2.0 Flash · MIZAN AI Engine</span>
       </div>
     }
+    } <!-- end @if hasAiAccess && !budgetExceeded -->
   `
 })
 export class V3AIComponent implements OnDestroy, AfterViewChecked {
   private aiSvc     = inject(V3AIService);
   private dateRange = inject(V3DateRangeService);
   private cdr       = inject(ChangeDetectorRef);
+  private auth      = inject(AuthService);
 
+  // ── Role-based access ──────────────────────────────────────────────────────
+  hasAiAccess = computed(() => {
+    const role = this.auth.currentUser?.role ?? '';
+    return AI_ROLES.has(role);
+  });
+
+  // ── Budget tracking ────────────────────────────────────────────────────────
+  budgetExceeded = signal(false);
+  private budgetResetMs = signal(0); // epoch ms of next reset
+
+  resetCountdown = computed(() => {
+    const ms = this.budgetResetMs() - Date.now();
+    if (ms <= 0) return '00:00:00';
+    const h = Math.floor(ms / 3_600_000);
+    const m = Math.floor((ms % 3_600_000) / 60_000);
+    const s = Math.floor((ms % 60_000) / 1_000);
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  });
+
+  // ── Other state ───────────────────────────────────────────────────────────
   activeFeature  = signal('executive');
   loading        = signal(false);
   error          = signal<string | null>(null);
@@ -2979,16 +3051,33 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
     { key: 'chat',                  label: 'ميزان AI',           icon: '💬', description: 'اسأل أي سؤال عن بياناتك بالعربية' },
   ];
 
+  private countdownTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor() {
     effect(() => {
       const from    = this.dateRange.from();
       const to      = this.dateRange.to();
       const feature = this.activeFeature();
-      if (from && to) this.load(feature, from, to);
+      if (from && to && this.hasAiAccess()) this.load(feature, from, to);
     });
+
+    // Update countdown every second so the display is live
+    this.countdownTimer = setInterval(() => {
+      if (this.budgetExceeded() && this.budgetResetMs() > 0) {
+        if (Date.now() >= this.budgetResetMs()) {
+          // Reset window passed — clear budget exceeded
+          this.budgetExceeded.set(false);
+          this.budgetResetMs.set(0);
+        }
+        this.cdr.markForCheck();
+      }
+    }, 1000);
   }
 
-  ngOnDestroy(): void { this.sub?.unsubscribe(); }
+  ngOnDestroy(): void {
+    this.sub?.unsubscribe();
+    if (this.countdownTimer) clearInterval(this.countdownTimer);
+  }
 
   ngAfterViewChecked(): void {
     if (this.shouldScrollChat && this.chatContainer?.nativeElement) {
@@ -3027,11 +3116,19 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
 
     this.sub = this.aiSvc.getInsights(feature, from, to).subscribe({
       next: (data) => {
+        if (data?.budgetExceeded) {
+          this.budgetExceeded.set(true);
+          if (data.resetAt) this.budgetResetMs.set(data.resetAt);
+          this.loading.set(false);
+          this.cdr.markForCheck();
+          return;
+        }
         if (data?.error) {
           this.error.set(data.overview ?? 'حدث خطأ في الذكاء الاصطناعي');
           this.errorDetail.set(data.errorDetail ?? null);
           this.result.set(null);
         } else {
+          this.budgetExceeded.set(false);
           this.result.set(data);
           this.error.set(null);
           this.errorDetail.set(null);

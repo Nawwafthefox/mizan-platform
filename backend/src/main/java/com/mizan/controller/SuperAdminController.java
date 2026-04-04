@@ -2,6 +2,8 @@ package com.mizan.controller;
 import com.mizan.model.*;
 import com.mizan.repository.*;
 import com.mizan.security.*;
+import com.mizan.service.AiUsageService;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -27,19 +29,21 @@ public class SuperAdminController {
     private final MothanTransactionRepository mothanRepo;
     private final PasswordEncoder encoder;
     private final JwtTokenProvider jwt;
+    private final AiUsageService   aiUsageService;
 
     public SuperAdminController(TenantRepository tenantRepo, UserRepository userRepo,
             SubscriptionTierRepository tierRepo, AuditLogRepository auditRepo,
             UploadLogRepository uploadLogRepo, AnnouncementRepository announcementRepo,
             BranchSaleRepository saleRepo, BranchPurchaseRepository purchRepo,
             EmployeeSaleRepository empRepo, MothanTransactionRepository mothanRepo,
-            PasswordEncoder encoder, JwtTokenProvider jwt) {
+            PasswordEncoder encoder, JwtTokenProvider jwt, AiUsageService aiUsageService) {
         this.tenantRepo = tenantRepo; this.userRepo = userRepo;
         this.tierRepo = tierRepo; this.auditRepo = auditRepo;
         this.uploadLogRepo = uploadLogRepo; this.announcementRepo = announcementRepo;
         this.saleRepo = saleRepo; this.purchRepo = purchRepo;
         this.empRepo = empRepo; this.mothanRepo = mothanRepo;
         this.encoder = encoder; this.jwt = jwt;
+        this.aiUsageService = aiUsageService;
     }
 
     private void requireSuperAdmin(MizanUserDetails p) {
@@ -504,5 +508,62 @@ public class SuperAdminController {
             logAudit(p, "DELETE_ANNOUNCEMENT", "Deleted announcement: " + a.getTitle(), null);
         });
         return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    // ─────────────────────────────────────────────
+    // AI CONFIG & USAGE (Super Admin)
+    // ─────────────────────────────────────────────
+
+    /** Set the daily AI budget (USD) for a specific tenant. */
+    @PutMapping("/tenants/{tenantId}/ai-config")
+    public ResponseEntity<?> updateAiConfig(@AuthenticationPrincipal MizanUserDetails p,
+            @PathVariable String tenantId, @RequestBody Map<String, Object> body) {
+        requireSuperAdmin(p);
+        return tenantRepo.findById(tenantId).map(t -> {
+            Tenant.AiConfig cfg = t.getAiConfig() != null ? t.getAiConfig() : new Tenant.AiConfig();
+            if (body.containsKey("dailyBudgetUsd")) {
+                double budget = ((Number) body.get("dailyBudgetUsd")).doubleValue();
+                if (budget < 0) return ResponseEntity.badRequest()
+                    .body(Map.of("success", false, "error", "budget must be >= 0"));
+                cfg.setDailyBudgetUsd(budget);
+            }
+            if (body.containsKey("aiEnabled")) {
+                cfg.setAiEnabled((Boolean) body.get("aiEnabled"));
+            }
+            t.setAiConfig(cfg);
+            t.setUpdatedAt(LocalDateTime.now());
+            tenantRepo.save(t);
+            logAudit(p, "UPDATE_AI_CONFIG",
+                "Set AI budget=" + cfg.getDailyBudgetUsd() + " enabled=" + cfg.isAiEnabled(), tenantId);
+            return ResponseEntity.ok(Map.of("success", true, "data", cfg));
+        }).orElse(ResponseEntity.status(404).body(Map.of("success", false, "error", "tenant not found")));
+    }
+
+    /** All tenants' AI usage today — overview table for super admin. */
+    @GetMapping("/ai-usage/today")
+    public ResponseEntity<?> aiUsageToday(@AuthenticationPrincipal MizanUserDetails p) {
+        requireSuperAdmin(p);
+        List<Tenant> tenants = tenantRepo.findAll();
+        return ResponseEntity.ok(Map.of("success", true, "data",
+            aiUsageService.getAllTenantsToday(tenants)));
+    }
+
+    /** One tenant's usage breakdown for a date range. */
+    @GetMapping("/ai-usage/{tenantId}")
+    public ResponseEntity<?> aiUsageTenant(@AuthenticationPrincipal MizanUserDetails p,
+            @PathVariable String tenantId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        requireSuperAdmin(p);
+        LocalDate f = from != null ? from : LocalDate.now().minusDays(29);
+        LocalDate t2 = to  != null ? to   : LocalDate.now();
+        Tenant tenant = tenantRepo.findById(tenantId).orElse(null);
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("today", aiUsageService.getTodayStats(tenantId));
+        data.put("range", aiUsageService.getRangeStats(tenantId, f, t2));
+        data.put("logs",  aiUsageService.getLogs(tenantId, f, t2));
+        data.put("aiConfig", tenant != null && tenant.getAiConfig() != null
+            ? tenant.getAiConfig() : new Tenant.AiConfig());
+        return ResponseEntity.ok(Map.of("success", true, "data", data));
     }
 }

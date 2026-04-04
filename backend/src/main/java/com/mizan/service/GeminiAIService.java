@@ -15,7 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Calls Gemini 2.0 Flash with aggregated V3 data only — never raw transactions.
- * Internal 10-minute AI response cache to avoid API quota waste.
+ * Internal 30-minute AI response cache to avoid API quota waste.
+ * Every Gemini call is logged via AiUsageService; daily budget is enforced per tenant.
  */
 @Service
 @Slf4j
@@ -25,45 +26,82 @@ public class GeminiAIService {
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=";
     private static final long AI_TTL_MS = 30 * 60 * 1000L; // 30 minutes — free-tier friendly
 
+    /** ThreadLocal written by callGemini, read by processFeature to capture per-call metrics. */
+    private static final ThreadLocal<long[]> CALL_STATS = new ThreadLocal<>();
+    // [0]=inputTokens, [1]=outputTokens, [2]=latencyMs, [3]=1 if success else 0
+
     @Value("${mizan.gemini.api-key}")
     private String apiKey;
 
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper  = new ObjectMapper();
     private final V3CalculationService calcService;
+    private final AiUsageService       usageService;
     private final ConcurrentHashMap<String, AiEntry> aiCache = new ConcurrentHashMap<>();
 
     private record AiEntry(Map<String, Object> data, long ts) {}
 
-    public GeminiAIService(V3CalculationService calcService) {
-        this.calcService = calcService;
+    public GeminiAIService(V3CalculationService calcService, AiUsageService usageService) {
+        this.calcService  = calcService;
+        this.usageService = usageService;
     }
 
     // ── Public entry point ──────────────────────────────────────────────────────
 
-    public Map<String, Object> processFeature(String feature, String tenantId, LocalDate from, LocalDate to) {
+    public Map<String, Object> processFeature(String feature, String tenantId, LocalDate from, LocalDate to,
+                                               String userId, String userEmail) {
         String key = tenantId + ":ai:" + feature + ":" + from + ":" + to;
         AiEntry hit = aiCache.get(key);
         if (hit != null && System.currentTimeMillis() - hit.ts() < AI_TTL_MS) {
             log.debug("AI cache HIT: {}", key);
+            usageService.logUsage(tenantId, userId, userEmail, feature, 0, 0, 0, true, true);
             return hit.data();
         }
+
+        // ── Daily budget check ───────────────────────────────────────────────
+        if (usageService.exceedsDailyBudget(tenantId)) {
+            log.info("AI budget exceeded — tenant={} feature={}", tenantId, feature);
+            Map<String, Object> blocked = new LinkedHashMap<>();
+            blocked.put("error", true);
+            blocked.put("budgetExceeded", true);
+            blocked.put("resetAt", usageService.nextResetEpochMs());
+            blocked.put("overview",
+                "وصلت إلى الحد اليومي لاستخدام الذكاء الاصطناعي. يرجى ترقية الباقة أو الانتظار حتى إعادة التعيين.");
+            blocked.put("recommendations",
+                List.of("تواصل مع الإدارة لرفع الحد", "انتظر إعادة التعيين اليومية"));
+            usageService.logUsage(tenantId, userId, userEmail, feature, 0, 0, 0, false, false);
+            return blocked;
+        }
+
+        // ── Execute ──────────────────────────────────────────────────────────
+        CALL_STATS.remove(); // clear any stale value from previous request on this thread
         Map<String, Object> result = switch (feature) {
-            case "executive"        -> analyzeExecutive(tenantId, from, to);
-            case "branches"         -> analyzeBranches(tenantId, from, to);
-            case "employees"        -> analyzeEmployees(tenantId, from, to);
-            case "karat"            -> analyzeKarat(tenantId, from, to);
-            case "daily-trend"      -> analyzeDailyTrend(tenantId, from, to);
-            case "employee-advisor"      -> analyzeEmployeeAdvisor(tenantId, from, to);
-            case "transfer-optimizer"   -> analyzeTransferOpportunities(tenantId, from, to);
-            case "branch-strategy"      -> analyzeBranchStrategy(tenantId, from, to);
-            case "anomaly-detection"       -> analyzeAnomalies(tenantId, from, to);
+            case "executive"              -> analyzeExecutive(tenantId, from, to);
+            case "branches"               -> analyzeBranches(tenantId, from, to);
+            case "employees"              -> analyzeEmployees(tenantId, from, to);
+            case "karat"                  -> analyzeKarat(tenantId, from, to);
+            case "daily-trend"            -> analyzeDailyTrend(tenantId, from, to);
+            case "employee-advisor"       -> analyzeEmployeeAdvisor(tenantId, from, to);
+            case "transfer-optimizer"     -> analyzeTransferOpportunities(tenantId, from, to);
+            case "branch-strategy"        -> analyzeBranchStrategy(tenantId, from, to);
+            case "anomaly-detection"      -> analyzeAnomalies(tenantId, from, to);
             case "purchase-intelligence"  -> analyzePurchaseIntelligence(tenantId, from, to);
             case "risk-assessment"        -> analyzeRiskAssessment(tenantId, from, to);
             case "executive-briefing"     -> analyzeExecutiveBriefing(tenantId, from, to);
             case "smart-actions"          -> analyzeSmartActions(tenantId, from, to);
             default                       -> errorMap("ميزة غير معروفة: " + feature);
         };
+
+        // ── Log usage ────────────────────────────────────────────────────────
+        long[] stats = CALL_STATS.get();
+        CALL_STATS.remove();
+        if (stats != null) {
+            boolean success = !(result.containsKey("budgetExceeded")) &&
+                              !(Boolean.TRUE.equals(result.get("error")) && stats[3] == 0);
+            usageService.logUsage(tenantId, userId, userEmail, feature,
+                (int) stats[0], (int) stats[1], stats[2], false, success);
+        }
+
         aiCache.put(key, new AiEntry(result, System.currentTimeMillis()));
         return result;
     }
@@ -1306,6 +1344,9 @@ public class GeminiAIService {
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> callGemini(String systemPrompt, String dataContext, double temperature) {
+        int estimatedIn = AiUsageService.estimateTokens(systemPrompt) + AiUsageService.estimateTokens(dataContext);
+        long start = System.currentTimeMillis();
+
         Map<String, Object> body = Map.of(
             "contents", List.of(Map.of(
                 "parts", List.of(Map.of("text",
@@ -1335,7 +1376,11 @@ public class GeminiAIService {
                 (List<Map<String, Object>>) content.get("parts");
             String text = (String) parts.get(0).get("text");
 
-            log.debug("Gemini responded with {} chars", text != null ? text.length() : 0);
+            long latencyMs = System.currentTimeMillis() - start;
+            int estimatedOut = AiUsageService.estimateTokens(text);
+            CALL_STATS.set(new long[]{estimatedIn, estimatedOut, latencyMs, 1});
+
+            log.debug("Gemini responded with {} chars in {}ms", text != null ? text.length() : 0, latencyMs);
             return objectMapper.readValue(text, Map.class);
 
         } catch (HttpClientErrorException e) {
@@ -1349,6 +1394,8 @@ public class GeminiAIService {
                 case 429 -> "تجاوز حد الطلبات (429) — انتهى حصة API، حاول بعد قليل";
                 default  -> "خطأ من Gemini (" + status + ") — " + detail;
             };
+            long latencyMs = System.currentTimeMillis() - start;
+            CALL_STATS.set(new long[]{estimatedIn, 0, latencyMs, 0});
             log.error("Gemini client error {}: {}", status, errBody);
             return errorMap(reason, "HTTP " + status + ": " + detail);
 
@@ -1356,21 +1403,26 @@ public class GeminiAIService {
             int    status  = e.getStatusCode().value();
             String errBody = e.getResponseBodyAsString();
             String detail  = extractGeminiError(errBody);
+            long latencyMs = System.currentTimeMillis() - start;
+            CALL_STATS.set(new long[]{estimatedIn, 0, latencyMs, 0});
             log.error("Gemini server error {}: {}", status, errBody);
             return errorMap("خطأ في خوادم Gemini (" + status + ") — حاول مرة أخرى",
                             "HTTP " + status + ": " + detail);
 
         } catch (org.springframework.web.client.ResourceAccessException e) {
+            CALL_STATS.set(new long[]{estimatedIn, 0, System.currentTimeMillis() - start, 0});
             log.error("Gemini network error: {}", e.getMessage());
             return errorMap("تعذّر الوصول لـ Gemini — تحقق من اتصال الشبكة",
                             "Network: " + e.getMessage());
 
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            CALL_STATS.set(new long[]{estimatedIn, 0, System.currentTimeMillis() - start, 0});
             log.error("Gemini JSON parse error: {}", e.getMessage());
             return errorMap("استجابة Gemini غير صالحة (JSON) — النموذج أعاد نصاً غير منظم",
                             "JSON parse: " + e.getMessage());
 
         } catch (Exception e) {
+            CALL_STATS.set(new long[]{estimatedIn, 0, System.currentTimeMillis() - start, 0});
             log.error("Gemini unexpected error [{}]: {}", e.getClass().getSimpleName(), e.getMessage());
             return errorMap("خطأ غير متوقع — " + e.getClass().getSimpleName(),
                             e.getMessage());
