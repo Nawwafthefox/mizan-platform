@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
@@ -44,6 +45,18 @@ public class GeminiAIService {
     public GeminiAIService(V3CalculationService calcService, AiUsageService usageService) {
         this.calcService  = calcService;
         this.usageService = usageService;
+    }
+
+    @PostConstruct
+    void logKeyStatus() {
+        if (apiKey == null || apiKey.isBlank() || apiKey.equals("MISSING_KEY")) {
+            log.error("GEMINI_API_KEY is not set — AI features will fail");
+        } else {
+            log.info("Gemini API key loaded: {}...{} (len={})",
+                apiKey.substring(0, Math.min(8, apiKey.length())),
+                apiKey.substring(Math.max(0, apiKey.length() - 4)),
+                apiKey.length());
+        }
     }
 
     // ── Public entry point ──────────────────────────────────────────────────────
