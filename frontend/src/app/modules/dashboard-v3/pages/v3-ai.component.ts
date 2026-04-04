@@ -1397,7 +1397,7 @@ interface AIFeature {
     }
 
     <!-- Results -->
-    @if (result() && !loading() && !error()) {
+    @if ((result() && !loading() && !error()) || activeFeature() === 'chat') {
 
       <!-- ── EXECUTIVE ── -->
       @if (activeFeature() === 'executive') {
@@ -2994,7 +2994,7 @@ interface AIFeature {
 
       <div class="ai-powered">
         <span>⚡</span>
-        <span>Powered by Google Gemini 2.0 Flash · MIZAN AI Engine</span>
+        <span>Powered by Groq · Llama 3.3 70B · MIZAN AI Engine</span>
       </div>
     }
     } <!-- end @if hasAiAccess && !budgetExceeded -->
