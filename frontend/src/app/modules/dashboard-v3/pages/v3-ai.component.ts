@@ -130,6 +130,12 @@ interface AIFeature {
       border-radius: 12px; padding: 1.5rem; text-align: center; color: #ef4444;
     }
     .ai-error-icon { font-size: 2rem; margin-bottom: 0.5rem; }
+    .ai-error-msg  { font-weight: 600; margin-bottom: 0.35rem; }
+    .ai-error-detail {
+      font-size: 0.78rem; color: rgba(239,68,68,0.7); font-family: monospace;
+      background: rgba(0,0,0,0.2); border-radius: 6px; padding: 0.4rem 0.75rem;
+      margin-top: 0.35rem; word-break: break-all; text-align: left; direction: ltr;
+    }
     .ai-error-retry {
       margin-top: 1rem; padding: 0.45rem 1.25rem;
       background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.3);
@@ -1320,7 +1326,10 @@ interface AIFeature {
     @if (error() && !loading()) {
       <div class="ai-error">
         <div class="ai-error-icon">⚠️</div>
-        <div>{{ error() }}</div>
+        <div class="ai-error-msg">{{ error() }}</div>
+        @if (errorDetail()) {
+          <div class="ai-error-detail">{{ errorDetail() }}</div>
+        }
         <button class="ai-error-retry" (click)="retry()">إعادة المحاولة</button>
       </div>
     }
@@ -2936,6 +2945,7 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
   activeFeature  = signal('executive');
   loading        = signal(false);
   error          = signal<string | null>(null);
+  errorDetail    = signal<string | null>(null);
   result         = signal<any>(null);
   selectedBranch = signal<any>(null);
   anomalyFilter     = signal<string>('all');
@@ -2996,6 +3006,7 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
 
   retry(): void {
     this.error.set(null);
+    this.errorDetail.set(null);
     this.load(this.activeFeature(), this.dateRange.from(), this.dateRange.to());
   }
 
@@ -3003,6 +3014,7 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
     this.sub?.unsubscribe();
     this.loading.set(true);
     this.error.set(null);
+    this.errorDetail.set(null);
     this.result.set(null);
     this.selectedBranch.set(null);
     this.anomalyFilter.set('all');
@@ -3017,16 +3029,19 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
       next: (data) => {
         if (data?.error) {
           this.error.set(data.overview ?? 'حدث خطأ في الذكاء الاصطناعي');
+          this.errorDetail.set(data.errorDetail ?? null);
           this.result.set(null);
         } else {
           this.result.set(data);
           this.error.set(null);
+          this.errorDetail.set(null);
         }
         this.loading.set(false);
         this.cdr.markForCheck();
       },
       error: (err) => {
-        this.error.set('تعذّر الاتصال بخدمة الذكاء الاصطناعي: ' + (err?.message ?? ''));
+        this.error.set('تعذّر الاتصال بخدمة الذكاء الاصطناعي');
+        this.errorDetail.set(err?.message ?? null);
         this.loading.set(false);
         this.cdr.markForCheck();
       }

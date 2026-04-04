@@ -1291,12 +1291,28 @@ public class GeminiAIService {
             java.util.Map<String, Object> parsed = objectMapper.readValue(text, java.util.Map.class);
             return parsed;
 
-        } catch (Exception e) {
-            log.error("Chat error: {}", e.getMessage());
+        } catch (HttpClientErrorException e) {
+            int    status = e.getStatusCode().value();
+            String detail = extractGeminiError(e.getResponseBodyAsString());
+            String reason = switch (status) {
+                case 401 -> "مفتاح API غير صالح (401) — تأكد من ضبط GEMINI_API_KEY";
+                case 429 -> "تجاوز حد الطلبات (429) — انتهت الحصة";
+                default  -> "Gemini HTTP " + status + ": " + detail;
+            };
+            log.error("Chat Gemini client error {}: {}", status, e.getResponseBodyAsString());
             java.util.Map<String, Object> err = new java.util.LinkedHashMap<>();
-            err.put("answer", "عذراً، تعذّر معالجة سؤالك مؤقتاً. يرجى المحاولة مرة أخرى.\n\nميزان AI ⚖️");
+            err.put("answer", "⚠️ " + reason + "\n\nميزان AI ⚖️");
+            err.put("errorDetail", "HTTP " + status + ": " + detail);
             err.put("relatedMetrics", List.of());
-            err.put("suggestedFollowUps", List.of("ما هو أفضل فرع أداءً؟", "ما هي أبرز المخاطر؟", "كيف نحسّن الهامش؟"));
+            err.put("suggestedFollowUps", List.of());
+            return err;
+        } catch (Exception e) {
+            log.error("Chat error [{}]: {}", e.getClass().getSimpleName(), e.getMessage());
+            java.util.Map<String, Object> err = new java.util.LinkedHashMap<>();
+            err.put("answer", "⚠️ " + e.getClass().getSimpleName() + ": " + e.getMessage() + "\n\nميزان AI ⚖️");
+            err.put("errorDetail", e.getClass().getName() + ": " + e.getMessage());
+            err.put("relatedMetrics", List.of());
+            err.put("suggestedFollowUps", List.of());
             return err;
         }
     }
@@ -1338,14 +1354,41 @@ public class GeminiAIService {
             return objectMapper.readValue(text, Map.class);
 
         } catch (HttpClientErrorException e) {
-            log.error("Gemini API client error: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
-            return errorMap("خدمة الذكاء الاصطناعي غير متاحة مؤقتاً — AI service temporarily unavailable");
+            int    status  = e.getStatusCode().value();
+            String body    = e.getResponseBodyAsString();
+            String detail  = extractGeminiError(body);
+            String reason  = switch (status) {
+                case 400 -> "طلب غير صحيح (400) — " + detail;
+                case 401 -> "مفتاح API غير صالح (401) — تأكد من ضبط GEMINI_API_KEY في Render";
+                case 403 -> "صلاحيات غير كافية (403) — المفتاح لا يملك وصولاً لهذا النموذج";
+                case 429 -> "تجاوز حد الطلبات (429) — انتهى حصة API، حاول بعد قليل";
+                default  -> "خطأ من Gemini (" + status + ") — " + detail;
+            };
+            log.error("Gemini client error {}: {}", status, body);
+            return errorMap(reason, "HTTP " + status + ": " + detail);
+
         } catch (HttpServerErrorException e) {
-            log.error("Gemini API server error: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
-            return errorMap("خدمة الذكاء الاصطناعي غير متاحة مؤقتاً — AI service temporarily unavailable");
+            int    status = e.getStatusCode().value();
+            String body   = e.getResponseBodyAsString();
+            String detail = extractGeminiError(body);
+            log.error("Gemini server error {}: {}", status, body);
+            return errorMap("خطأ في خوادم Gemini (" + status + ") — حاول مرة أخرى",
+                            "HTTP " + status + ": " + detail);
+
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.error("Gemini network error: {}", e.getMessage());
+            return errorMap("تعذّر الوصول لـ Gemini — تحقق من اتصال الشبكة",
+                            "Network: " + e.getMessage());
+
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.error("Gemini JSON parse error: {}", e.getMessage());
+            return errorMap("استجابة Gemini غير صالحة (JSON) — النموذج أعاد نصاً غير منظم",
+                            "JSON parse: " + e.getMessage());
+
         } catch (Exception e) {
-            log.error("Gemini API call failed: {}", e.getMessage());
-            return errorMap("خدمة الذكاء الاصطناعي غير متاحة مؤقتاً — AI service temporarily unavailable");
+            log.error("Gemini unexpected error [{}]: {}", e.getClass().getSimpleName(), e.getMessage());
+            return errorMap("خطأ غير متوقع — " + e.getClass().getSimpleName(),
+                            e.getMessage());
         }
     }
 
@@ -1542,10 +1585,33 @@ public class GeminiAIService {
     }
 
     private Map<String, Object> errorMap(String message) {
+        return errorMap(message, null);
+    }
+
+    private Map<String, Object> errorMap(String message, String detail) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("error", true);
         m.put("overview", message);
+        if (detail != null) m.put("errorDetail", detail);
         m.put("recommendations", List.of("يرجى المحاولة مرة أخرى لاحقاً / Please try again later"));
         return m;
+    }
+
+    /** Extracts the human-readable message from a Gemini error response body. */
+    private String extractGeminiError(String body) {
+        if (body == null || body.isBlank()) return "no details";
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> parsed = objectMapper.readValue(body, Map.class);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> error = (Map<String, Object>) parsed.get("error");
+            if (error != null) {
+                Object msg    = error.get("message");
+                Object status = error.get("status");
+                return (status != null ? status + " — " : "") + (msg != null ? msg : body);
+            }
+        } catch (Exception ignored) {}
+        // Return first 200 chars of raw body as fallback
+        return body.length() > 200 ? body.substring(0, 200) + "…" : body;
     }
 }
