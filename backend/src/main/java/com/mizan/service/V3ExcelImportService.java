@@ -6,7 +6,9 @@ import com.mizan.repository.*;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.*;
+import org.bson.Document;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
@@ -195,15 +197,24 @@ public class V3ExcelImportService {
             int total = txns.size();
             statusSvc.update(importId, "deleting", total, 0, total);
 
-            // Mothan is always uploaded as a complete snapshot — wipe all existing records
-            // for this tenant so no stale rows from prior uploads survive
-            long deleted = mongo.remove(
-                Query.query(Criteria.where("tenantId").is(tenantId)),
-                V3MothanTransaction.class).getDeletedCount();
-            log.info("V3 mothan deleted {} existing records for tenant {}", deleted, tenantId);
+            // Delete only the date range covered by this file, not all historical data.
+            // If insert fails, data outside this range is preserved.
+            LocalDate minDate = txns.stream().map(V3MothanTransaction::getTransactionDate)
+                .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
+            LocalDate maxDate = txns.stream().map(V3MothanTransaction::getTransactionDate)
+                .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
+            if (minDate != null && maxDate != null) {
+                long deleted = mongo.remove(
+                    Query.query(Criteria.where("tenantId").is(tenantId)
+                        .and("transactionDate").gte(minDate).lte(maxDate)),
+                    V3MothanTransaction.class).getDeletedCount();
+                log.info("V3 mothan deleted {} existing records for range {} to {}", deleted, minDate, maxDate);
+            }
 
             statusSvc.update(importId, "saving", total, 0, total);
             int saved = bulkInsertSafe(txns, V3MothanTransaction.class, importId);
+
+            statusSvc.update(importId, "computing_rates", saved, saved, saved);
             recomputePurchaseRates(tenantId);
             cache.invalidate(tenantId);
             log.info("V3 mothan DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
@@ -575,21 +586,38 @@ public class V3ExcelImportService {
     // ─── Post-import: compute purchase rates ─────────────────────────────────
 
     public void recomputePurchaseRates(String tenantId) {
-        // Aggregate purchase SAR/weight per branch
-        Query q = Query.query(Criteria.where("tenantId").is(tenantId));
-        List<V3PurchaseTransaction> purchases = mongo.find(q, V3PurchaseTransaction.class);
-        List<V3MothanTransaction> mothan = mongo.find(q, V3MothanTransaction.class);
+        // Aggregate per branch in MongoDB — returns ~29 documents instead of loading all records.
+        Aggregation purchAgg = Aggregation.newAggregation(
+            Aggregation.match(Criteria.where("tenantId").is(tenantId)),
+            Aggregation.group("branchCode")
+                .sum("sarAmount").as("totalSar")
+                .sum("pureWeightG").as("totalWt")
+        );
+        List<Document> purchByBranch = mongo.aggregate(
+            purchAgg, "v3_purchase_transactions", Document.class).getMappedResults();
 
-        Map<String, double[]> purch = new LinkedHashMap<>(); // [sar, wt]
-        for (V3PurchaseTransaction p : purchases) {
-            double[] a = purch.computeIfAbsent(p.getBranchCode(), k -> new double[2]);
-            a[0] += p.getSarAmount(); a[1] += p.getPureWeightG();
-        }
+        Aggregation mothanAgg = Aggregation.newAggregation(
+            Aggregation.match(Criteria.where("tenantId").is(tenantId)
+                .and("weightDebitG").gt(0)),
+            Aggregation.group("branchCode")
+                .sum("amountSar").as("totalSar")
+                .sum("weightDebitG").as("totalWt")
+        );
+        List<Document> mothanByBranch = mongo.aggregate(
+            mothanAgg, "v3_mothan_transactions", Document.class).getMappedResults();
+
+        Map<String, double[]> purch    = new LinkedHashMap<>(); // [sar, wt]
         Map<String, double[]> mothanMap = new LinkedHashMap<>();
-        for (V3MothanTransaction m : mothan) {
-            if (m.getWeightDebitG() <= 0) continue;
-            double[] a = mothanMap.computeIfAbsent(m.getBranchCode(), k -> new double[2]);
-            a[0] += m.getAmountSar(); a[1] += m.getWeightDebitG();
+
+        for (Document d : purchByBranch) {
+            String code = d.getString("_id");
+            if (code == null) continue;
+            purch.put(code, new double[]{ toDouble(d, "totalSar"), toDouble(d, "totalWt") });
+        }
+        for (Document d : mothanByBranch) {
+            String code = d.getString("_id");
+            if (code == null) continue;
+            mothanMap.put(code, new double[]{ toDouble(d, "totalSar"), toDouble(d, "totalWt") });
         }
 
         Set<String> allBranches = new LinkedHashSet<>();
@@ -613,7 +641,14 @@ public class V3ExcelImportService {
             rates.add(r);
         }
         if (!rates.isEmpty()) bulkInsertSafe(rates, V3BranchPurchaseRate.class, null);
-        log.info("V3 purchase rates recomputed for {} branches", rates.size());
+        log.info("V3 purchase rates recomputed for {} branches (agg: {} purch, {} mothan)",
+            rates.size(), purchByBranch.size(), mothanByBranch.size());
+    }
+
+    private static double toDouble(Document doc, String key) {
+        Object v = doc.get(key);
+        if (v instanceof Number n) return n.doubleValue();
+        return 0.0;
     }
 
     // ─── Dimension upserts ────────────────────────────────────────────────────
