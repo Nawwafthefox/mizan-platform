@@ -5,6 +5,7 @@ import {
   ChangeDetectionStrategy, ChangeDetectorRef
 } from '@angular/core';
 import { CommonModule, NgTemplateOutlet } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { Subscription } from 'rxjs';
 import { V3AIService } from '../services/v3-ai.service';
 import { V3DateRangeService } from '../services/v3-date-range.service';
@@ -31,7 +32,7 @@ interface AIFeature {
 @Component({
   selector: 'app-v3-ai',
   standalone: true,
-  imports: [CommonModule, NgTemplateOutlet],
+  imports: [CommonModule, NgTemplateOutlet, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styles: [`
     :host { display: block; direction: rtl; }
@@ -70,6 +71,14 @@ interface AIFeature {
       0%,100% { box-shadow: 0 0 0 0 rgba(99,179,255,0.25); }
       50%      { box-shadow: 0 0 0 4px rgba(99,179,255,0); }
     }
+    .usage-link {
+      font-size: 0.75rem; font-weight: 600;
+      padding: 0.28rem 0.75rem; border-radius: 20px;
+      background: rgba(201,168,76,0.1); border: 1px solid rgba(201,168,76,0.25);
+      color: #c9a84c; text-decoration: none; white-space: nowrap;
+      transition: background 150ms;
+    }
+    .usage-link:hover { background: rgba(201,168,76,0.2); }
 
     /* ── Feature selector ── */
     .feature-tabs {
@@ -1318,6 +1327,9 @@ interface AIFeature {
         <div class="ai-subtitle">تحليل بيانات الذهب باستخدام Gemini 2.0 Flash</div>
       </div>
       <span class="ai-badge">GEMINI 2.0</span>
+      @if (isCompanyAdmin()) {
+        <a class="usage-link" routerLink="/v3/ai-usage">📊 الاستهلاك</a>
+      }
     </div>
 
     <!-- Access denied for non-AI roles -->
@@ -2999,6 +3011,10 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
     const role = this.auth.currentUser?.role ?? '';
     return AI_ROLES.has(role);
   });
+
+  isCompanyAdmin = computed(() =>
+    this.auth.currentUser?.role === 'COMPANY_ADMIN'
+  );
 
   // ── Budget tracking ────────────────────────────────────────────────────────
   budgetExceeded = signal(false);
