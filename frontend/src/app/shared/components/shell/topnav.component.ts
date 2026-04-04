@@ -390,23 +390,11 @@ export class TopnavComponent {
   i18n = inject(I18nService);
 
   private allItems: NavItem[] = [
-    { labelAr: 'نظرة عامة',         labelEn: 'Overview',          route: '/dashboard/overview',          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER','BRANCH_EMPLOYEE','DATA_ENTRY'] },
-    { labelAr: 'الفروع',             labelEn: 'Branches',          route: '/dashboard/branches',          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
-    { labelAr: 'المناطق',            labelEn: 'Regions',           route: '/dashboard/regions',           roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER'] },
-    { labelAr: 'الموظفون',           labelEn: 'Employees',         route: '/dashboard/employees',         roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
-    { labelAr: 'عيارات الذهب',       labelEn: 'Karat',             route: '/dashboard/karat',             roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER'] },
-    { labelAr: 'موطن الذهب',         labelEn: 'Mothan',            route: '/dashboard/mothan',            roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'الخارطة الحرارية',   labelEn: 'Heatmap',           route: '/dashboard/heatmap',           roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'مقارنة الأيام',      labelEn: 'Comparison',        route: '/dashboard/comparison',        roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'الأهداف',            labelEn: 'Targets',           route: '/dashboard/targets',           roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'رفع الملفات',        labelEn: 'Upload',            route: '/upload',                      roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','DATA_ENTRY'] },
-    { labelAr: 'المستخدمون',         labelEn: 'Users',             route: '/users',                       roles: ['COMPANY_ADMIN'] },
-    { labelAr: 'أسعار الشراء',       labelEn: 'Rates',             route: '/dashboard/rates',             roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'] },
-    { labelAr: 'أدائي',              labelEn: 'My Performance',    route: '/dashboard/my-performance',    roles: ['BRANCH_EMPLOYEE'] },
-    { labelAr: 'داشبورد 3.0',        labelEn: 'Dashboard 3.0',     route: '/v3',                          roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN'],  badge: 'v3' },
-    { labelAr: 'لوحة التحكم',        labelEn: 'Dashboard',         route: '/super-admin/dashboard',       roles: ['SUPER_ADMIN'] },
-    { labelAr: 'الشركات',            labelEn: 'Companies',         route: '/super-admin/tenants',         roles: ['SUPER_ADMIN'] },
-    { labelAr: 'خطط الاشتراك',       labelEn: 'Tiers',             route: '/super-admin/tiers',           roles: ['SUPER_ADMIN'] },
+    { labelAr: 'الرئيسية',       labelEn: 'Dashboard',   route: '/v3',                    roles: ['CEO','HEAD_OF_SALES','COMPANY_ADMIN','REGION_MANAGER','BRANCH_MANAGER','BRANCH_EMPLOYEE','DATA_ENTRY'] },
+    { labelAr: 'المستخدمون',     labelEn: 'Users',       route: '/users',                  roles: ['COMPANY_ADMIN'] },
+    { labelAr: 'لوحة التحكم',   labelEn: 'Dashboard',   route: '/super-admin/dashboard',  roles: ['SUPER_ADMIN'] },
+    { labelAr: 'الشركات',        labelEn: 'Companies',   route: '/super-admin/tenants',    roles: ['SUPER_ADMIN'] },
+    { labelAr: 'خطط الاشتراك',  labelEn: 'Tiers',       route: '/super-admin/tiers',      roles: ['SUPER_ADMIN'] },
   ];
 
   visibleItems = computed(() => {
@@ -423,6 +411,6 @@ export class TopnavComponent {
   logoRoute = computed(() =>
     this.auth.currentUserSignal()?.role === 'SUPER_ADMIN'
       ? '/super-admin/dashboard'
-      : '/dashboard/overview'
+      : '/v3'
   );
 }

@@ -2,6 +2,7 @@ import { Component, inject, signal, OnInit } from '@angular/core';
 import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { V3DateRangeService } from './services/v3-date-range.service';
+import { TopnavComponent } from '../../shared/components/shell/topnav.component';
 
 interface V3Tab {
   label: string;
@@ -15,8 +16,9 @@ interface V3Tab {
 @Component({
   selector: 'app-dashboard-v3-shell',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, FormsModule],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, FormsModule, TopnavComponent],
   template: `
+    <app-topnav />
     <div class="v3-shell" dir="rtl">
 
       <!-- Top nav tabs -->
@@ -425,7 +427,6 @@ export class DashboardV3ShellComponent implements OnInit {
   private router = inject(Router);
 
   tabs: V3Tab[] = [
-    { label: '← الكلاسيكي',  path: '/dashboard/overview', back: true },
     { label: 'نظرة عامة',    path: '/v3/overview' },
     { label: 'رفع الملفات',  path: '/v3/upload', upload: true },
     { label: 'التنبيهات',    path: '/v3/alerts' },
