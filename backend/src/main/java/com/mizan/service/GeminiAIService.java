@@ -23,7 +23,7 @@ public class GeminiAIService {
 
     private static final String GEMINI_BASE_URL =
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=";
-    private static final long AI_TTL_MS = 10 * 60 * 1000L; // 10 minutes
+    private static final long AI_TTL_MS = 30 * 60 * 1000L; // 30 minutes — free-tier friendly
 
     @Value("${mizan.gemini.api-key}")
     private String apiKey;
@@ -77,11 +77,8 @@ public class GeminiAIService {
             String ctx = buildExecutiveContext(kpis, br, from, to);
             String prompt = """
                 أنت محلل مالي ذكاء اصطناعي متخصص في تجارة الذهب بالمملكة العربية السعودية.
-                You are an AI financial analyst specializing in Saudi Arabian gold retail.
                 قدم ملخصاً تنفيذياً شاملاً وقابلاً للتنفيذ بناءً على البيانات أدناه.
-                Provide a comprehensive and actionable executive summary based on the data below.
                 أعد JSON صحيح فقط — لا نص خارجه — بهذا الهيكل الدقيق:
-                Return valid JSON only — no text outside it — with this exact structure:
                 {
                   "headline": "جملة قصيرة تلخص الوضع العام",
                   "overview": "فقرتان أو ثلاث بالعربية تحلل الأداء الكلي بعمق",
@@ -105,9 +102,7 @@ public class GeminiAIService {
             String ctx = buildBranchContext(branches, from, to);
             String prompt = """
                 أنت محلل أداء فروع تجارة الذهب بالمملكة العربية السعودية.
-                You are a branch performance analyst for Saudi gold retail.
                 حلل أداء الفروع وحدد الرائدين والمتأخرين والأنماط الإقليمية.
-                Analyze branch performance, identify leaders, laggards, and regional patterns.
                 أعد JSON صحيح فقط بهذا الهيكل:
                 {
                   "overview": "تحليل شامل لأداء جميع الفروع بالعربية",
@@ -130,9 +125,7 @@ public class GeminiAIService {
             String ctx = buildEmployeeContext(groups, from, to);
             String prompt = """
                 أنت محلل أداء بشري متخصص في تجارة الذهب بالمملكة العربية السعودية.
-                You are an HR performance analyst for Saudi gold retail.
                 حدد نجوم الفريق والموظفين الذين يحتاجون دعماً وتقييم صحة الفريق.
-                Identify team stars, employees needing support, and assess overall team health.
                 أعد JSON صحيح فقط بهذا الهيكل:
                 {
                   "overview": "تقييم شامل لأداء الفريق بالعربية",
@@ -155,9 +148,7 @@ public class GeminiAIService {
             String ctx = buildKaratContext(branches, from, to);
             String prompt = """
                 أنت خبير ربحية الذهب وتحليل الأعيار بالمملكة العربية السعودية.
-                You are a gold karat profitability expert for Saudi Arabia.
                 حلل بيانات الأعيار وحدد أكثرها ربحية وقدم توصيات المخزون.
-                Analyze karat data, identify most profitable, and provide inventory recommendations.
                 أعد JSON صحيح فقط بهذا الهيكل:
                 {
                   "overview": "تحليل شامل لأداء الأعيار بالعربية",
@@ -180,9 +171,7 @@ public class GeminiAIService {
             String ctx = buildDailyTrendContext(trend, from, to);
             String prompt = """
                 أنت محلل اتجاهات مالية متخصص في تجارة الذهب بالمملكة العربية السعودية.
-                You are a financial trends analyst for Saudi gold retail.
                 حلل بيانات المبيعات اليومية وحدد الأنماط وفترات الذروة والركود.
-                Analyze daily sales data, identify patterns, peak periods, and slow periods.
                 أعد JSON صحيح فقط بهذا الهيكل:
                 {
                   "overview": "تحليل شامل للاتجاه اليومي بالعربية",
@@ -912,10 +901,7 @@ public class GeminiAIService {
             String nowIso = java.time.LocalDateTime.now().toString();
             String prompt = String.format("""
                 أنت كاتب تقارير تنفيذية متخصص في صناعة الذهب بالمملكة العربية السعودية.
-                You are an executive briefing writer for Saudi gold retail leadership.
-
                 اكتب إحاطة تنفيذية باللغة العربية الفصحى، موجزة، دقيقة، وقابلة للتنفيذ.
-                Write a precise, elegant executive briefing in formal Arabic, based strictly on the data.
 
                 Return valid JSON only — no text outside it:
 
@@ -1222,7 +1208,6 @@ public class GeminiAIService {
 
             String systemPrompt = """
                 أنت "ميزان AI ⚖️"، مساعد ذكاء اصطناعي لشركة ذهب بالتجزئة في المملكة العربية السعودية.
-                You are "Mizan AI ⚖️", an AI assistant for a Saudi gold retail company.
                 لديك بيانات مبيعات ومشتريات وموظفين معالجة للفترة المطلوبة.
 
                 قواعد الإجابة:
@@ -1329,7 +1314,7 @@ public class GeminiAIService {
             )),
             "generationConfig", Map.of(
                 "temperature",       temperature,
-                "maxOutputTokens",   2048,
+                "maxOutputTokens",   1024,
                 "responseMimeType",  "application/json"
             )
         );
@@ -1433,9 +1418,9 @@ public class GeminiAIService {
         StringBuilder sb = new StringBuilder();
         sb.append("Period: ").append(from).append(" to ").append(to).append("\n");
         sb.append("Currency: SAR | Weight: grams | Industry: Gold Retail KSA\n\n");
-        sb.append("ALL BRANCHES (sorted by sales desc):\n");
+        sb.append("TOP 15 BRANCHES (sorted by sales desc):\n");
         sb.append("Name | Region | Sales(SAR) | Weight(g) | Invoices | Purchases(SAR) | Net(SAR) | SaleRate | PurchRate | DiffRate | Returns(SAR)\n");
-        branches.forEach(b -> sb.append(String.format(
+        branches.stream().limit(15).forEach(b -> sb.append(String.format(
             "%s | %s | %.0f | %.1f | %.0f | %.0f | %.0f | %.2f | %.2f | %.2f | %.0f\n",
             b.getOrDefault("branchName",""), b.getOrDefault("region",""),
             dbl(b,"totalSar"), dbl(b,"totalWeight"), dbl(b,"totalPieces"),
@@ -1456,9 +1441,9 @@ public class GeminiAIService {
         StringBuilder sb = new StringBuilder();
         sb.append("Period: ").append(from).append(" to ").append(to).append("\n");
         sb.append("Currency: SAR | Weight: grams | Industry: Gold Retail KSA\n\n");
-        sb.append("TOP 30 EMPLOYEES BY SALES:\n");
+        sb.append("TOP 15 EMPLOYEES BY SALES:\n");
         sb.append("Name | Branch | Region | Sales(SAR) | Weight(g) | SaleRate | DiffRate | ProfitMargin | Rating\n");
-        all.stream().limit(30).forEach(e -> sb.append(String.format(
+        all.stream().limit(15).forEach(e -> sb.append(String.format(
             "%s | %s | %s | %.0f | %.1f | %.2f | %.2f | %.0f | %s\n",
             e.getOrDefault("empName",""), e.getOrDefault("branchName",""), e.getOrDefault("region",""),
             dbl(e,"totalSar"), dbl(e,"totalWeight"),
@@ -1502,8 +1487,8 @@ public class GeminiAIService {
         StringBuilder sb = new StringBuilder();
         sb.append("Period: ").append(from).append(" to ").append(to).append("\n");
         sb.append("Currency: SAR | Industry: Gold Retail KSA\n\n");
-        List<Map<String,Object>> slice = trend.size() > 90
-            ? trend.subList(trend.size() - 90, trend.size()) : trend;
+        List<Map<String,Object>> slice = trend.size() > 30
+            ? trend.subList(trend.size() - 30, trend.size()) : trend;
         sb.append("DAILY TREND (").append(slice.size()).append(" days):\n");
         sb.append("Date | Sales(SAR) | Weight(g) | Purchases(SAR) | Net(SAR)\n");
         slice.forEach(d -> sb.append(String.format("%s | %.0f | %.1f | %.0f | %.0f\n",
@@ -1536,9 +1521,9 @@ public class GeminiAIService {
         sb.append("Currency: SAR | Weight: grams | Industry: Gold Retail KSA\n\n");
 
         // Branch staffing summary
-        sb.append("BRANCH STAFFING ANALYSIS:\n");
+        sb.append("BRANCH STAFFING ANALYSIS (top 15):\n");
         sb.append("Branch | Region | Sales(SAR) | Employees | SalesPerEmployee(SAR) | AvgSaleRate(SAR/g) | DiffRate\n");
-        branches.forEach(b -> {
+        branches.stream().limit(15).forEach(b -> {
             String name = (String) b.getOrDefault("branchName", "");
             int empCount = branchEmpCount.getOrDefault(name, 0);
             double sales = dbl(b, "totalSar");
@@ -1550,7 +1535,7 @@ public class GeminiAIService {
         });
 
         // Employee performance vs branch average
-        sb.append("\nEMPLOYEE vs BRANCH COMPARISON (top 40 by sales):\n");
+        sb.append("\nEMPLOYEE vs BRANCH COMPARISON (top 20 by sales):\n");
         sb.append("EmpName | EmpId | Branch | Region | SaleRate | BranchAvgRate | RateDelta | Rating | ProfitMargin\n");
         // Build branch avg sale rate map
         Map<String, Double> branchAvgRate = new LinkedHashMap<>();
@@ -1559,7 +1544,7 @@ public class GeminiAIService {
 
         allEmps.stream()
             .sorted((a, b) -> Double.compare(dbl(b, "totalSar"), dbl(a, "totalSar")))
-            .limit(40)
+            .limit(20)
             .forEach(e -> {
                 String bn = (String) e.getOrDefault("branchName", "");
                 double empRate = dbl(e, "saleRate");
