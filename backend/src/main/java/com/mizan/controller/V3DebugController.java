@@ -365,6 +365,131 @@ public class V3DebugController {
     }
 
     /**
+     * POST /api/v3/debug/analyze-mothan
+     * Dry-run the mothan parser: returns accepted/rejected counts + every rejected row
+     * with its actual cell values so we know exactly what the importer will save.
+     */
+    @PostMapping("/analyze-mothan")
+    public ResponseEntity<?> analyzeMothan(@RequestParam("file") MultipartFile file) throws Exception {
+        byte[] bytes = file.getBytes();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("filename",  file.getOriginalFilename());
+        result.put("sizeKb",    bytes.length / 1024);
+
+        try (org.apache.poi.hssf.usermodel.HSSFWorkbook wb =
+                 new org.apache.poi.hssf.usermodel.HSSFWorkbook(new java.io.ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+            result.put("totalRowsInSheet", sheet.getLastRowNum() + 1);
+
+            int accepted = 0, rejBranch = 0, rejDate = 0;
+            List<Map<String, Object>> rejectedRows = new ArrayList<>();
+            Map<String, Integer> branchCounts = new java.util.TreeMap<>();
+
+            for (Row row : sheet) {
+                if (row == null) continue;
+
+                // Read col 7 branch code (same logic as service)
+                String branchCode = cellStr(row, 7);
+
+                if (!branchCode.matches("\\d{4}")) {
+                    rejBranch++;
+                    if (rejectedRows.size() < 50) {
+                        rejectedRows.add(rowSummary(row, "invalid_branch",
+                            "branchCode='" + branchCode + "'"));
+                    }
+                    continue;
+                }
+
+                // Date at col 9
+                LocalDate date = parseMothanDateDry(row, 9);
+                if (date == null) {
+                    rejDate++;
+                    if (rejectedRows.size() < 50) {
+                        rejectedRows.add(rowSummary(row, "null_date",
+                            "branchCode=" + branchCode + " col9='" + cellStr(row, 9) + "'"));
+                    }
+                    continue;
+                }
+
+                accepted++;
+                branchCounts.merge(branchCode, 1, Integer::sum);
+            }
+
+            result.put("accepted",          accepted);
+            result.put("rejectedBranch",     rejBranch);
+            result.put("rejectedNullDate",   rejDate);
+            result.put("totalRejected",      rejBranch + rejDate);
+            result.put("rejectedRows",       rejectedRows);
+            result.put("branchDistribution", branchCounts);
+            result.put("uniqueBranches",     branchCounts.size());
+        }
+
+        return ResponseEntity.ok(Map.of("success", true, "analysis", result));
+    }
+
+    // ── helpers for analyze-mothan ─────────────────────────────────────────────
+
+    private String cellStr(Row row, int col) {
+        Cell c = row.getCell(col);
+        if (c == null) return "";
+        CellType type = c.getCellType() == CellType.FORMULA
+            ? c.getCachedFormulaResultType() : c.getCellType();
+        if (type == CellType.STRING)  return c.getStringCellValue().trim();
+        if (type == CellType.NUMERIC) {
+            double v = c.getNumericCellValue();
+            return v == Math.floor(v) ? String.valueOf((long) v) : String.valueOf(v);
+        }
+        return c.getCellType().name();
+    }
+
+    private LocalDate parseMothanDateDry(Row row, int col) {
+        Cell cell = row.getCell(col);
+        if (cell == null) return null;
+        CellType type = cell.getCellType() == CellType.FORMULA
+            ? cell.getCachedFormulaResultType() : cell.getCellType();
+        if (type == CellType.NUMERIC) {
+            double v = cell.getNumericCellValue();
+            if (v > 30000 && v < 70000) {
+                try {
+                    long days = (long) v - 25569;
+                    return java.time.Instant.ofEpochSecond(days * 86400)
+                        .atZone(java.time.ZoneOffset.UTC).toLocalDate();
+                } catch (Exception ignored) {}
+            }
+        }
+        if (type == CellType.STRING) {
+            String s = cell.getStringCellValue().trim();
+            java.time.format.DateTimeFormatter[] fmts = {
+                java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+                java.time.format.DateTimeFormatter.ofPattern("d/M/yyyy"),
+                java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+                java.time.format.DateTimeFormatter.ofPattern("d-M-yyyy"),
+                java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+                java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+            };
+            for (java.time.format.DateTimeFormatter fmt : fmts) {
+                try { return LocalDate.parse(s, fmt); } catch (Exception ignored) {}
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Object> rowSummary(Row row, String reason, String detail) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("rowIndex", row.getRowNum());
+        m.put("reason",   reason);
+        m.put("detail",   detail);
+        Map<String, String> cells = new LinkedHashMap<>();
+        for (int ci = 0; ci <= Math.min(row.getLastCellNum(), 11); ci++) {
+            String v = cellStr(row, ci);
+            if (!v.isBlank()) cells.put("c" + ci, v);
+        }
+        m.put("cells", cells);
+        return m;
+    }
+
+    /**
      * POST /api/v3/debug/sheet-preview
      * Upload any XLS file → returns first 30 rows with all cell values per column.
      * Used to understand the actual file structure when parsers produce wrong counts.

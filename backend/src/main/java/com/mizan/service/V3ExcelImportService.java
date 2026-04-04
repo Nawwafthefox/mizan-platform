@@ -195,12 +195,12 @@ public class V3ExcelImportService {
             int total = txns.size();
             statusSvc.update(importId, "deleting", total, 0, total);
 
-            LocalDate minDate = txns.stream().map(V3MothanTransaction::getTransactionDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = txns.stream().map(V3MothanTransaction::getTransactionDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
-
-            long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("transactionDate").gte(minDate).lte(maxDate)), V3MothanTransaction.class).getDeletedCount();
-            log.info("V3 mothan deleted {} existing, range {} – {}", deleted, minDate, maxDate);
+            // Mothan is always uploaded as a complete snapshot — wipe all existing records
+            // for this tenant so no stale rows from prior uploads survive
+            long deleted = mongo.remove(
+                Query.query(Criteria.where("tenantId").is(tenantId)),
+                V3MothanTransaction.class).getDeletedCount();
+            log.info("V3 mothan deleted {} existing records for tenant {}", deleted, tenantId);
 
             statusSvc.update(importId, "saving", total, 0, total);
             int saved = bulkInsertSafe(txns, V3MothanTransaction.class, importId);
@@ -690,8 +690,11 @@ public class V3ExcelImportService {
     private String getStr(Row row, int col) {
         Cell c = row.getCell(col);
         if (c == null) return "";
-        if (c.getCellType() == CellType.STRING) return c.getStringCellValue().trim();
-        if (c.getCellType() == CellType.NUMERIC) {
+        CellType type = c.getCellType() == CellType.FORMULA
+            ? c.getCachedFormulaResultType()
+            : c.getCellType();
+        if (type == CellType.STRING) return c.getStringCellValue().trim();
+        if (type == CellType.NUMERIC) {
             double v = c.getNumericCellValue();
             if (v == Math.floor(v)) return String.valueOf((long) v);
             return String.valueOf(v);

@@ -302,7 +302,63 @@ function blank(type: string, label: string, icon: string): CardState {
         }
       }
     </div>
-  }
+
+    <!-- Mothan Dry-Run Analyzer -->
+    @if (isAdmin()) {
+      <div class="diag-section" style="margin-top:1rem">
+        <div class="diag-header">
+          <div class="ih-left">
+            <span class="ih-icon">⚖️</span>
+            <h3>تحليل ملف موطن الذهب (بدون حفظ)</h3>
+            <span class="badge-admin">Admin Only</span>
+          </div>
+        </div>
+        <div style="padding:0.75rem 1.25rem 1rem; display:flex; flex-direction:column; gap:0.75rem;">
+          <label style="font-size:0.82rem; color:var(--mizan-text-muted)">
+            ارفع ملف موطن الذهب لمعرفة عدد السجلات التي سيقبلها النظام قبل الاستيراد الفعلي
+          </label>
+          <input #mothanAnalyzeInput type="file" accept=".xls" style="display:none"
+            (change)="runMothanAnalyze($event)" />
+          <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
+            <button class="btn-diag" (click)="mothanAnalyzeInput.click()" [disabled]="mothanAnalyzeLoading()">
+              @if (mothanAnalyzeLoading()) { <span class="spinner"></span> جارٍ التحليل... }
+              @else { 📂 اختر الملف وحلّله }
+            </button>
+            @if (mothanAnalysis()) {
+              <span style="font-size:0.82rem; color:var(--mizan-text-muted)">
+                {{ mothanAnalysis().filename }}
+              </span>
+            }
+          </div>
+          @if (mothanAnalysis()) {
+            <div class="diag-grid">
+              <table class="diag-table">
+                <thead><tr><th>النتيجة</th><th>العدد</th></tr></thead>
+                <tbody>
+                  <tr><td>إجمالي صفوف الملف</td><td>{{ mothanAnalysis().totalRowsInSheet | number }}</td></tr>
+                  <tr style="color:#22c55e"><td>✅ سيُقبل ويُحفظ</td><td><strong>{{ mothanAnalysis().accepted | number }}</strong></td></tr>
+                  <tr style="color:#ef4444"><td>❌ مرفوض (كود فرع غير صالح)</td><td>{{ mothanAnalysis().rejectedBranch | number }}</td></tr>
+                  <tr style="color:#ef4444"><td>❌ مرفوض (تاريخ فارغ)</td><td>{{ mothanAnalysis().rejectedNullDate | number }}</td></tr>
+                  <tr><td>فروع فريدة</td><td>{{ mothanAnalysis().uniqueBranches }}</td></tr>
+                </tbody>
+              </table>
+              @if (mothanAnalysis().rejectedRows?.length) {
+                <div>
+                  <div style="font-size:0.8rem; font-weight:700; color:#ef4444; margin-bottom:0.4rem">
+                    أول {{ mothanAnalysis().rejectedRows.length }} صف مرفوض:
+                  </div>
+                  @for (r of mothanAnalysis().rejectedRows; track r.rowIndex) {
+                    <div style="font-size:0.75rem; font-family:monospace; color:var(--mizan-text-muted); margin-bottom:0.2rem">
+                      row {{ r.rowIndex }} [{{ r.reason }}] {{ r.detail }}
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+        </div>
+      </div>
+    }
 
 </div>
   `,
@@ -569,6 +625,9 @@ export class ComingSoonComponent implements OnDestroy {
   diagLoading = signal(false);
   diag        = signal<any>(null);
 
+  mothanAnalyzeLoading = signal(false);
+  mothanAnalysis       = signal<any>(null);
+
   ngOnDestroy() {
     this.timerH.forEach(h => clearInterval(h));
     this.simH.forEach(h => clearInterval(h));
@@ -740,6 +799,27 @@ export class ComingSoonComponent implements OnDestroy {
       next: res => { this.diag.set(res.diagnosis); this.diagLoading.set(false); },
       error: err => { this.diag.set({ error: err?.error?.message ?? 'فشل الاتصال' }); this.diagLoading.set(false); },
     });
+  }
+
+  runMothanAnalyze(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file  = input.files?.[0];
+    if (!file) return;
+    this.mothanAnalyzeLoading.set(true);
+    this.mothanAnalysis.set(null);
+    const fd = new FormData();
+    fd.append('file', file);
+    this.http.post<any>(`${environment.apiUrl}/v3/debug/analyze-mothan`, fd).subscribe({
+      next: res => {
+        this.mothanAnalysis.set({ ...res.analysis, filename: file.name });
+        this.mothanAnalyzeLoading.set(false);
+      },
+      error: err => {
+        this.mothanAnalysis.set({ filename: file.name, error: err?.error?.message ?? 'فشل التحليل' });
+        this.mothanAnalyzeLoading.set(false);
+      },
+    });
+    input.value = '';
   }
 
   diagPct(actual: number, expected: number): number {
