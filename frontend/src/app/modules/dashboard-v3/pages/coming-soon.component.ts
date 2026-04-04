@@ -666,7 +666,6 @@ export class ComingSoonComponent implements OnDestroy {
     clearInterval(this.pollH.get(cur.type));
 
     const startedAt = Date.now();
-    const isMothan  = cur.type === 'mothan';
 
     // Reset card → reading
     this.patch(idx, {
@@ -684,14 +683,7 @@ export class ComingSoonComponent implements OnDestroy {
       const s    = this.cards()[idx];
       if (s.stage === 'done' || s.stage === 'error') return;
       const svMs = s.serverWaitStart > 0 ? now - s.serverWaitStart : 0;
-      // Stall warning only for non-mothan (mothan shows real status via poll)
-      let stallMsg = '';
-      if (!isMothan) {
-        if (svMs > 45_000) stallMsg = '⚠️ تجاوز 45 ثانية — الخادم قد يعاني من ضغط أو الملف كبير جداً.';
-        else if (svMs > 20_000) stallMsg = '⏳ أطول من المعتاد — الخادم يعالج كمية كبيرة من الصفوف.';
-        else if (svMs > 8_000)  stallMsg = 'الخادم يعالج البيانات، يرجى الانتظار...';
-      }
-      this.patch(idx, { elapsedMs: now - startedAt, serverWaitMs: svMs, stallMsg });
+      this.patch(idx, { elapsedMs: now - startedAt, serverWaitMs: svMs });
     }, 200));
 
     setTimeout(() => {
@@ -704,37 +696,8 @@ export class ComingSoonComponent implements OnDestroy {
         reportProgress: true,
       });
 
-      // ── Simulation (non-mothan only) ───────────────────────────────────
-      let simStarted = false;
-      const startSim = () => {
-        if (isMothan || simStarted || this.cards()[idx].stage !== 'uploading') return;
-        simStarted = true;
-        const svStart = Date.now();
-        this.patch(idx, { stage: 'parsing', pct: 30, stageMsg: 'جارٍ تحليل صفوف Excel وكشف التنسيق...', serverWaitStart: svStart });
-        this.log(idx, startedAt, 'اكتمل رفع الملف — الخادم يحلل البيانات', 'info');
-
-        this.simH.set(cur.type, setInterval(() => {
-          const c = this.cards()[idx];
-          if (c.stage === 'done' || c.stage === 'error') return;
-          if (c.pct < 62) {
-            this.patch(idx, { stage: 'parsing', pct: c.pct + 1.8, stageMsg: 'جارٍ تحليل الصفوف وتصنيف العيارات...' });
-          } else if (c.pct < 85) {
-            if (c.stage === 'parsing') this.log(idx, startedAt, 'اكتمل التحليل — جارٍ الحفظ في MongoDB', 'info');
-            this.patch(idx, { stage: 'inserting', pct: Math.min(c.pct + 1.1, 85), stageMsg: 'جارٍ حفظ السجلات في قاعدة البيانات...' });
-          } else if (c.pct < 94) {
-            const isRates = cur.type === 'purchases';
-            if (c.stage === 'inserting' && isRates) this.log(idx, startedAt, 'جارٍ إعادة حساب أسعار الشراء للفروع', 'info');
-            this.patch(idx, {
-              stage: isRates ? 'rates' : 'inserting',
-              pct: Math.min(c.pct + 0.5, 94),
-              stageMsg: isRates ? 'جارٍ إعادة حساب أسعار الشراء للفروع...' : 'جارٍ التحقق النهائي من البيانات...',
-            });
-          }
-        }, 200));
-      };
-
-      // ── Mothan polling ─────────────────────────────────────────────────
-      const startMothanPoll = (importId: string) => {
+      // ── Status polling — used for all v3 import types ──────────────────
+      const startPoll = (importId: string) => {
         this.patch(idx, {
           stage: 'parsing', pct: 30,
           stageMsg: 'جارٍ التحليل...',
@@ -743,12 +706,12 @@ export class ComingSoonComponent implements OnDestroy {
         this.log(idx, startedAt, `اكتمل رفع الملف — بدأ المعالجة (${importId.slice(0, 8)}...)`, 'info');
 
         const statusMsgs: Record<string, { stage: Stage; msg: string; pct: number }> = {
-          parsing:          { stage: 'parsing',   msg: 'جاري التحليل...',                   pct: 35 },
-          deleting:         { stage: 'parsing',   msg: 'جاري حذف البيانات القديمة...',       pct: 50 },
-          saving:           { stage: 'inserting', msg: '',                                   pct: 65 },
-          computing_rates:  { stage: 'rates',     msg: 'جاري حساب معدلات الشراء...',         pct: 90 },
-          complete:         { stage: 'done',       msg: '',                                   pct: 100 },
-          error:            { stage: 'error',      msg: '',                                   pct: 0 },
+          parsing:          { stage: 'parsing',   msg: 'جاري التحليل...',                pct: 35 },
+          deleting:         { stage: 'parsing',   msg: 'جاري حذف البيانات القديمة...',   pct: 50 },
+          saving:           { stage: 'inserting', msg: '',                               pct: 65 },
+          computing_rates:  { stage: 'rates',     msg: 'جاري حساب معدلات الشراء...',     pct: 90 },
+          complete:         { stage: 'done',      msg: '',                               pct: 100 },
+          error:            { stage: 'error',     msg: '',                               pct: 0 },
         };
 
         this.pollH.set(cur.type, setInterval(() => {
@@ -756,8 +719,7 @@ export class ComingSoonComponent implements OnDestroy {
             next: res => {
               const s = res?.data;
               if (!s) return;
-              const now = Date.now();
-              const elapsed = now - startedAt;
+              const elapsed = Date.now() - startedAt;
               this.patch(idx, { elapsedMs: elapsed });
 
               if (s.status === 'saving') {
@@ -765,8 +727,7 @@ export class ComingSoonComponent implements OnDestroy {
                 const total = s.total ?? 0;
                 const pct   = total > 0 ? Math.round(65 + (saved / total) * 20) : 70;
                 this.patch(idx, {
-                  stage: 'inserting',
-                  pct,
+                  stage: 'inserting', pct,
                   stageMsg: `جاري الحفظ... ${saved.toLocaleString('ar')} / ${total.toLocaleString('ar')}`,
                 });
                 return;
@@ -807,30 +768,24 @@ export class ComingSoonComponent implements OnDestroy {
           if (httpEv.type === HttpEventType.UploadProgress) {
             const { loaded, total } = httpEv;
             if (total) this.patch(idx, { pct: Math.round(5 + (loaded / total) * 25) });
-            if (loaded === total && !isMothan) startSim();
           }
-          if (httpEv.type === HttpEventType.Sent && !isMothan) startSim();
 
           if (httpEv.type === HttpEventType.Response) {
             clearInterval(this.simH.get(cur.type));
             const resp    = httpEv as HttpResponse<any>;
             const elapsed = Date.now() - startedAt;
 
-            if (isMothan && resp.status === 202) {
+            if (resp.status === 202) {
               const importId = resp.body?.data?.importId;
               if (importId) {
-                startMothanPoll(importId);
+                startPoll(importId);
               } else {
-                // No importId — fall back to done
+                // No importId in response — mark done immediately
                 clearInterval(this.timerH.get(cur.type));
                 this.patch(idx, { stage: 'done', pct: 100, elapsedMs: elapsed,
-                  stageMsg: 'رُفع الملف — لا يوجد importId للمتابعة', stallMsg: '' });
+                  stageMsg: 'رُفع الملف — الخادم يعالج البيانات في الخلفية', stallMsg: '' });
+                this.log(idx, startedAt, '✅ مقبول — انتظر 90 ثانية ثم اضغط "تشخيص البيانات"', 'ok');
               }
-            } else if (!isMothan && resp.status === 202) {
-              clearInterval(this.timerH.get(cur.type));
-              this.patch(idx, { stage: 'done', pct: 100, elapsedMs: elapsed,
-                stageMsg: 'رُفع الملف — الخادم يعالج البيانات في الخلفية', stallMsg: '' });
-              this.log(idx, startedAt, '✅ مقبول — انتظر 90 ثانية ثم اضغط "تشخيص البيانات"', 'ok');
             } else {
               clearInterval(this.timerH.get(cur.type));
               const count = resp.body?.data?.count ?? resp.body?.count ?? 0;

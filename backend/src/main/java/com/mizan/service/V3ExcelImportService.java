@@ -174,6 +174,7 @@ public class V3ExcelImportService {
 
             statusSvc.update(importId, "saving", total, 0, total);
             int saved = bulkInsertSafe(txns, V3PurchaseTransaction.class, importId);
+            statusSvc.update(importId, "computing_rates", saved, saved, saved);
             recomputePurchaseRates(tenantId);
             cache.invalidate(tenantId);
             log.info("V3 purchases DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
