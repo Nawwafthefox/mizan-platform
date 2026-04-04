@@ -13,20 +13,22 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Tracks Gemini API usage per tenant.
+ * Tracks Groq API usage per tenant.
  *
- * Pricing model (Gemini 2.0 Flash):
- *   Input  tokens: $0.075 / 1,000,000 tokens
- *   Output tokens: $0.300 / 1,000,000 tokens
+ * Pricing model (Groq llama-3.3-70b-versatile):
+ *   Input  tokens: $0.59 / 1,000,000 tokens
+ *   Output tokens: $0.79 / 1,000,000 tokens
  *
- * Token estimate: characters / 4 (industry-standard approximation for Arabic+English mixed text).
+ * Token counts come from the real Groq usage field (prompt_tokens / completion_tokens).
+ * estimateTokens() is kept as a fallback only.
  */
 @Service
 @Slf4j
 public class AiUsageService {
 
-    private static final double INPUT_COST_PER_TOKEN  = 0.075 / 1_000_000.0;
-    private static final double OUTPUT_COST_PER_TOKEN = 0.300 / 1_000_000.0;
+    // Groq llama-3.3-70b-versatile pricing
+    private static final double INPUT_COST_PER_TOKEN  = 0.59 / 1_000_000.0;
+    private static final double OUTPUT_COST_PER_TOKEN = 0.79 / 1_000_000.0;
 
     private final AiUsageLogRepository logRepo;
     private final TenantRepository     tenantRepo;
@@ -200,8 +202,8 @@ public class AiUsageService {
         m.put("userEmail",     l.getUserEmail());
         m.put("cached",        l.isCached());
         m.put("success",       l.isSuccess());
-        m.put("inputTokens",   l.getEstimatedInputTokens());
-        m.put("outputTokens",  l.getEstimatedOutputTokens());
+        m.put("inputTokens",   l.getEstimatedInputTokens());   // actual from Groq usage field
+        m.put("outputTokens",  l.getEstimatedOutputTokens()); // actual from Groq usage field
         m.put("costUsd",       round4(l.getCostUsd()));
         m.put("latencyMs",     l.getLatencyMs());
         m.put("createdAt",     l.getCreatedAt());
