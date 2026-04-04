@@ -503,11 +503,11 @@ public class V3ExcelImportService {
             double debitGold  = getNumRaw(row, 2);
             double creditSar  = Math.abs(getNumRaw(row, 4));
 
-            // Match Dashboard-101: include row if amountSar > 500 (regardless of debitGold)
-            if (!branchCode.matches("\\d{4}") || creditSar <= 500) {
+            // Skip rows without a valid 4-digit branch code (header/footer/summary rows)
+            if (!branchCode.matches("\\d{4}")) {
                 if (rejected++ < 10)
-                    log.info("Mothan rejected row {}: branchCode='{}' debitGold={} creditSar={}",
-                        row.getRowNum(), branchCode, debitGold, creditSar);
+                    log.info("Mothan rejected row {}: invalid branchCode='{}' creditSar={}",
+                        row.getRowNum(), branchCode, creditSar);
                 continue;
             }
 
@@ -554,11 +554,16 @@ public class V3ExcelImportService {
     private LocalDate parseMothanDate(Row row, int col) {
         Cell cell = row.getCell(col);
         if (cell == null) return null;
-        if (cell.getCellType() == CellType.NUMERIC) {
+
+        CellType type = cell.getCellType() == CellType.FORMULA
+            ? cell.getCachedFormulaResultType()
+            : cell.getCellType();
+
+        if (type == CellType.NUMERIC) {
             double v = cell.getNumericCellValue();
-            if (v > 30000 && v < 70000) return parseSerialDate(v);   // widened from 40k-60k
+            if (v > 30000 && v < 70000) return parseSerialDate(v);
         }
-        if (cell.getCellType() == CellType.STRING) {
+        if (type == CellType.STRING) {
             String s = cell.getStringCellValue().trim();
             for (java.time.format.DateTimeFormatter fmt : MOTHAN_DATE_FMTS) {
                 try { return LocalDate.parse(s, fmt); } catch (Exception ignored) {}
