@@ -302,9 +302,10 @@ function blank(type: string, label: string, icon: string): CardState {
         }
       }
     </div>
+  }
 
-    <!-- Mothan Dry-Run Analyzer -->
-    @if (isAdmin()) {
+  <!-- Mothan Dry-Run Analyzer -->
+  @if (isAdmin()) {
       <div class="diag-section" style="margin-top:1rem">
         <div class="diag-header">
           <div class="ih-left">

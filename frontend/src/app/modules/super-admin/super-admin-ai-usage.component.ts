@@ -41,7 +41,7 @@ import { environment } from '../../../environments/environment';
       </div>
       <div class="fleet-card">
         <div class="fleet-icon">💰</div>
-        <div class="fleet-val">${{ summary().totalCostToday?.toFixed(4) }}</div>
+        <div class="fleet-val">{{ '$' + (summary().totalCostToday?.toFixed(4) ?? '0.0000') }}</div>
         <div class="fleet-lbl">تكلفة اليوم (USD)</div>
       </div>
       <div class="fleet-card fleet-card--warn">
@@ -92,10 +92,10 @@ import { environment } from '../../../environments/environment';
                     <input type="number" class="budget-input" min="0" step="0.5"
                       [(ngModel)]="editBudget" (keydown.enter)="saveBudget(t.tenantId)">
                   } @else {
-                    <span class="budget-val">${{ t.dailyBudgetUsd?.toFixed(2) }}</span>
+                    <span class="budget-val">{{ '$' + (t.dailyBudgetUsd?.toFixed(2) ?? '0.00') }}</span>
                   }
                 </td>
-                <td>${{ t.todaySpentUsd?.toFixed(4) }}</td>
+                <td>{{ '$' + (t.todaySpentUsd?.toFixed(4) ?? '0.0000') }}</td>
                 <td>
                   <div class="pct-bar-wrap">
                     <div class="pct-bar">
@@ -161,7 +161,7 @@ import { environment } from '../../../environments/environment';
               <span class="d-lbl">طلبات اليوم</span>
             </div>
             <div class="d-kpi">
-              <span class="d-val">${{ detail().today?.totalCostUsd?.toFixed(4) ?? '0.0000' }}</span>
+              <span class="d-val">{{ '$' + (detail().today?.totalCostUsd?.toFixed(4) ?? '0.0000') }}</span>
               <span class="d-lbl">تكلفة اليوم</span>
             </div>
             <div class="d-kpi">
@@ -199,7 +199,7 @@ import { environment } from '../../../environments/environment';
                         @if (log.cached) { <span class="badge badge-cache">كاش</span> }
                         @else { <span class="badge badge-api">API</span> }
                       </td>
-                      <td>${{ log.costUsd?.toFixed(4) }}</td>
+                      <td>{{ '$' + (log.costUsd?.toFixed(4) ?? '0.0000') }}</td>
                       <td class="time-cell">{{ log.createdAt | date:'dd/MM HH:mm' }}</td>
                     </tr>
                   }
