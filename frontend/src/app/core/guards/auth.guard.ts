@@ -15,14 +15,14 @@ export const noAuthGuard: CanActivateFn = () => {
   if (!auth.isAuthenticated()) return true;
   const role = auth.currentUser?.role;
   if (role === 'SUPER_ADMIN') return router.createUrlTree(['/super-admin/dashboard']);
-  return router.createUrlTree(['/dashboard']);
+  return router.createUrlTree(['/v3']);
 };
 
 export const superAdminGuard: CanActivateFn = () => {
   const auth = inject(AuthService);
   const router = inject(Router);
   if (auth.isAuthenticated() && auth.hasRole('SUPER_ADMIN')) return true;
-  return router.createUrlTree(['/dashboard']);
+  return router.createUrlTree(['/v3']);
 };
 
 export const changePasswordGuard: CanActivateFn = () => {
@@ -30,5 +30,5 @@ export const changePasswordGuard: CanActivateFn = () => {
   const router = inject(Router);
   if (!auth.isAuthenticated()) return router.createUrlTree(['/auth/login']);
   if (auth.currentUser?.mustChangePassword) return true;
-  return router.createUrlTree(['/dashboard']);
+  return router.createUrlTree(['/v3']);
 };

@@ -6,10 +6,6 @@ export const routes: Routes = [
     loadChildren: () => import('./modules/auth/auth.routes').then(m => m.AUTH_ROUTES)
   },
   {
-    path: 'dashboard',
-    loadChildren: () => import('./modules/dashboard/dashboard.routes').then(m => m.DASHBOARD_ROUTES)
-  },
-  {
     path: 'upload',
     loadChildren: () => import('./modules/upload/upload.routes').then(m => m.UPLOAD_ROUTES)
   },

@@ -562,7 +562,7 @@ export class LoginComponent {
           if (user.role === 'SUPER_ADMIN') {
             this.router.navigate(['/super-admin/dashboard']);
           } else {
-            this.router.navigate(['/dashboard']);
+            this.router.navigate(['/v3']);
           }
         } else {
           this.error.set(res.message || 'فشل تسجيل الدخول');
