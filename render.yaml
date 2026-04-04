@@ -19,5 +19,5 @@ services:
         sync: false
       - key: DEMO_TENANT_ID
         sync: false
-      - key: GEMINI_API_KEY
+      - key: GROQ_API_KEY
         sync: false

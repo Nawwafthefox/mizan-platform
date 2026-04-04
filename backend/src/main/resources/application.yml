@@ -25,5 +25,5 @@ mizan:
     expiration: 86400000
   demo:
     tenant-id: ${DEMO_TENANT_ID:demo-goldco}
-  gemini:
-    api-key: ${GEMINI_API_KEY:MISSING_KEY}
+  groq:
+    api-key: ${GROQ_API_KEY:MISSING_KEY}

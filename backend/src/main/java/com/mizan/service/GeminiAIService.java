@@ -23,15 +23,16 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class GeminiAIService {
 
-    private static final String GEMINI_BASE_URL =
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=";
+    private static final String GROQ_BASE_URL =
+        "https://api.groq.com/openai/v1/chat/completions";
+    private static final String GROQ_MODEL = "llama-3.3-70b-versatile";
     private static final long AI_TTL_MS = 30 * 60 * 1000L; // 30 minutes — free-tier friendly
 
     /** ThreadLocal written by callGemini, read by processFeature to capture per-call metrics. */
     private static final ThreadLocal<long[]> CALL_STATS = new ThreadLocal<>();
     // [0]=inputTokens, [1]=outputTokens, [2]=latencyMs, [3]=1 if success else 0
 
-    @Value("${mizan.gemini.api-key}")
+    @Value("${mizan.groq.api-key}")
     private String apiKey;
 
     private final RestTemplate restTemplate = new RestTemplate();
@@ -50,9 +51,9 @@ public class GeminiAIService {
     @PostConstruct
     void logKeyStatus() {
         if (apiKey == null || apiKey.isBlank() || apiKey.equals("MISSING_KEY")) {
-            log.error("GEMINI_API_KEY is not set — AI features will fail");
+            log.error("GROQ_API_KEY is not set — AI features will fail");
         } else {
-            log.info("Gemini API key loaded: {}...{} (len={})",
+            log.info("Groq API key loaded: {}...{} (len={})",
                 apiKey.substring(0, Math.min(8, apiKey.length())),
                 apiKey.substring(Math.max(0, apiKey.length() - 4)),
                 apiKey.length());
@@ -1288,40 +1289,34 @@ public class GeminiAIService {
                 suggestedFollowUps: 3 natural Arabic follow-up questions the user might want to ask next
                 """;
 
-            // Build the full prompt: system + data context + user question
-            String fullPrompt = systemPrompt
-                + "\n\n--- البيانات / DATA ---\n" + ctx
-                + "\n\n--- سؤال المستخدم / USER QUESTION ---\n" + question;
+            // Call Groq directly (bypasses the usual data-context split)
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("model", GROQ_MODEL);
+            body.put("messages", List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user",   "content",
+                    "--- البيانات / DATA ---\n" + ctx + "\n\n--- سؤال المستخدم / USER QUESTION ---\n" + question)
+            ));
+            body.put("temperature", 0.5);
+            body.put("max_tokens", 2048);
+            body.put("response_format", Map.of("type", "json_object"));
 
-            // Call Gemini directly (bypasses the usual data-context split)
-            Map<String, Object> body = Map.of(
-                "contents", List.of(Map.of(
-                    "parts", List.of(Map.of("text", fullPrompt))
-                )),
-                "generationConfig", Map.of(
-                    "temperature",      0.5,
-                    "maxOutputTokens",  2048,
-                    "responseMimeType", "application/json"
-                )
-            );
             org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
             headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(apiKey);
 
             org.springframework.http.ResponseEntity<java.util.Map> resp = restTemplate.postForEntity(
-                GEMINI_BASE_URL + apiKey,
+                GROQ_BASE_URL,
                 new org.springframework.http.HttpEntity<>(body, headers),
                 java.util.Map.class);
 
             @SuppressWarnings("unchecked")
-            List<java.util.Map<String, Object>> candidates =
-                (List<java.util.Map<String, Object>>) resp.getBody().get("candidates");
+            List<java.util.Map<String, Object>> choices =
+                (List<java.util.Map<String, Object>>) resp.getBody().get("choices");
             @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> content =
-                (java.util.Map<String, Object>) candidates.get(0).get("content");
-            @SuppressWarnings("unchecked")
-            List<java.util.Map<String, Object>> parts =
-                (List<java.util.Map<String, Object>>) content.get("parts");
-            String text = (String) parts.get(0).get("text");
+            java.util.Map<String, Object> message =
+                (java.util.Map<String, Object>) choices.get(0).get("message");
+            String text = (String) message.get("content");
 
             @SuppressWarnings("unchecked")
             java.util.Map<String, Object> parsed = objectMapper.readValue(text, java.util.Map.class);
@@ -1331,11 +1326,11 @@ public class GeminiAIService {
             int    status = e.getStatusCode().value();
             String detail = extractGeminiError(e.getResponseBodyAsString());
             String reason = switch (status) {
-                case 401 -> "مفتاح API غير صالح (401) — تأكد من ضبط GEMINI_API_KEY";
+                case 401 -> "مفتاح API غير صالح (401) — تأكد من ضبط GROQ_API_KEY";
                 case 429 -> "تجاوز حد الطلبات (429) — انتهت الحصة";
-                default  -> "Gemini HTTP " + status + ": " + detail;
+                default  -> "Groq HTTP " + status + ": " + detail;
             };
-            log.error("Chat Gemini client error {}: {}", status, e.getResponseBodyAsString());
+            log.error("Chat Groq client error {}: {}", status, e.getResponseBodyAsString());
             java.util.Map<String, Object> err = new java.util.LinkedHashMap<>();
             err.put("answer", "⚠️ " + reason + "\n\nميزان AI ⚖️");
             err.put("errorDetail", "HTTP " + status + ": " + detail);
@@ -1353,47 +1348,46 @@ public class GeminiAIService {
         }
     }
 
-    // ── Gemini API caller ───────────────────────────────────────────────────────
+    // ── Groq API caller ─────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
     private Map<String, Object> callGemini(String systemPrompt, String dataContext, double temperature) {
         int estimatedIn = AiUsageService.estimateTokens(systemPrompt) + AiUsageService.estimateTokens(dataContext);
         long start = System.currentTimeMillis();
 
-        Map<String, Object> body = Map.of(
-            "contents", List.of(Map.of(
-                "parts", List.of(Map.of("text",
-                    systemPrompt + "\n\n--- البيانات / DATA ---\n" + dataContext
-                ))
-            )),
-            "generationConfig", Map.of(
-                "temperature",       temperature,
-                "maxOutputTokens",   1024,
-                "responseMimeType",  "application/json"
-            )
-        );
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("model", GROQ_MODEL);
+        body.put("messages", List.of(
+            Map.of("role", "system", "content", systemPrompt),
+            Map.of("role", "user",   "content", "--- البيانات / DATA ---\n" + dataContext)
+        ));
+        body.put("temperature", temperature);
+        body.put("max_tokens", 1024);
+        body.put("response_format", Map.of("type", "json_object"));
 
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(apiKey);
 
-        String url = GEMINI_BASE_URL + apiKey;
         try {
             ResponseEntity<Map> resp = restTemplate.postForEntity(
-                url, new HttpEntity<>(body, headers), Map.class);
+                GROQ_BASE_URL, new HttpEntity<>(body, headers), Map.class);
 
-            List<Map<String, Object>> candidates =
-                (List<Map<String, Object>>) resp.getBody().get("candidates");
-            Map<String, Object> content =
-                (Map<String, Object>) candidates.get(0).get("content");
-            List<Map<String, Object>> parts =
-                (List<Map<String, Object>>) content.get("parts");
-            String text = (String) parts.get(0).get("text");
+            List<Map<String, Object>> choices =
+                (List<Map<String, Object>>) resp.getBody().get("choices");
+            Map<String, Object> message =
+                (Map<String, Object>) choices.get(0).get("message");
+            String text = (String) message.get("content");
+
+            // Use actual token counts from Groq usage field
+            Map<String, Object> usage = (Map<String, Object>) resp.getBody().get("usage");
+            int actualIn  = usage != null ? ((Number) usage.get("prompt_tokens")).intValue()     : estimatedIn;
+            int actualOut = usage != null ? ((Number) usage.get("completion_tokens")).intValue() : AiUsageService.estimateTokens(text);
 
             long latencyMs = System.currentTimeMillis() - start;
-            int estimatedOut = AiUsageService.estimateTokens(text);
-            CALL_STATS.set(new long[]{estimatedIn, estimatedOut, latencyMs, 1});
+            CALL_STATS.set(new long[]{actualIn, actualOut, latencyMs, 1});
 
-            log.debug("Gemini responded with {} chars in {}ms", text != null ? text.length() : 0, latencyMs);
+            log.debug("Groq responded with {} chars in {}ms", text != null ? text.length() : 0, latencyMs);
             return objectMapper.readValue(text, Map.class);
 
         } catch (HttpClientErrorException e) {
@@ -1402,14 +1396,14 @@ public class GeminiAIService {
             String detail  = extractGeminiError(errBody);
             String reason  = switch (status) {
                 case 400 -> "طلب غير صحيح (400) — " + detail;
-                case 401 -> "مفتاح API غير صالح (401) — تأكد من ضبط GEMINI_API_KEY في Render";
+                case 401 -> "مفتاح API غير صالح (401) — تأكد من ضبط GROQ_API_KEY في Render";
                 case 403 -> "صلاحيات غير كافية (403) — المفتاح لا يملك وصولاً لهذا النموذج";
                 case 429 -> "تجاوز حد الطلبات (429) — انتهى حصة API، حاول بعد قليل";
-                default  -> "خطأ من Gemini (" + status + ") — " + detail;
+                default  -> "خطأ من Groq (" + status + ") — " + detail;
             };
             long latencyMs = System.currentTimeMillis() - start;
             CALL_STATS.set(new long[]{estimatedIn, 0, latencyMs, 0});
-            log.error("Gemini client error {}: {}", status, errBody);
+            log.error("Groq client error {}: {}", status, errBody);
             return errorMap(reason, "HTTP " + status + ": " + detail);
 
         } catch (HttpServerErrorException e) {
@@ -1418,25 +1412,25 @@ public class GeminiAIService {
             String detail  = extractGeminiError(errBody);
             long latencyMs = System.currentTimeMillis() - start;
             CALL_STATS.set(new long[]{estimatedIn, 0, latencyMs, 0});
-            log.error("Gemini server error {}: {}", status, errBody);
-            return errorMap("خطأ في خوادم Gemini (" + status + ") — حاول مرة أخرى",
+            log.error("Groq server error {}: {}", status, errBody);
+            return errorMap("خطأ في خوادم Groq (" + status + ") — حاول مرة أخرى",
                             "HTTP " + status + ": " + detail);
 
         } catch (org.springframework.web.client.ResourceAccessException e) {
             CALL_STATS.set(new long[]{estimatedIn, 0, System.currentTimeMillis() - start, 0});
-            log.error("Gemini network error: {}", e.getMessage());
-            return errorMap("تعذّر الوصول لـ Gemini — تحقق من اتصال الشبكة",
+            log.error("Groq network error: {}", e.getMessage());
+            return errorMap("تعذّر الوصول لـ Groq — تحقق من اتصال الشبكة",
                             "Network: " + e.getMessage());
 
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             CALL_STATS.set(new long[]{estimatedIn, 0, System.currentTimeMillis() - start, 0});
-            log.error("Gemini JSON parse error: {}", e.getMessage());
-            return errorMap("استجابة Gemini غير صالحة (JSON) — النموذج أعاد نصاً غير منظم",
+            log.error("Groq JSON parse error: {}", e.getMessage());
+            return errorMap("استجابة Groq غير صالحة (JSON) — النموذج أعاد نصاً غير منظم",
                             "JSON parse: " + e.getMessage());
 
         } catch (Exception e) {
             CALL_STATS.set(new long[]{estimatedIn, 0, System.currentTimeMillis() - start, 0});
-            log.error("Gemini unexpected error [{}]: {}", e.getClass().getSimpleName(), e.getMessage());
+            log.error("Groq unexpected error [{}]: {}", e.getClass().getSimpleName(), e.getMessage());
             return errorMap("خطأ غير متوقع — " + e.getClass().getSimpleName(),
                             e.getMessage());
         }
