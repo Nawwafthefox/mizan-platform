@@ -1355,8 +1355,8 @@ public class GeminiAIService {
 
         } catch (HttpClientErrorException e) {
             int    status  = e.getStatusCode().value();
-            String body    = e.getResponseBodyAsString();
-            String detail  = extractGeminiError(body);
+            String errBody = e.getResponseBodyAsString();
+            String detail  = extractGeminiError(errBody);
             String reason  = switch (status) {
                 case 400 -> "طلب غير صحيح (400) — " + detail;
                 case 401 -> "مفتاح API غير صالح (401) — تأكد من ضبط GEMINI_API_KEY في Render";
@@ -1364,14 +1364,14 @@ public class GeminiAIService {
                 case 429 -> "تجاوز حد الطلبات (429) — انتهى حصة API، حاول بعد قليل";
                 default  -> "خطأ من Gemini (" + status + ") — " + detail;
             };
-            log.error("Gemini client error {}: {}", status, body);
+            log.error("Gemini client error {}: {}", status, errBody);
             return errorMap(reason, "HTTP " + status + ": " + detail);
 
         } catch (HttpServerErrorException e) {
-            int    status = e.getStatusCode().value();
-            String body   = e.getResponseBodyAsString();
-            String detail = extractGeminiError(body);
-            log.error("Gemini server error {}: {}", status, body);
+            int    status  = e.getStatusCode().value();
+            String errBody = e.getResponseBodyAsString();
+            String detail  = extractGeminiError(errBody);
+            log.error("Gemini server error {}: {}", status, errBody);
             return errorMap("خطأ في خوادم Gemini (" + status + ") — حاول مرة أخرى",
                             "HTTP " + status + ": " + detail);
 
