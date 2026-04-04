@@ -3117,7 +3117,6 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
 
   private load(feature: string, from: string, to: string): void {
     this.sub?.unsubscribe();
-    this.loading.set(true);
     this.error.set(null);
     this.errorDetail.set(null);
     this.result.set(null);
@@ -3128,6 +3127,15 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
     this.expandedActions.set(new Set());
     this.chatMessages.set([]);
     this.chatLoading.set(false);
+
+    // Chat has its own UI — no getInsights call needed
+    if (feature === 'chat') {
+      this.loading.set(false);
+      this.cdr.markForCheck();
+      return;
+    }
+
+    this.loading.set(true);
     this.cdr.markForCheck();
 
     this.sub = this.aiSvc.getInsights(feature, from, to).subscribe({

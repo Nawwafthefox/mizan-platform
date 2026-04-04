@@ -999,8 +999,8 @@ public class GeminiAIService {
                 - closingNote: optimistic but realistic, referencing one specific growth opportunity
                 - Use formal Arabic — avoid colloquial or overly casual language
                 """, nowIso);
-            Map<String, Object> result = callGemini(prompt, ctx, 0.5);
-            // Ensure generatedAt is set even if Gemini omits it
+            Map<String, Object> result = callGemini(prompt, ctx, 0.5, 2048);
+            // Ensure generatedAt is set even if model omits it
             result.putIfAbsent("generatedAt", nowIso);
             return result;
         } catch (Exception e) {
@@ -1350,8 +1350,12 @@ public class GeminiAIService {
 
     // ── Groq API caller ─────────────────────────────────────────────────────────
 
-    @SuppressWarnings("unchecked")
     private Map<String, Object> callGemini(String systemPrompt, String dataContext, double temperature) {
+        return callGemini(systemPrompt, dataContext, temperature, 1024);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> callGemini(String systemPrompt, String dataContext, double temperature, int maxTokens) {
         int estimatedIn = AiUsageService.estimateTokens(systemPrompt) + AiUsageService.estimateTokens(dataContext);
         long start = System.currentTimeMillis();
 
@@ -1362,7 +1366,7 @@ public class GeminiAIService {
             Map.of("role", "user",   "content", "--- البيانات / DATA ---\n" + dataContext)
         ));
         body.put("temperature", temperature);
-        body.put("max_tokens", 1024);
+        body.put("max_tokens", maxTokens);
         body.put("response_format", Map.of("type", "json_object"));
 
         HttpHeaders headers = new HttpHeaders();
