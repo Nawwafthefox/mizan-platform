@@ -3013,7 +3013,7 @@ export class V3AIComponent implements OnDestroy, AfterViewChecked {
   });
 
   isCompanyAdmin = computed(() =>
-    ['COMPANY_ADMIN', 'CEO'].includes(this.auth.currentUser?.role ?? '')
+    ['COMPANY_ADMIN', 'CEO', 'HEAD_OF_SALES'].includes(this.auth.currentUser?.role ?? '')
   );
 
   // ── Budget tracking ────────────────────────────────────────────────────────

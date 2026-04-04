@@ -118,7 +118,7 @@ public class V3AIController {
 
     @GetMapping("/usage/today")
     public ResponseEntity<?> usageToday(@AuthenticationPrincipal MizanUserDetails p) {
-        if (!Set.of("COMPANY_ADMIN", "CEO", "SUPER_ADMIN").contains(p.getRole())) return forbidden();
+        if (!Set.of("COMPANY_ADMIN", "CEO", "HEAD_OF_SALES", "SUPER_ADMIN").contains(p.getRole())) return forbidden();
         String tenantId = TenantContext.getTenantId();
         Map<String, Object> stats = usageService.getTodayStats(tenantId);
         return ResponseEntity.ok(Map.of("success", true, "data", stats));
@@ -129,7 +129,7 @@ public class V3AIController {
             @AuthenticationPrincipal MizanUserDetails p,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        if (!Set.of("COMPANY_ADMIN", "CEO", "SUPER_ADMIN").contains(p.getRole())) return forbidden();
+        if (!Set.of("COMPANY_ADMIN", "CEO", "HEAD_OF_SALES", "SUPER_ADMIN").contains(p.getRole())) return forbidden();
         String tenantId = TenantContext.getTenantId();
         return ResponseEntity.ok(Map.of("success", true, "data",
             usageService.getRangeStats(tenantId, from, to)));
@@ -140,7 +140,7 @@ public class V3AIController {
             @AuthenticationPrincipal MizanUserDetails p,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        if (!Set.of("COMPANY_ADMIN", "CEO", "SUPER_ADMIN").contains(p.getRole())) return forbidden();
+        if (!Set.of("COMPANY_ADMIN", "CEO", "HEAD_OF_SALES", "SUPER_ADMIN").contains(p.getRole())) return forbidden();
         String tenantId = TenantContext.getTenantId();
         return ResponseEntity.ok(Map.of("success", true, "data",
             usageService.getLogs(tenantId, from, to)));
