@@ -12,7 +12,7 @@ interface ImputedRecord {
   branchCode: string;
   branchName: string;
   recordDate: string;
-  anomalyType: 'corrupt_pieces' | 'missing_employee' | 'multiline_date';
+  anomalyType: 'corrupt_pieces' | 'missing_employee' | 'multiline_date' | 'sum_mismatch';
   fieldName: string;
   originalValue: string;
   imputedValue: string;
