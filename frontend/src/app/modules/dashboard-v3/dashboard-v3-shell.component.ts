@@ -1,6 +1,7 @@
-import { Component, inject, signal, OnInit } from '@angular/core';
+import { Component, inject, signal, OnInit, OnDestroy } from '@angular/core';
 import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { FormsModule } from '@angular/forms';
+import { HttpClient } from '@angular/common/http';
 import { V3DateRangeService } from './services/v3-date-range.service';
 import { TopnavComponent } from '../../shared/components/shell/topnav.component';
 
@@ -11,6 +12,7 @@ interface V3Tab {
   upload?: boolean;
   back?: boolean;
   ai?: boolean;
+  review?: boolean;
 }
 
 @Component({
@@ -45,9 +47,13 @@ interface V3Tab {
                 [class.premium-tab]="tab.premium"
                 [class.upload-tab]="tab.upload"
                 [class.ai-tab]="tab.ai"
+                [class.review-tab]="tab.review"
               >
                 <span class="v3-tab__pill"></span>
                 <span class="v3-tab__label">{{ tab.label }}</span>
+                @if (tab.review && pendingCount() > 0) {
+                  <span class="review-badge">{{ pendingCount() }}</span>
+                }
                 @if (tab.premium) {
                   <span class="premium-glow-ring"></span>
                 }
@@ -295,6 +301,27 @@ interface V3Tab {
       .v3-tab__bar { background: linear-gradient(90deg, #64b4ff, #93c5fd); }
     }
 
+    /* Review tab */
+    .v3-tab.review-tab { color: rgba(251,191,36,.65); }
+    .v3-tab.review-tab:hover { color: rgba(251,191,36,.9); }
+    .v3-tab.review-tab.active {
+      color: #fbbf24;
+      .v3-tab__bar { background: linear-gradient(90deg, #fbbf24, #f59e0b); opacity: 1; transform: scaleX(1); }
+    }
+
+    .review-badge {
+      position: relative; z-index: 1;
+      background: #ef4444;
+      color: #fff;
+      font-size: .65rem;
+      font-weight: 700;
+      line-height: 1;
+      padding: 2px 5px;
+      border-radius: 20px;
+      min-width: 16px;
+      text-align: center;
+    }
+
     /* Tab divider */
     .tab-divider {
       width: 1px;
@@ -422,13 +449,18 @@ interface V3Tab {
     }
   `]
 })
-export class DashboardV3ShellComponent implements OnInit {
+export class DashboardV3ShellComponent implements OnInit, OnDestroy {
   dateRange = inject(V3DateRangeService);
   private router = inject(Router);
+  private http = inject(HttpClient);
+
+  pendingCount = signal(0);
+  private countPollH: ReturnType<typeof setInterval> | null = null;
 
   tabs: V3Tab[] = [
     { label: 'نظرة عامة',    path: '/v3/overview' },
     { label: 'رفع الملفات',  path: '/v3/upload', upload: true },
+    { label: 'مراجعة البيانات', path: '/v3/imputed-review', review: true },
     { label: 'التنبيهات',    path: '/v3/alerts' },
     { label: 'الفروع',       path: '/v3/branches' },
     { label: 'المناطق',      path: '/v3/regions' },
@@ -443,7 +475,19 @@ export class DashboardV3ShellComponent implements OnInit {
   ];
 
   ngOnInit(): void {
-    // Service constructor already sets defaults; nothing extra needed.
+    this.fetchPendingCount();
+    this.countPollH = setInterval(() => this.fetchPendingCount(), 30_000);
+  }
+
+  ngOnDestroy(): void {
+    if (this.countPollH) clearInterval(this.countPollH);
+  }
+
+  private fetchPendingCount(): void {
+    this.http.get<any>('/api/v3/import/imputed-records/pending-count').subscribe({
+      next: res => this.pendingCount.set(res?.data?.count ?? 0),
+      error: () => {}
+    });
   }
 
   onFromChange(event: Event): void {

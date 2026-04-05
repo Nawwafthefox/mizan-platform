@@ -79,6 +79,11 @@ export const DASHBOARD_V3_ROUTES: Routes = [
         loadComponent: () =>
           import('./pages/coming-soon.component').then(m => m.ComingSoonComponent)
       },
+      {
+        path: 'imputed-review',
+        loadComponent: () =>
+          import('./pages/v3-imputed-review.component').then(m => m.V3ImputedReviewComponent)
+      },
     ]
   }
 ];

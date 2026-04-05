@@ -7,5 +7,6 @@ import java.util.Optional;
 public interface V3EmployeeRepository extends MongoRepository<V3Employee, String> {
     List<V3Employee> findByTenantId(String tenantId);
     Optional<V3Employee> findByTenantIdAndEmpId(String tenantId, String empId);
+    List<V3Employee> findByTenantIdAndCurrentBranchCode(String tenantId, String branchCode);
     void deleteByTenantId(String tenantId);
 }
