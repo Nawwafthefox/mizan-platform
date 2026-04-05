@@ -79,6 +79,7 @@ Chart.register(...registerables);
           icon="⚠️"
           [color]="(data()?.negativeBranches ?? 0) > 0 ? 'red' : 'green'"
           [value]="loading() ? null : (data()?.negativeBranches ?? 0) + ' / ' + (data()?.branchCount ?? 0)"
+          [subtitle]="loading() ? undefined : (data()?.noPurchaseBranches ?? 0) > 0 ? ('بدون مشتريات: ' + (data()?.noPurchaseBranches ?? 0)) : undefined"
           [loading]="loading()"
         />
         <v3-kpi-card
@@ -204,8 +205,14 @@ Chart.register(...registerables);
                     <td>{{ b.branchName }}</td>
                     <td class="num">{{ fmt(b.totalSar) }}</td>
                     <td class="num" [class.pos]="b.net >= 0" [class.neg]="b.net < 0">{{ fmt(b.net) }}</td>
-                    <td class="num" [class.pos]="b.diffRate > 0" [class.neg]="b.diffRate < 0">{{ fmtRate(b.diffRate) }}</td>
-                    <td><span class="dot" [class.dot-green]="b.net >= 0" [class.dot-red]="b.net < 0"></span></td>
+                    <td class="num" [class.pos]="b.hasPurchaseData && b.diffRate > 0" [class.neg]="b.hasPurchaseData && b.diffRate < 0">{{ b.hasPurchaseData ? fmtRate(b.diffRate) : '—' }}</td>
+                    <td>
+                      @if (!b.hasPurchaseData) {
+                        <span title="بدون مشتريات">ℹ️</span>
+                      } @else {
+                        <span class="dot" [class.dot-green]="b.net >= 0" [class.dot-red]="b.net < 0"></span>
+                      }
+                    </td>
                   </tr>
                 }
               </tbody>
@@ -470,7 +477,8 @@ export class V3OverviewComponent implements OnDestroy {
         const sorted = [...(branches as any[])].sort((a, b) => b.totalSar - a.totalSar);
         this.branches.set(sorted);
         this.top5.set(sorted.slice(0, 5));
-        this.bottom5.set([...sorted].sort((a, b) => a.net - b.net).slice(0, 5));
+        // FIX 7: exclude no-purchase branches from loss ranking
+        this.bottom5.set([...sorted].filter(b => b.hasPurchaseData !== false).sort((a, b) => a.net - b.net).slice(0, 5));
         this.trend.set(trend as any[] ?? []);
         this.alerts.set(alerts as any[] ?? []);
 

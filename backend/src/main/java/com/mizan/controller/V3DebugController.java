@@ -166,16 +166,22 @@ public class V3DebugController {
             Query.query(Criteria.where("tenantId").is(tid)).limit(3),
             org.bson.Document.class, "v3_sale_transactions"));
 
-        // ── Expected reference (Jan 1 – Mar 31, 2026) ─────────────────────────
+        // ── Expected reference (Jan 1 – Mar 31, 2026) — verified ground-truth ──
         Map<String, Object> expected = new LinkedHashMap<>();
-        expected.put("v3_sale_transactions",     21896);
-        expected.put("sales_totalSar",           267_200_000);
-        expected.put("sales_totalWt_g",          394_440);
+        expected.put("v3_sale_transactions",     21_896);
+        expected.put("sales_totalSar",           267_182_016);
+        expected.put("sales_totalWt_g",          394_441);
         expected.put("unique_branches",          29);
-        expected.put("v3_purchase_transactions", 3868);
-        expected.put("purchase_totalSar",        231_900_000);
-        expected.put("v3_mothan_transactions",   383);
-        expected.put("mothan_totalSar",          87_808_137);
+        expected.put("v3_purchase_transactions", 3_868);
+        expected.put("purchase_totalSar_branch", 144_049_694);
+        expected.put("purchase_totalSar_all",    231_967_482);
+        expected.put("v3_mothan_transactions",   385);
+        expected.put("mothan_totalSar",          87_917_788);
+        expected.put("mothan_totalWt_g",         152_004);
+        expected.put("net",                      35_214_534);
+        expected.put("sellRate_sar_g",           677.37);
+        expected.put("buyRate_sar_g",            582.31);
+        expected.put("rateDiff_sar_g",           95.06);
         d.put("EXPECTED", expected);
 
         return ResponseEntity.ok(Map.of("success", true, "diagnosis", d));

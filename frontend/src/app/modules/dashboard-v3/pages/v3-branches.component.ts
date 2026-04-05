@@ -153,9 +153,15 @@ type SortKey = 'totalSar' | 'net' | 'diffRate' | 'returns' | 'region';
                         <td class="num">{{ fmt(b.purchSar) }}</td>
                         <td class="num" [class.pos]="b.net >= 0" [class.neg]="b.net < 0">{{ fmt(b.net) }}</td>
                         <td class="num">{{ fmtRate(b.saleRate) }}</td>
-                        <td class="num">{{ fmtRate(b.purchRate) }}</td>
-                        <td class="num" [class.pos]="b.diffRate > 0" [class.neg]="b.diffRate < 0">{{ fmtRate(b.diffRate) }}</td>
-                        <td><span class="dot" [class.dot-green]="b.diffRate >= 0" [class.dot-red]="b.diffRate < 0"></span></td>
+                        <td class="num">{{ b.hasPurchaseData ? fmtRate(b.purchRate) : '—' }}</td>
+                        <td class="num" [class.pos]="b.hasPurchaseData && b.diffRate > 0" [class.neg]="b.hasPurchaseData && b.diffRate < 0">{{ b.hasPurchaseData ? fmtRate(b.diffRate) : '—' }}</td>
+                        <td>
+                          @if (!b.hasPurchaseData) {
+                            <span class="badge-info" title="بدون مشتريات">ℹ️ بدون مشتريات</span>
+                          } @else {
+                            <span class="dot" [class.dot-green]="b.diffRate >= 0" [class.dot-red]="b.diffRate < 0"></span>
+                          }
+                        </td>
                       </tr>
                     }
                   }
@@ -172,9 +178,15 @@ type SortKey = 'totalSar' | 'net' | 'diffRate' | 'returns' | 'region';
                       <td class="num">{{ fmt(b.purchSar) }}</td>
                       <td class="num" [class.pos]="b.net >= 0" [class.neg]="b.net < 0">{{ fmt(b.net) }}</td>
                       <td class="num">{{ fmtRate(b.saleRate) }}</td>
-                      <td class="num">{{ fmtRate(b.purchRate) }}</td>
-                      <td class="num" [class.pos]="b.diffRate > 0" [class.neg]="b.diffRate < 0">{{ fmtRate(b.diffRate) }}</td>
-                      <td><span class="dot" [class.dot-green]="b.diffRate >= 0" [class.dot-red]="b.diffRate < 0"></span></td>
+                      <td class="num">{{ b.hasPurchaseData ? fmtRate(b.purchRate) : '—' }}</td>
+                      <td class="num" [class.pos]="b.hasPurchaseData && b.diffRate > 0" [class.neg]="b.hasPurchaseData && b.diffRate < 0">{{ b.hasPurchaseData ? fmtRate(b.diffRate) : '—' }}</td>
+                      <td>
+                        @if (!b.hasPurchaseData) {
+                          <span class="badge-info" title="بدون مشتريات">ℹ️ بدون مشتريات</span>
+                        } @else {
+                          <span class="dot" [class.dot-green]="b.diffRate >= 0" [class.dot-red]="b.diffRate < 0"></span>
+                        }
+                      </td>
                     </tr>
                   }
                 }
@@ -321,6 +333,7 @@ type SortKey = 'totalSar' | 'net' | 'diffRate' | 'returns' | 'region';
     }
     .dot-green { background: var(--mizan-green); }
     .dot-red   { background: var(--mizan-danger); }
+    .badge-info { font-size: 0.72rem; color: var(--mizan-text-muted, #888); white-space: nowrap; }
 
     /* Chart */
     .chart-card {

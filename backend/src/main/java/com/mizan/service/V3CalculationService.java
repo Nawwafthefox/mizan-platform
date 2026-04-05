@@ -38,7 +38,6 @@ public class V3CalculationService {
         Map<String, Document> sMap = toDocMap(aggSalesByBranch(tenantId, from, to));
         Map<String, Document> pMap = toDocMap(aggPurchasesByBranch(tenantId, from, to));
         Map<String, Document> mMap = toDocMap(aggMothanByBranch(tenantId, from, to));
-        Map<String, Double>   rates = queryFallbackRates(tenantId);
 
         Set<String> codes = new LinkedHashSet<>(sMap.keySet());
         codes.addAll(pMap.keySet());
@@ -66,9 +65,10 @@ public class V3CalculationService {
 
             double combSar   = purchSar + mothanSar;
             double combWt    = purchWt  + mothanWt;
+            boolean hasPurchaseData = combWt > 0;
             double saleRate  = totalWeight != 0 ? r4(totalSar / totalWeight) : 0;
-            double purchRate = combWt > 0 ? r4(combSar / combWt) : rates.getOrDefault(code, 0.0);
-            double diffRate  = purchRate > 0 ? r4(saleRate - purchRate) : 0;
+            double purchRate = hasPurchaseData ? r4(combSar / combWt) : 0;
+            double diffRate  = hasPurchaseData ? r4(saleRate - purchRate) : 0;
             double net       = totalSar - combSar;
             double avgInv    = totalPieces > 0 ? r2(totalSar / totalPieces) : 0;
 
@@ -96,6 +96,7 @@ public class V3CalculationService {
             row.put("diffRate",      diffRate);
             row.put("net",           net);
             row.put("avgInvoice",    avgInv);
+            row.put("hasPurchaseData", hasPurchaseData);
             result.add(row);
         }
         result.sort(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("totalSar")).reversed());
@@ -125,8 +126,9 @@ public class V3CalculationService {
         double net       = totalSales - totalPurch;
         double avgInv    = totalInv > 0 ? r2(totalSales / totalInv) : 0;
 
-        long profitableBranches = branches.stream().filter(b -> (double)b.get("diffRate") > 0).count();
-        long negativeBranches   = branches.stream().filter(b -> (double)b.get("diffRate") < 0 && (double)b.get("purchRate") > 0).count();
+        long profitableBranches = branches.stream().filter(b -> (boolean)b.get("hasPurchaseData") && (double)b.get("diffRate") > 0).count();
+        long negativeBranches   = branches.stream().filter(b -> (boolean)b.get("hasPurchaseData") && (double)b.get("net") < 0).count();
+        long noPurchaseBranches = branches.stream().filter(b -> !(boolean)b.get("hasPurchaseData") && (double)b.get("totalSar") > 0).count();
         long returnBranchCount  = branches.stream().filter(b -> (double)b.get("returns") > 0).count();
         double returnPct        = totalSales > 0 ? r1(totalReturns / totalSales * 100) : 0;
 
@@ -156,6 +158,7 @@ public class V3CalculationService {
         kpis.put("profitableBranches",   profitableBranches);
         kpis.put("lossBranches",         negativeBranches);
         kpis.put("negativeBranches",     negativeBranches);
+        kpis.put("noPurchaseBranches",   noPurchaseBranches);
         kpis.put("branchPurchases",      branchPurch);
         kpis.put("branchPurchWt",        branchPurchWt);
         kpis.put("totalMothan",          totalMothan);
