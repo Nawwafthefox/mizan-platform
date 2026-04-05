@@ -112,7 +112,7 @@ public class V3DebugController {
         var salesRes = mongo.aggregate(salesAgg, "v3_sale_transactions", org.bson.Document.class).getMappedResults();
         if (!salesRes.isEmpty()) d.put("sales_agg", salesRes.get(0));
 
-        // ── Mothan aggregation (debit rows only) ───────────────────────────────
+        // ── Mothan aggregation (debit rows only — used for purchase-rate context) ──
         var mothanAgg = Aggregation.newAggregation(
             Aggregation.match(Criteria.where("tenantId").is(tid).and("weightDebitG").gt(0)),
             Aggregation.group()
@@ -124,6 +124,16 @@ public class V3DebugController {
         );
         var mothanRes = mongo.aggregate(mothanAgg, "v3_mothan_transactions", org.bson.Document.class).getMappedResults();
         if (!mothanRes.isEmpty()) d.put("mothan_agg", mothanRes.get(0));
+
+        // ── Mothan total SAR — ALL rows (for import validation) ───────────────
+        var mothanTotalAgg = Aggregation.newAggregation(
+            Aggregation.match(Criteria.where("tenantId").is(tid)),
+            Aggregation.group()
+                .sum("amountSar").as("totalSar")
+                .count().as("count")
+        );
+        var mothanTotalRes = mongo.aggregate(mothanTotalAgg, "v3_mothan_transactions", org.bson.Document.class).getMappedResults();
+        if (!mothanTotalRes.isEmpty()) d.put("mothan_total_agg", mothanTotalRes.get(0));
 
         // ── Purchase aggregation ───────────────────────────────────────────────
         var purchAgg = Aggregation.newAggregation(
@@ -165,7 +175,7 @@ public class V3DebugController {
         expected.put("v3_purchase_transactions", 3868);
         expected.put("purchase_totalSar",        231_900_000);
         expected.put("v3_mothan_transactions",   383);
-        expected.put("mothan_totalSar",          87_800_000);
+        expected.put("mothan_totalSar",          87_808_137);
         d.put("EXPECTED", expected);
 
         return ResponseEntity.ok(Map.of("success", true, "diagnosis", d));

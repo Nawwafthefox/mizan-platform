@@ -261,6 +261,16 @@ function blank(type: string, label: string, icon: string): CardState {
                     {{ diagPct(diag().v3_mothan_transactions, 383) }}%
                   </td>
                 </tr>
+                @if (diag().mothan_total_agg) {
+                  <tr>
+                    <td>إجمالي موطن الذهب (SAR)</td>
+                    <td>{{ diag().mothan_total_agg.totalSar | number:'1.0-0' }}</td>
+                    <td class="exp">87,808,137</td>
+                    <td [style.color]="diagColor(diag().mothan_total_agg.totalSar, 87808137)">
+                      {{ diagPct(diag().mothan_total_agg.totalSar, 87808137) }}%
+                    </td>
+                  </tr>
+                }
                 @if (diag().sales_agg) {
                   <tr>
                     <td>إجمالي المبيعات (SAR)</td>
