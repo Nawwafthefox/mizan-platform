@@ -79,6 +79,7 @@ interface ImputedRecord {
           <option value="corrupt_pieces">قطع فاسدة</option>
           <option value="missing_employee">موظف مجهول</option>
           <option value="multiline_date">تاريخ متعدد الأسطر</option>
+          <option value="sum_mismatch">عدم تطابق الإجمالي</option>
         </select>
         <select class="filter-select" [(ngModel)]="filterStatus" (ngModelChange)="applyFilters()">
           <option value="">جميع الحالات</option>
@@ -191,8 +192,8 @@ interface ImputedRecord {
                           </div>
                         }
 
-                        <!-- Edit section (only for pending) -->
-                        @if (rec.status === 'pending_review') {
+                        <!-- Edit section (only for pending, not for sum_mismatch) -->
+                        @if (rec.status === 'pending_review' && rec.anomalyType !== 'sum_mismatch') {
                           <div class="panel-section edit-section">
                             <h4>تعديل القيمة</h4>
 
@@ -410,6 +411,7 @@ interface ImputedRecord {
     .anomaly-corrupt_pieces   { background: rgba(251,191,36,.12); color: #fbbf24; }
     .anomaly-missing_employee { background: rgba(96,165,250,.12); color: #60a5fa; }
     .anomaly-multiline_date   { background: rgba(167,139,250,.12); color: #a78bfa; }
+    .anomaly-sum_mismatch     { background: rgba(248,113,113,.12); color: #f87171; }
 
     .branch-cell { font-family: monospace; font-size: .8rem; color: rgba(232,228,220,.7); }
     .field-cell  { color: rgba(232,228,220,.55); font-size: .78rem; }
@@ -598,7 +600,12 @@ export class V3ImputedReviewComponent implements OnInit {
   }
 
   anomalyLabel(type: string): string {
-    return { corrupt_pieces: 'قطع فاسدة', missing_employee: 'موظف مجهول', multiline_date: 'تاريخ مزدوج' }[type] ?? type;
+    return {
+      corrupt_pieces:  'قطع فاسدة',
+      missing_employee: 'موظف مجهول',
+      multiline_date:  'تاريخ مزدوج',
+      sum_mismatch:    'عدم تطابق الإجمالي',
+    }[type] ?? type;
   }
 
   statusLabel(s: string): string {

@@ -62,6 +62,7 @@ public class V3ExcelImportService {
         final List<PieceAnomaly> pieceAnomalies = new ArrayList<>();
         final List<EmpAnomaly>   empAnomalies   = new ArrayList<>();
         final List<DateAnomaly>  dateAnomalies  = new ArrayList<>();
+        double fileTotalSar = 0; // Grand-total creditSar from file summary row (col4 of rejected rows)
     }
 
     public V3ExcelImportService(MongoTemplate mongo,
@@ -250,6 +251,23 @@ public class V3ExcelImportService {
             int saved = bulkInsertSafe(txns, V3MothanTransaction.class, importId);
             List<V3ImputedRecord> imputed = buildDateImputed(session.dateAnomalies);
             saveImputedRecords(imputed, tenantId, importId, "mothan");
+
+            // Validate imported sum against file grand total
+            if (session.fileTotalSar > 0) {
+                double actualSum = txns.stream().mapToDouble(V3MothanTransaction::getAmountSar).sum();
+                double diff    = Math.abs(actualSum - session.fileTotalSar);
+                double pctDiff = diff / session.fileTotalSar * 100.0;
+                log.info("Mothan sum check: file={} imported={} diff={}%",
+                    Math.round(session.fileTotalSar), Math.round(actualSum),
+                    Math.round(pctDiff * 10.0) / 10.0);
+                if (pctDiff > 0.1) {
+                    V3ImputedRecord mismatch = buildSumMismatchRecord(session.fileTotalSar, actualSum);
+                    saveImputedRecords(List.of(mismatch), tenantId, importId, "mothan");
+                    log.warn("Mothan sum MISMATCH: expected={} imported={} diff={}%",
+                        Math.round(session.fileTotalSar), Math.round(actualSum),
+                        Math.round(pctDiff * 10.0) / 10.0);
+                }
+            }
 
             statusSvc.update(importId, "computing_rates", saved, saved, saved);
             recomputePurchaseRates(tenantId);
@@ -595,8 +613,10 @@ public class V3ExcelImportService {
             double debitGold  = getNumRaw(row, 2);
             double creditSar  = Math.abs(getNumRaw(row, 4));
 
-            // Skip rows without a valid 4-digit branch code (header/footer/summary rows)
+            // Skip rows without a valid 4-digit branch code (header/footer/summary rows).
+            // The grand-total row has a large creditSar but no valid branchCode — track it.
             if (!branchCode.matches("\\d{4}")) {
+                if (creditSar > session.fileTotalSar) session.fileTotalSar = creditSar;
                 if (rejected++ < 10)
                     log.info("Mothan rejected row {}: invalid branchCode='{}' creditSar={}",
                         row.getRowNum(), branchCode, creditSar);
@@ -1031,6 +1051,29 @@ public class V3ExcelImportService {
             records.add(rec);
         }
         return records;
+    }
+
+    private V3ImputedRecord buildSumMismatchRecord(double fileTotal, double importedSum) {
+        double diff    = importedSum - fileTotal;
+        double pctDiff = diff / fileTotal * 100.0;
+
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("fileGrandTotal",   Math.round(fileTotal));
+        snapshot.put("importedSum",      Math.round(importedSum));
+        snapshot.put("difference",       Math.round(diff));
+        snapshot.put("percentDiff",      Math.round(pctDiff * 100.0) / 100.0);
+
+        V3ImputedRecord rec = new V3ImputedRecord();
+        rec.setAnomalyType("sum_mismatch");
+        rec.setFieldName("amountSar");
+        rec.setOriginalValue(String.valueOf(Math.round(fileTotal)));
+        rec.setImputedValue(String.valueOf(Math.round(importedSum)));
+        rec.setImputationMethod("file_grand_total_row");
+        rec.setConfidence(0.99);
+        rec.setRecordSnapshot(snapshot);
+        rec.setStatus("pending_review");
+        rec.setCreatedAt(LocalDateTime.now());
+        return rec;
     }
 
     private void saveImputedRecords(List<V3ImputedRecord> records, String tenantId, String importId, String fileType) {
