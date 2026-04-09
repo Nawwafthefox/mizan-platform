@@ -21,6 +21,7 @@ public class V3ImportStatusService {
         String status,      // "parsing" | "deleting" | "saving" | "complete" | "error"
         int    parsed,
         int    saved,
+        int    staged,      // rows queued for human review
         int    total,
         String error,
         long   startedAt,
@@ -29,22 +30,24 @@ public class V3ImportStatusService {
 
     public void start(String importId) {
         evictOld();
-        statuses.put(importId, new ImportStatus("parsing", 0, 0, 0, null,
+        statuses.put(importId, new ImportStatus("parsing", 0, 0, 0, 0, null,
             System.currentTimeMillis(), 0));
         log.info("Import {} started", importId);
     }
 
     public void update(String importId, String status, int parsed, int saved, int total) {
         ImportStatus prev = statuses.get(importId);
-        statuses.put(importId, new ImportStatus(status, parsed, saved, total, null,
+        int staged = prev != null ? prev.staged() : 0;
+        statuses.put(importId, new ImportStatus(status, parsed, saved, staged, total, null,
             prev != null ? prev.startedAt() : System.currentTimeMillis(), 0));
     }
 
-    public void complete(String importId, int saved) {
+    public void complete(String importId, int saved, int staged) {
         ImportStatus prev = statuses.get(importId);
-        statuses.put(importId, new ImportStatus("complete", saved, saved, saved, null,
+        int total = saved + staged;
+        statuses.put(importId, new ImportStatus("complete", total, saved, staged, total, null,
             prev != null ? prev.startedAt() : 0, System.currentTimeMillis()));
-        log.info("Import {} complete — {} saved", importId, saved);
+        log.info("Import {} complete — {} auto-saved, {} staged for review", importId, saved, staged);
     }
 
     public void error(String importId, String error) {
@@ -52,6 +55,7 @@ public class V3ImportStatusService {
         statuses.put(importId, new ImportStatus("error",
             prev != null ? prev.parsed() : 0,
             prev != null ? prev.saved()  : 0,
+            prev != null ? prev.staged() : 0,
             prev != null ? prev.total()  : 0,
             error,
             prev != null ? prev.startedAt() : 0, System.currentTimeMillis()));

@@ -460,7 +460,7 @@ export class DashboardV3ShellComponent implements OnInit, OnDestroy {
   tabs: V3Tab[] = [
     { label: 'نظرة عامة',    path: '/v3/overview' },
     { label: 'رفع الملفات',  path: '/v3/upload', upload: true },
-    { label: 'مراجعة البيانات', path: '/v3/imputed-review', review: true },
+    { label: 'مراجعة البيانات', path: '/v3/review', review: true },
     { label: 'التنبيهات',    path: '/v3/alerts' },
     { label: 'الفروع',       path: '/v3/branches' },
     { label: 'المناطق',      path: '/v3/regions' },
@@ -484,8 +484,8 @@ export class DashboardV3ShellComponent implements OnInit, OnDestroy {
   }
 
   private fetchPendingCount(): void {
-    this.http.get<any>('/api/v3/import/imputed-records/pending-count').subscribe({
-      next: res => this.pendingCount.set(res?.data?.count ?? 0),
+    this.http.get<any>('/api/v3/staged/counts').subscribe({
+      next: res => this.pendingCount.set(res?.data?.total ?? 0),
       error: () => {}
     });
   }

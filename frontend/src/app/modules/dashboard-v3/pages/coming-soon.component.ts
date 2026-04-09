@@ -749,12 +749,16 @@ export class ComingSoonComponent implements OnDestroy {
               if (s.status === 'complete') {
                 clearInterval(this.pollH.get(cur.type));
                 clearInterval(this.timerH.get(cur.type));
-                const saved = s.saved ?? 0;
+                const saved  = s.saved  ?? 0;
+                const staged = s.staged ?? 0;
+                const doneMsg = staged > 0
+                  ? `✅ ${saved.toLocaleString('ar')} محفوظ ⚠️ ${staged.toLocaleString('ar')} بحاجة لمراجعة`
+                  : `✅ تم — ${saved.toLocaleString('ar')} سجل`;
                 this.patch(idx, {
                   stage: 'done', pct: 100, elapsedMs: elapsed,
-                  stageMsg: `✅ تم — ${saved.toLocaleString('ar')} سجل`, count: saved, stallMsg: '',
+                  stageMsg: doneMsg, count: saved, stallMsg: '',
                 });
-                this.log(idx, startedAt, `✅ ${saved.toLocaleString('ar')} سجل — ${this.fmtTime(elapsed)}`, 'ok');
+                this.log(idx, startedAt, `✅ ${saved.toLocaleString('ar')} سجل (${staged} معلق) — ${this.fmtTime(elapsed)}`, 'ok');
               } else if (s.status === 'error') {
                 clearInterval(this.pollH.get(cur.type));
                 clearInterval(this.timerH.get(cur.type));

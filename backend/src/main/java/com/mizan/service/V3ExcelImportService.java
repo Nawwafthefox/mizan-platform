@@ -21,305 +21,75 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * V3 Excel Import — stores INDIVIDUAL TRANSACTION ROWS (one per Sl.# row, no aggregation).
+ * V3 Excel Import — two-phase pipeline.
+ *
+ * Phase 1: Parse all rows into ParsedRow objects (raw values, no sign convention, no caps).
+ * Phase 2: Classify each row as CLEAN or DIRTY.
+ *   CLEAN → direct insert to the live v3 collection.
+ *   DIRTY → insert to v3_staged_records for human review.
  *
  * Supports two Excel formats (auto-detected):
- *   Format A: Sl.# in col15, total SAR in col3, branch carry-forward from col12 header rows
- *   Format B: Sl.# in col0,  total SAR in col15, branchCode in col1, date in col6 (Excel serial)
+ *   Format A: Sl.# in col15, total SAR in col3, branch carry-forward from col12 header rows.
+ *   Format B: Sl.# in col0,  total SAR in col15, branchCode in col1, date in col6 (Excel serial).
  *
- * Sign convention (both formats): rawTotal < 0 in file = sale → sar = -rawTotal (positive)
- *                                  rawTotal > 0 in file = return → sar = -rawTotal (negative)
+ * Sign convention (sales): rawTotal < 0 in file = sale → sarAmount = -rawTotal (positive stored).
+ *                           rawTotal > 0 in file = return → sarAmount = -rawTotal (negative stored).
+ * Sign convention (purchases): sarAmount = Math.abs(rawTotal) always.
+ * Sign convention (mothan): amountSar = Math.abs(col4) already.
  */
 @Slf4j
 @Service
 public class V3ExcelImportService {
 
-    private final MongoTemplate                        mongo;
-    private final V3BranchPurchaseRateRepository       rateRepo;
-    private final V3BranchRepository                   branchRepo;
-    private final V3EmployeeRepository                 empRepo;
-    private final V3CacheService                       cache;
-    private final V3ImportStatusService                statusSvc;
-    private final V3ImputedRecordRepository            imputedRepo;
+    private final MongoTemplate                    mongo;
+    private final V3BranchPurchaseRateRepository   rateRepo;
+    private final V3BranchRepository               branchRepo;
+    private final V3EmployeeRepository             empRepo;
+    private final V3CacheService                   cache;
+    private final V3ImportStatusService            statusSvc;
+    private final V3StagedRecordRepository         stagedRepo;
 
     private static final DateTimeFormatter DD_MM_YYYY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final int PIECE_CAP = 500;
 
-    // ─── Imputation inner types ───────────────────────────────────────────────
+    // ─── Result type ──────────────────────────────────────────────────────────
 
-    private record PieceAnomaly(int rowNum, String branchCode, double rawPieces,
-                                 double sar, double weight, double purity,
-                                 String karat, LocalDate date, int txnIndex) {}
+    public record ImportResult(int autoSaved, int stagedForReview, int totalParsed) {}
 
-    private record EmpAnomaly(int rowNum, String branchCode, String origEmpId,
-                               String empName, double sar, double weight,
-                               LocalDate date, int txnIndex) {}
+    // ─── Inner types ──────────────────────────────────────────────────────────
 
-    private record DateAnomaly(int rowNum, String branchCode, String origDateStr,
-                                String firstLine, double amountSar, int txnIndex) {}
-
-    private static class ImportSession {
-        final List<PieceAnomaly> pieceAnomalies = new ArrayList<>();
-        final List<EmpAnomaly>   empAnomalies   = new ArrayList<>();
-        final List<DateAnomaly>  dateAnomalies  = new ArrayList<>();
-        double fileTotalSar = 0; // Grand-total creditSar from file summary row (col4 of rejected rows)
+    /** All raw Excel values for a single data row. No sign convention applied, no caps. */
+    private static class ParsedRow {
+        int excelRow;
+        // Common fields
+        String rawBranchCode;
+        String branchCode;     // validated 4-digit code or null
+        LocalDate date;
+        String rawDate;        // original string (for multiline detection in mothan)
+        double totalSar;       // raw from Excel (negative = sale for sales files)
+        double pureWeight;     // raw
+        double grossWeight;
+        double metalValue;
+        double makingCharge;
+        double rawPieces;      // raw, before abs and cap
+        double purity;
+        // Employee sales only
+        String empId;
+        String empName;
+        // Mothan only
+        double creditSar;      // Math.abs(col4)
+        double debitGold;
+        double weightCredit;
+        double balanceGold;
+        double balanceSar;
+        String docRef;
+        String description;
     }
 
-    public V3ExcelImportService(MongoTemplate mongo,
-                                 V3BranchPurchaseRateRepository rateRepo,
-                                 V3BranchRepository branchRepo,
-                                 V3EmployeeRepository empRepo,
-                                 V3CacheService cache,
-                                 V3ImportStatusService statusSvc,
-                                 V3ImputedRecordRepository imputedRepo) {
-        this.mongo       = mongo;
-        this.rateRepo    = rateRepo;
-        this.branchRepo  = branchRepo;
-        this.empRepo     = empRepo;
-        this.cache       = cache;
-        this.statusSvc   = statusSvc;
-        this.imputedRepo = imputedRepo;
-    }
-
-    // ─── Public entry points ──────────────────────────────────────────────────
-    // All methods now accept raw bytes so the caller can read the file
-    // synchronously (before any HTTP timeout) and process asynchronously.
-    // Pattern: PARSE ALL → validate count → DELETE old range → INSERT new.
-    // If parse produces 0 records, existing data is NEVER deleted.
-
-    public int importByType(String type, byte[] bytes, String filename, String tenantId, String importId) throws Exception {
-        return switch (type) {
-            case "branch-sales"   -> importBranchSales(bytes, filename, tenantId, importId);
-            case "employee-sales" -> importEmployeeSales(bytes, filename, tenantId, importId);
-            case "purchases"      -> importPurchases(bytes, filename, tenantId, importId);
-            case "mothan"         -> importMothan(bytes, filename, tenantId, importId);
-            default -> throw new IllegalArgumentException("Unknown import type: " + type);
-        };
-    }
-
-    public int importBranchSales(byte[] bytes, String filename, String tenantId, String importId) throws Exception {
-        log.info("V3 branch-sales START: '{}' {} bytes, tenant={}", filename, bytes.length, tenantId);
-        long t0 = System.currentTimeMillis();
-        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
-            Sheet sheet = wb.getSheetAt(0);
-            Format fmt  = detectFormat(sheet);
-            log.info("V3 branch-sales format detected: {}", fmt);
-            ImportSession session = new ImportSession();
-            List<V3SaleTransaction> txns = fmt == Format.B
-                ? parseSalesB(sheet, tenantId, filename, session)
-                : parseSalesA(sheet, tenantId, filename, session);
-
-            log.info("V3 branch-sales PARSED: {} records from '{}'", txns.size(), filename);
-            if (txns.isEmpty()) {
-                log.warn("V3 branch-sales: 0 records parsed — existing data NOT touched");
-                return 0;
-            }
-
-            int total = txns.size();
-            statusSvc.update(importId, "deleting", total, 0, total);
-
-            LocalDate minDate = txns.stream().map(V3SaleTransaction::getSaleDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = txns.stream().map(V3SaleTransaction::getSaleDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
-            double parsedSar = txns.stream().mapToDouble(V3SaleTransaction::getSarAmount).sum();
-            log.info("V3 branch-sales date range: {} to {}, totalSar={}", minDate, maxDate, Math.round(parsedSar));
-
-            // FIX 5: overlap guard — warn if existing row count differs significantly
-            long existing = mongo.count(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("saleDate").gte(minDate).lte(maxDate)), V3SaleTransaction.class);
-            if (existing > 0) {
-                double overlapPct = Math.abs((double)(txns.size() - existing) / existing * 100);
-                if (overlapPct > 10) log.warn("OVERLAP GUARD [branch-sales]: existing={} new={} ({}% diff) range {} – {}",
-                    existing, txns.size(), Math.round(overlapPct), minDate, maxDate);
-            }
-            long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("saleDate").gte(minDate).lte(maxDate)), V3SaleTransaction.class).getDeletedCount();
-            log.info("V3 branch-sales deleted {} existing records for range {} – {}", deleted, minDate, maxDate);
-
-            List<V3ImputedRecord> imputed = buildPieceImputed(session.pieceAnomalies, txns, "branch-sales");
-            statusSvc.update(importId, "saving", total, 0, total);
-            int saved = bulkInsertSafe(txns, V3SaleTransaction.class, importId);
-            upsertBranches(txns.stream().map(V3SaleTransaction::getBranchCode).distinct().toList(), tenantId);
-            saveImputedRecords(imputed, tenantId, importId, "branch-sales");
-            // FIX 4: verify what was saved matches what was parsed
-            verifyImport(tenantId, "saleDate", "sarAmount", "v3_sale_transactions", minDate, maxDate, txns.size(), parsedSar);
-            cache.invalidate(tenantId);
-            log.info("V3 branch-sales DONE: {} saved in {}ms, {} imputed", saved, System.currentTimeMillis() - t0, imputed.size());
-            return saved;
-        }
-    }
-
-    public int importEmployeeSales(byte[] bytes, String filename, String tenantId, String importId) throws Exception {
-        log.info("V3 employee-sales START: '{}' {} bytes", filename, bytes.length);
-        long t0 = System.currentTimeMillis();
-        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
-            Sheet sheet = wb.getSheetAt(0);
-            Format fmt  = detectFormat(sheet);
-            ImportSession session = new ImportSession();
-            List<V3EmployeeSaleTransaction> txns = fmt == Format.B
-                ? parseEmpSalesB(sheet, tenantId, filename, session)
-                : parseEmpSalesA(sheet, tenantId, filename, session);
-
-            log.info("V3 employee-sales PARSED: {} records", txns.size());
-            if (txns.isEmpty()) {
-                log.warn("V3 employee-sales: 0 records parsed — existing data NOT touched");
-                return 0;
-            }
-
-            int total = txns.size();
-            statusSvc.update(importId, "deleting", total, 0, total);
-
-            LocalDate minDate = txns.stream().map(V3EmployeeSaleTransaction::getSaleDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = txns.stream().map(V3EmployeeSaleTransaction::getSaleDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
-            double parsedSar = txns.stream().mapToDouble(V3EmployeeSaleTransaction::getSarAmount).sum();
-
-            // FIX 5: overlap guard
-            long existing = mongo.count(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("saleDate").gte(minDate).lte(maxDate)), V3EmployeeSaleTransaction.class);
-            if (existing > 0) {
-                double overlapPct = Math.abs((double)(txns.size() - existing) / existing * 100);
-                if (overlapPct > 10) log.warn("OVERLAP GUARD [employee-sales]: existing={} new={} ({}% diff) range {} – {}",
-                    existing, txns.size(), Math.round(overlapPct), minDate, maxDate);
-            }
-            long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("saleDate").gte(minDate).lte(maxDate)), V3EmployeeSaleTransaction.class).getDeletedCount();
-            log.info("V3 employee-sales deleted {} existing, range {} – {}", deleted, minDate, maxDate);
-
-            List<V3ImputedRecord> imputed = new ArrayList<>();
-            imputed.addAll(buildPieceImputed(session.pieceAnomalies, txns, "employee-sales"));
-            imputed.addAll(buildEmpImputed(session.empAnomalies, tenantId));
-            statusSvc.update(importId, "saving", total, 0, total);
-            int saved = bulkInsertSafe(txns, V3EmployeeSaleTransaction.class, importId);
-            upsertEmployees(txns, tenantId);
-            saveImputedRecords(imputed, tenantId, importId, "employee-sales");
-            // FIX 4: verify
-            verifyImport(tenantId, "saleDate", "sarAmount", "v3_employee_sale_transactions", minDate, maxDate, txns.size(), parsedSar);
-            cache.invalidate(tenantId);
-            log.info("V3 employee-sales DONE: {} saved in {}ms, {} imputed", saved, System.currentTimeMillis() - t0, imputed.size());
-            return saved;
-        }
-    }
-
-    public int importPurchases(byte[] bytes, String filename, String tenantId, String importId) throws Exception {
-        log.info("V3 purchases START: '{}' {} bytes", filename, bytes.length);
-        long t0 = System.currentTimeMillis();
-        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
-            Sheet sheet = wb.getSheetAt(0);
-            Format fmt  = detectFormat(sheet);
-            ImportSession session = new ImportSession();
-            List<V3PurchaseTransaction> txns = fmt == Format.B
-                ? parsePurchasesB(sheet, tenantId, filename, session)
-                : parsePurchasesA(sheet, tenantId, filename, session);
-
-            log.info("V3 purchases PARSED: {} records", txns.size());
-            if (txns.isEmpty()) {
-                log.warn("V3 purchases: 0 records parsed — existing data NOT touched");
-                return 0;
-            }
-
-            int total = txns.size();
-            statusSvc.update(importId, "deleting", total, 0, total);
-
-            LocalDate minDate = txns.stream().map(V3PurchaseTransaction::getPurchaseDate).filter(Objects::nonNull).min(LocalDate::compareTo).orElseThrow();
-            LocalDate maxDate = txns.stream().map(V3PurchaseTransaction::getPurchaseDate).filter(Objects::nonNull).max(LocalDate::compareTo).orElseThrow();
-            double parsedSar = txns.stream().mapToDouble(V3PurchaseTransaction::getSarAmount).sum();
-
-            // FIX 5: overlap guard
-            long existing = mongo.count(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("purchaseDate").gte(minDate).lte(maxDate)), V3PurchaseTransaction.class);
-            if (existing > 0) {
-                double overlapPct = Math.abs((double)(txns.size() - existing) / existing * 100);
-                if (overlapPct > 10) log.warn("OVERLAP GUARD [purchases]: existing={} new={} ({}% diff) range {} – {}",
-                    existing, txns.size(), Math.round(overlapPct), minDate, maxDate);
-            }
-            long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                .and("purchaseDate").gte(minDate).lte(maxDate)), V3PurchaseTransaction.class).getDeletedCount();
-            log.info("V3 purchases deleted {} existing, range {} – {}", deleted, minDate, maxDate);
-
-            // Purchases have no piece/emp anomalies — session unused but keeps pattern consistent
-            statusSvc.update(importId, "saving", total, 0, total);
-            int saved = bulkInsertSafe(txns, V3PurchaseTransaction.class, importId);
-            statusSvc.update(importId, "computing_rates", saved, saved, saved);
-            recomputePurchaseRates(tenantId);
-            // FIX 4: verify
-            verifyImport(tenantId, "purchaseDate", "sarAmount", "v3_purchase_transactions", minDate, maxDate, txns.size(), parsedSar);
-            cache.invalidate(tenantId);
-            log.info("V3 purchases DONE: {} saved in {}ms", saved, System.currentTimeMillis() - t0);
-            return saved;
-        }
-    }
-
-    public int importMothan(byte[] bytes, String filename, String tenantId, String importId) throws Exception {
-        log.info("V3 mothan START: '{}' {} bytes", filename, bytes.length);
-        long t0 = System.currentTimeMillis();
-        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
-            Sheet sheet = wb.getSheetAt(0);
-            ImportSession session = new ImportSession();
-            List<V3MothanTransaction> txns = parseMothan(sheet, tenantId, filename, session);
-
-            log.info("V3 mothan PARSED: {} records", txns.size());
-            if (txns.isEmpty()) {
-                log.warn("V3 mothan: 0 records parsed — existing data NOT touched");
-                return 0;
-            }
-
-            int total = txns.size();
-            statusSvc.update(importId, "deleting", total, 0, total);
-
-            // Delete only the date range covered by this file, not all historical data.
-            // If insert fails, data outside this range is preserved.
-            LocalDate minDate = txns.stream().map(V3MothanTransaction::getTransactionDate)
-                .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
-            LocalDate maxDate = txns.stream().map(V3MothanTransaction::getTransactionDate)
-                .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
-            double parsedSar = txns.stream().mapToDouble(V3MothanTransaction::getAmountSar).sum();
-            if (minDate != null && maxDate != null) {
-                // FIX 5: overlap guard
-                long existing = mongo.count(Query.query(Criteria.where("tenantId").is(tenantId)
-                    .and("transactionDate").gte(minDate).lte(maxDate)), V3MothanTransaction.class);
-                if (existing > 0) {
-                    double overlapPct = Math.abs((double)(txns.size() - existing) / existing * 100);
-                    if (overlapPct > 10) log.warn("OVERLAP GUARD [mothan]: existing={} new={} ({}% diff) range {} – {}",
-                        existing, txns.size(), Math.round(overlapPct), minDate, maxDate);
-                }
-                long deleted = mongo.remove(
-                    Query.query(Criteria.where("tenantId").is(tenantId)
-                        .and("transactionDate").gte(minDate).lte(maxDate)),
-                    V3MothanTransaction.class).getDeletedCount();
-                log.info("V3 mothan deleted {} existing records for range {} to {}", deleted, minDate, maxDate);
-            }
-
-            statusSvc.update(importId, "saving", total, 0, total);
-            int saved = bulkInsertSafe(txns, V3MothanTransaction.class, importId);
-            List<V3ImputedRecord> imputed = buildDateImputed(session.dateAnomalies);
-            saveImputedRecords(imputed, tenantId, importId, "mothan");
-
-            // Validate imported sum against file grand total
-            if (session.fileTotalSar > 0) {
-                double actualSum = txns.stream().mapToDouble(V3MothanTransaction::getAmountSar).sum();
-                double diff    = Math.abs(actualSum - session.fileTotalSar);
-                double pctDiff = diff / session.fileTotalSar * 100.0;
-                log.info("Mothan sum check: file={} imported={} diff={}%",
-                    Math.round(session.fileTotalSar), Math.round(actualSum),
-                    Math.round(pctDiff * 10.0) / 10.0);
-                if (pctDiff > 0.1) {
-                    V3ImputedRecord mismatch = buildSumMismatchRecord(session.fileTotalSar, actualSum);
-                    saveImputedRecords(List.of(mismatch), tenantId, importId, "mothan");
-                    log.warn("Mothan sum MISMATCH: expected={} imported={} diff={}%",
-                        Math.round(session.fileTotalSar), Math.round(actualSum),
-                        Math.round(pctDiff * 10.0) / 10.0);
-                }
-            }
-
-            statusSvc.update(importId, "computing_rates", saved, saved, saved);
-            recomputePurchaseRates(tenantId);
-            // FIX 4: verify
-            if (minDate != null && maxDate != null) {
-                verifyImport(tenantId, "transactionDate", "amountSar", "v3_mothan_transactions", minDate, maxDate, txns.size(), parsedSar);
-            }
-            cache.invalidate(tenantId);
-            log.info("V3 mothan DONE: {} saved in {}ms, {} imputed", saved, System.currentTimeMillis() - t0, imputed.size());
-            return saved;
-        }
+    /** Per-branch statistics derived from clean rows, used for anomaly suggestions. */
+    private static class BranchStats {
+        double medianSarPerPiece;
+        int cleanRowCount;
     }
 
     // ─── Format detection ─────────────────────────────────────────────────────
@@ -335,7 +105,6 @@ public class V3ExcelImportService {
             if (row == null) continue;
             Cell c0 = row.getCell(0);
             if (c0 != null && c0.getCellType() == CellType.NUMERIC && c0.getNumericCellValue() >= 1) {
-                // Exactly 4-digit branch code in col1 → Format B (employee/purchase reports)
                 String c1 = getStr(row, 1);
                 if (c1.matches("\\d{4}")) return Format.B;
             }
@@ -344,436 +113,1117 @@ public class V3ExcelImportService {
                 return Format.A;
             }
         }
-        return Format.A; // default
+        return Format.A;
     }
 
-    // ─── FORMAT B PARSERS ─────────────────────────────────────────────────────
-    // Col layout: 0=Sl.#, 1=branchCode, 2=invoice, 3=empId(emp only),
-    //             5=empName, 6=date(serial), 7=pieces, 8=grossWt,
-    //             10=netWt, 11=purity, 12=pureWt, 13=metalVal, 14=mkgChg, 15=totalSAR
+    // ─── Branch/date header patterns (Format A) ───────────────────────────────
 
-    private List<V3SaleTransaction> parseSalesB(Sheet sheet, String tenantId, String src, ImportSession session) {
-        List<V3SaleTransaction> result = new ArrayList<>();
-        for (Row row : sheet) {
-            if (!isDataRowB(row)) continue;
-            String branchCode = getStr(row, 1);
-            if (branchCode.isBlank() || !branchCode.matches("\\d{3,6}")) continue;
-
-            double rawTotal = getNumRaw(row, 15);
-            if (rawTotal == 0) continue;
-            double sar  = -rawTotal;
-            double sign = sar >= 0 ? 1.0 : -1.0;
-
-            LocalDate date     = parseSerialDate(getNumRaw(row, 6));
-            double pureWt      = sign * Math.abs(getNumRaw(row, 12));
-            double grossWt     = sign * Math.abs(getNumRaw(row, 8));
-            double purity      = Math.abs(getNumRaw(row, 11));
-            double rawPiecesD  = Math.abs(getNumRaw(row, 7));
-            if (rawPiecesD > PIECE_CAP) {
-                session.pieceAnomalies.add(new PieceAnomaly(
-                    row.getRowNum(), branchCode, rawPiecesD,
-                    sar, pureWt, purity, mapKarat(purity), date, result.size()
-                ));
-            }
-            int    pieces      = (int) Math.min(rawPiecesD, PIECE_CAP);
-            double metalVal    = sign * Math.abs(getNumRaw(row, 13));
-            double mkgCharge   = sign * Math.abs(getNumRaw(row, 14));
-
-            V3SaleTransaction t = new V3SaleTransaction();
-            t.setTenantId(tenantId); t.setSourceFile(src);
-            t.setSaleDate(date); t.setBranchCode(branchCode);
-            t.setSarAmount(sar); t.setPureWeightG(pureWt); t.setGrossWeightG(grossWt);
-            t.setPieces(pieces); t.setPurity(purity); t.setKarat(mapKarat(purity));
-            t.setMetalValue(metalVal); t.setMakingCharge(mkgCharge);
-            t.setReturn(sar < 0);
-            result.add(t);
-        }
-        return result;
-    }
-
-    private List<V3EmployeeSaleTransaction> parseEmpSalesB(Sheet sheet, String tenantId, String src, ImportSession session) {
-        List<V3EmployeeSaleTransaction> result = new ArrayList<>();
-        for (Row row : sheet) {
-            if (!isDataRowB(row)) continue;
-            String branchCode = getStr(row, 1);
-            if (branchCode.isBlank() || !branchCode.matches("\\d{3,6}")) continue;
-
-            double rawTotal = getNumRaw(row, 15);
-            if (rawTotal == 0) continue;
-            double sar  = -rawTotal;
-            double sign = sar >= 0 ? 1.0 : -1.0;
-
-            LocalDate date   = parseSerialDate(getNumRaw(row, 6));
-            double pureWt    = sign * Math.abs(getNumRaw(row, 12));
-            double grossWt   = sign * Math.abs(getNumRaw(row, 8));
-            double purity    = Math.abs(getNumRaw(row, 11));
-            double rawPiecesD = Math.abs(getNumRaw(row, 7));
-            if (rawPiecesD > PIECE_CAP) {
-                session.pieceAnomalies.add(new PieceAnomaly(
-                    row.getRowNum(), branchCode, rawPiecesD,
-                    sar, pureWt, purity, mapKarat(purity), date, result.size()
-                ));
-            }
-            int    pieces    = (int) Math.min(rawPiecesD, PIECE_CAP);
-            double metalVal  = sign * Math.abs(getNumRaw(row, 13));
-            double mkgCharge = sign * Math.abs(getNumRaw(row, 14));
-
-            // Employee ID: col3 (integer) else col2
-            String empId = "";
-            double c3v = getNumRaw(row, 3);
-            if (c3v >= 1 && c3v == Math.floor(c3v)) empId = String.valueOf((long) c3v);
-            if (empId.isBlank()) { String c2 = getStr(row, 2); if (c2.matches("\\d+")) empId = c2; }
-            String empName = getStr(row, 5);
-            if (empId.isBlank()) {
-                String origEmpRaw = getStr(row, 3).isBlank() ? getStr(row, 2) : getStr(row, 3);
-                session.empAnomalies.add(new EmpAnomaly(
-                    row.getRowNum(), branchCode, origEmpRaw,
-                    empName.isBlank() ? "unknown" : empName,
-                    sar, pureWt, date, result.size()
-                ));
-                empId = "BR_" + branchCode;
-            }
-            if (empName.isBlank()) empName = empId;
-
-            V3EmployeeSaleTransaction t = new V3EmployeeSaleTransaction();
-            t.setTenantId(tenantId); t.setSourceFile(src);
-            t.setSaleDate(date); t.setBranchCode(branchCode);
-            t.setEmpId(empId); t.setEmpName(empName);
-            t.setSarAmount(sar); t.setPureWeightG(pureWt); t.setGrossWeightG(grossWt);
-            t.setPieces(pieces); t.setPurity(purity); t.setKarat(mapKarat(purity));
-            t.setMetalValue(metalVal); t.setMakingCharge(mkgCharge);
-            t.setReturn(sar < 0);
-            result.add(t);
-        }
-        return result;
-    }
-
-    private List<V3PurchaseTransaction> parsePurchasesB(Sheet sheet, String tenantId, String src, ImportSession session) {
-        List<V3PurchaseTransaction> result = new ArrayList<>();
-        for (Row row : sheet) {
-            if (!isDataRowB(row)) continue;
-            String branchCode = getStr(row, 1);
-            if (branchCode.isBlank() || !branchCode.matches("\\d{3,6}")) continue;
-
-            double rawTotal = getNumRaw(row, 15);
-            if (rawTotal == 0) continue;
-            double sar    = Math.abs(rawTotal); // purchases always positive
-            double pureWt = Math.abs(getNumRaw(row, 12));
-            double grossWt = Math.abs(getNumRaw(row, 8));
-            int    pieces  = Math.min((int) Math.abs(getNumRaw(row, 7)), PIECE_CAP);
-            double purity  = Math.abs(getNumRaw(row, 11));
-            LocalDate date = parseSerialDate(getNumRaw(row, 6));
-
-            V3PurchaseTransaction t = new V3PurchaseTransaction();
-            t.setTenantId(tenantId); t.setSourceFile(src);
-            t.setPurchaseDate(date); t.setBranchCode(branchCode);
-            t.setSarAmount(sar); t.setPureWeightG(pureWt); t.setGrossWeightG(grossWt);
-            t.setPieces(pieces); t.setPurity(purity); t.setKarat(mapKarat(purity));
-            result.add(t);
-        }
-        return result;
-    }
-
-    // ─── FORMAT A PARSERS ─────────────────────────────────────────────────────
-    // Col layout: 15=Sl.#, 12=description/branchHeader, 13=empId(emp only),
-    //             3=totalSAR, 6=pureWt, 7=purity, 10=grossWt, 11=pieces,
-    //             4=mkgCharge, 5=metalVal
-
-    // Accept 3-6 digit codes; separators: hyphen, en-dash, em-dash, slash, space, or colon
     private static final java.util.regex.Pattern BRANCH_HEADER_A =
         java.util.regex.Pattern.compile("^(\\d{3,6})\\s*[-–—/: ]\\s*(.+)");
-    // FIX 3: more permissive — plain space separator (e.g., "4420 اسم الفرع")
     private static final java.util.regex.Pattern BRANCH_HEADER_PLAIN =
         java.util.regex.Pattern.compile("^(\\d{4})\\s+(.+)");
     private static final java.util.regex.Pattern DATE_HEADER_A =
         java.util.regex.Pattern.compile("(\\d{1,2})/(\\d{1,2})/(\\d{4})|(\\d{4})-(\\d{2})-(\\d{2})");
 
-    private List<V3SaleTransaction> parseSalesA(Sheet sheet, String tenantId, String src, ImportSession session) {
-        List<V3SaleTransaction> result = new ArrayList<>();
-        String currentBranch = null;
-        // FIX 2: scan header rows for date instead of defaulting to today
-        LocalDate currentDate = extractDateFromHeader(sheet);
-        if (currentDate == null) log.warn("parseSalesA: no date in header rows — rows before first in-row date will be skipped");
-        Set<String> loggedMisses = new java.util.LinkedHashSet<>();
-        Set<String> foundBranches = new java.util.LinkedHashSet<>();
-        int droppedNoBranch = 0; // FIX 3: track rows dropped because no branch header seen yet
-        int droppedNoDate   = 0; // FIX 2: track rows dropped because date not yet known
+    private static final java.time.format.DateTimeFormatter[] MOTHAN_DATE_FMTS = {
+        DD_MM_YYYY,
+        java.time.format.DateTimeFormatter.ofPattern("d/M/yyyy"),
+        java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+        java.time.format.DateTimeFormatter.ofPattern("d-M-yyyy"),
+        java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"),
+        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+        java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+    };
 
-        for (Row row : sheet) {
-            if (row == null) continue;
-            String col12 = getStr(row, 12);
-            // FIX 3: try strict then permissive branch header
-            java.util.regex.Matcher bm = BRANCH_HEADER_A.matcher(col12);
-            if (!bm.matches()) bm = BRANCH_HEADER_PLAIN.matcher(col12);
-            if (bm.matches()) { currentBranch = bm.group(1); foundBranches.add(currentBranch); continue; }
+    // ─── Constructor ──────────────────────────────────────────────────────────
 
-            // Log col12 values that look like branch headers but didn't match (first 20 unique)
-            if (!col12.isBlank() && col12.length() > 2 && Character.isDigit(col12.charAt(0))
-                    && loggedMisses.size() < 20) {
-                loggedMisses.add(col12);
+    public V3ExcelImportService(MongoTemplate mongo,
+                                V3BranchPurchaseRateRepository rateRepo,
+                                V3BranchRepository branchRepo,
+                                V3EmployeeRepository empRepo,
+                                V3CacheService cache,
+                                V3ImportStatusService statusSvc,
+                                V3StagedRecordRepository stagedRepo) {
+        this.mongo       = mongo;
+        this.rateRepo    = rateRepo;
+        this.branchRepo  = branchRepo;
+        this.empRepo     = empRepo;
+        this.cache       = cache;
+        this.statusSvc   = statusSvc;
+        this.stagedRepo  = stagedRepo;
+    }
+
+    // ─── Public entry points ──────────────────────────────────────────────────
+
+    public ImportResult importByType(String type, byte[] bytes, String filename,
+                                     String tenantId, String importId) throws Exception {
+        return switch (type) {
+            case "branch-sales"   -> importBranchSales(bytes, filename, tenantId, importId);
+            case "employee-sales" -> importEmployeeSales(bytes, filename, tenantId, importId);
+            case "purchases"      -> importPurchases(bytes, filename, tenantId, importId);
+            case "mothan"         -> importMothan(bytes, filename, tenantId, importId);
+            default -> throw new IllegalArgumentException("Unknown import type: " + type);
+        };
+    }
+
+    // ─── Branch Sales ─────────────────────────────────────────────────────────
+
+    public ImportResult importBranchSales(byte[] bytes, String filename,
+                                          String tenantId, String importId) throws Exception {
+        log.info("V3 branch-sales START: '{}' {} bytes, tenant={}", filename, bytes.length, tenantId);
+        long t0 = System.currentTimeMillis();
+
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+            Format fmt = detectFormat(sheet);
+            log.info("V3 branch-sales format detected: {}", fmt);
+
+            // Phase 1: Parse
+            List<ParsedRow> rows = parseAllRowsForSales(sheet);
+            log.info("V3 branch-sales PARSED: {} raw rows from '{}'", rows.size(), filename);
+            if (rows.isEmpty()) {
+                log.warn("V3 branch-sales: 0 rows parsed — existing data NOT touched");
+                return new ImportResult(0, 0, 0);
             }
 
-            // Try to extract date from any cell
-            LocalDate rowDate = extractDateFromRow(row, currentDate);
-            if (rowDate != null) currentDate = rowDate;
+            // Phase 2: Classify
+            Map<String, BranchStats> stats = buildBranchStats(rows);
+            List<V3SaleTransaction> cleanList = new ArrayList<>();
+            List<V3StagedRecord> stagedList = new ArrayList<>();
 
-            if (!isDataRowA(row)) continue;
-            if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
-            if (currentBranch == null) { droppedNoBranch++; continue; }
-            if (currentDate == null)   { droppedNoDate++;   continue; }
-
-            double rawTotal = getNumRaw(row, 3);
-            if (rawTotal == 0) continue;
-            double sar  = -rawTotal;
-            double sign = sar >= 0 ? 1.0 : -1.0;
-
-            double pureWt    = sign * Math.abs(getNumRaw(row, 6));
-            double grossWt   = sign * Math.abs(getNumRaw(row, 10));
-            double purity    = Math.abs(getNumRaw(row, 7));
-            double rawPiecesD = Math.abs(getNumRaw(row, 11));
-            if (rawPiecesD > PIECE_CAP) {
-                session.pieceAnomalies.add(new PieceAnomaly(
-                    row.getRowNum(), currentBranch, rawPiecesD,
-                    sar, pureWt, purity, mapKarat(purity), currentDate, result.size()
-                ));
+            for (ParsedRow row : rows) {
+                List<V3StagedRecord.FieldIssue> issues = validateSalesRow(row, stats);
+                if (issues.isEmpty()) {
+                    cleanList.add(toSaleTransaction(row, tenantId, filename));
+                } else {
+                    Map<String, Object> parsedMap = buildSalesParsedMap(row, tenantId, filename);
+                    stagedList.add(buildStagedRecord(row, "branch-sales", issues,
+                        stats.get(row.branchCode), parsedMap, tenantId, importId, null));
+                }
             }
-            int    pieces    = (int) Math.min(rawPiecesD, PIECE_CAP);
-            double metalVal  = sign * Math.abs(getNumRaw(row, 5));
-            double mkgCharge = sign * Math.abs(getNumRaw(row, 4));
 
-            V3SaleTransaction t = new V3SaleTransaction();
-            t.setTenantId(tenantId); t.setSourceFile(src);
-            t.setSaleDate(currentDate); t.setBranchCode(currentBranch);
-            t.setSarAmount(sar); t.setPureWeightG(pureWt); t.setGrossWeightG(grossWt);
-            t.setPieces(pieces); t.setPurity(purity); t.setKarat(mapKarat(purity));
-            t.setMetalValue(metalVal); t.setMakingCharge(mkgCharge);
-            t.setReturn(sar < 0);
-            result.add(t);
+            log.info("V3 branch-sales classified: {} clean, {} staged", cleanList.size(), stagedList.size());
+
+            if (cleanList.isEmpty() && stagedList.isEmpty()) {
+                return new ImportResult(0, 0, rows.size());
+            }
+
+            int total = cleanList.size();
+            statusSvc.update(importId, "deleting", total, 0, total);
+
+            // Overlap guard + delete existing date range
+            if (!cleanList.isEmpty()) {
+                LocalDate minDate = cleanList.stream()
+                    .map(V3SaleTransaction::getSaleDate).filter(Objects::nonNull)
+                    .min(LocalDate::compareTo).orElseThrow();
+                LocalDate maxDate = cleanList.stream()
+                    .map(V3SaleTransaction::getSaleDate).filter(Objects::nonNull)
+                    .max(LocalDate::compareTo).orElseThrow();
+                double parsedSar = cleanList.stream().mapToDouble(V3SaleTransaction::getSarAmount).sum();
+
+                long existing = mongo.count(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("saleDate").gte(minDate).lte(maxDate)), V3SaleTransaction.class);
+                if (existing > 0) {
+                    double overlapPct = Math.abs((double)(cleanList.size() - existing) / existing * 100);
+                    if (overlapPct > 10)
+                        log.warn("OVERLAP GUARD [branch-sales]: existing={} new={} ({}% diff) range {} – {}",
+                            existing, cleanList.size(), Math.round(overlapPct), minDate, maxDate);
+                }
+                long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("saleDate").gte(minDate).lte(maxDate)), V3SaleTransaction.class).getDeletedCount();
+                log.info("V3 branch-sales deleted {} existing for range {} – {}", deleted, minDate, maxDate);
+
+                statusSvc.update(importId, "saving", total, 0, total);
+                int saved = bulkInsertSafe(cleanList, V3SaleTransaction.class, importId);
+                upsertBranches(cleanList.stream().map(V3SaleTransaction::getBranchCode).distinct().toList(), tenantId);
+                verifyImport(tenantId, "saleDate", "sarAmount", "v3_sale_transactions",
+                    minDate, maxDate, cleanList.size(), parsedSar);
+
+                // Clear old pending staged for this file type then insert new
+                mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("fileType").is("branch-sales")
+                    .and("status").is("pending")), "v3_staged_records");
+                if (!stagedList.isEmpty()) mongo.insertAll(stagedList);
+
+                cache.invalidate(tenantId);
+                log.info("V3 branch-sales DONE: {} saved, {} staged in {}ms",
+                    saved, stagedList.size(), System.currentTimeMillis() - t0);
+                return new ImportResult(saved, stagedList.size(), rows.size());
+            } else {
+                // All rows are dirty — still clear + re-insert staged
+                mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("fileType").is("branch-sales")
+                    .and("status").is("pending")), "v3_staged_records");
+                mongo.insertAll(stagedList);
+                log.info("V3 branch-sales DONE: 0 saved, {} staged in {}ms",
+                    stagedList.size(), System.currentTimeMillis() - t0);
+                return new ImportResult(0, stagedList.size(), rows.size());
+            }
         }
-        log.info("parseSalesA: {} rows, {} branches: {}, droppedNoBranch={}, droppedNoDate={}",
-            result.size(), foundBranches.size(), foundBranches, droppedNoBranch, droppedNoDate);
-        if (!loggedMisses.isEmpty()) {
-            log.warn("parseSalesA: col12 digit-starting values that DIDN'T match branch header regex: {}", loggedMisses);
+    }
+
+    // ─── Employee Sales ───────────────────────────────────────────────────────
+
+    public ImportResult importEmployeeSales(byte[] bytes, String filename,
+                                            String tenantId, String importId) throws Exception {
+        log.info("V3 employee-sales START: '{}' {} bytes", filename, bytes.length);
+        long t0 = System.currentTimeMillis();
+
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+
+            // Phase 1: Parse
+            List<ParsedRow> rows = parseAllRowsForEmpSales(sheet, tenantId);
+            log.info("V3 employee-sales PARSED: {} raw rows", rows.size());
+            if (rows.isEmpty()) {
+                log.warn("V3 employee-sales: 0 rows parsed — existing data NOT touched");
+                return new ImportResult(0, 0, 0);
+            }
+
+            // Build available-employees map per branch for staged records
+            Map<String, List<Map<String, Object>>> empsByBranch = buildEmployeesByBranch(tenantId);
+
+            // Phase 2: Classify
+            Map<String, BranchStats> stats = buildBranchStats(rows);
+            List<V3EmployeeSaleTransaction> cleanList = new ArrayList<>();
+            List<V3StagedRecord> stagedList = new ArrayList<>();
+
+            for (ParsedRow row : rows) {
+                List<V3StagedRecord.FieldIssue> issues = validateEmpRow(row, stats);
+                if (issues.isEmpty()) {
+                    cleanList.add(toEmpSaleTransaction(row, tenantId, filename));
+                } else {
+                    Map<String, Object> parsedMap = buildEmpParsedMap(row, tenantId, filename);
+                    List<Map<String, Object>> availEmps = empsByBranch.getOrDefault(
+                        row.branchCode != null ? row.branchCode : "", Collections.emptyList());
+                    stagedList.add(buildStagedRecord(row, "employee-sales", issues,
+                        stats.get(row.branchCode), parsedMap, tenantId, importId, availEmps));
+                }
+            }
+
+            log.info("V3 employee-sales classified: {} clean, {} staged", cleanList.size(), stagedList.size());
+
+            if (cleanList.isEmpty() && stagedList.isEmpty()) {
+                return new ImportResult(0, 0, rows.size());
+            }
+
+            int total = cleanList.size();
+            statusSvc.update(importId, "deleting", total, 0, total);
+
+            if (!cleanList.isEmpty()) {
+                LocalDate minDate = cleanList.stream()
+                    .map(V3EmployeeSaleTransaction::getSaleDate).filter(Objects::nonNull)
+                    .min(LocalDate::compareTo).orElseThrow();
+                LocalDate maxDate = cleanList.stream()
+                    .map(V3EmployeeSaleTransaction::getSaleDate).filter(Objects::nonNull)
+                    .max(LocalDate::compareTo).orElseThrow();
+                double parsedSar = cleanList.stream().mapToDouble(V3EmployeeSaleTransaction::getSarAmount).sum();
+
+                long existing = mongo.count(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("saleDate").gte(minDate).lte(maxDate)), V3EmployeeSaleTransaction.class);
+                if (existing > 0) {
+                    double overlapPct = Math.abs((double)(cleanList.size() - existing) / existing * 100);
+                    if (overlapPct > 10)
+                        log.warn("OVERLAP GUARD [employee-sales]: existing={} new={} ({}% diff) range {} – {}",
+                            existing, cleanList.size(), Math.round(overlapPct), minDate, maxDate);
+                }
+                long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("saleDate").gte(minDate).lte(maxDate)),
+                    V3EmployeeSaleTransaction.class).getDeletedCount();
+                log.info("V3 employee-sales deleted {} existing, range {} – {}", deleted, minDate, maxDate);
+
+                statusSvc.update(importId, "saving", total, 0, total);
+                int saved = bulkInsertSafe(cleanList, V3EmployeeSaleTransaction.class, importId);
+                upsertEmployees(cleanList, tenantId);
+                verifyImport(tenantId, "saleDate", "sarAmount", "v3_employee_sale_transactions",
+                    minDate, maxDate, cleanList.size(), parsedSar);
+
+                mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("fileType").is("employee-sales")
+                    .and("status").is("pending")), "v3_staged_records");
+                if (!stagedList.isEmpty()) mongo.insertAll(stagedList);
+
+                cache.invalidate(tenantId);
+                log.info("V3 employee-sales DONE: {} saved, {} staged in {}ms",
+                    saved, stagedList.size(), System.currentTimeMillis() - t0);
+                return new ImportResult(saved, stagedList.size(), rows.size());
+            } else {
+                mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("fileType").is("employee-sales")
+                    .and("status").is("pending")), "v3_staged_records");
+                mongo.insertAll(stagedList);
+                log.info("V3 employee-sales DONE: 0 saved, {} staged in {}ms",
+                    stagedList.size(), System.currentTimeMillis() - t0);
+                return new ImportResult(0, stagedList.size(), rows.size());
+            }
+        }
+    }
+
+    // ─── Purchases ────────────────────────────────────────────────────────────
+
+    public ImportResult importPurchases(byte[] bytes, String filename,
+                                        String tenantId, String importId) throws Exception {
+        log.info("V3 purchases START: '{}' {} bytes", filename, bytes.length);
+        long t0 = System.currentTimeMillis();
+
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+
+            // Phase 1: Parse
+            List<ParsedRow> rows = parseAllRowsForPurchases(sheet);
+            log.info("V3 purchases PARSED: {} raw rows", rows.size());
+            if (rows.isEmpty()) {
+                log.warn("V3 purchases: 0 rows parsed — existing data NOT touched");
+                return new ImportResult(0, 0, 0);
+            }
+
+            // Phase 2: Classify
+            List<V3PurchaseTransaction> cleanList = new ArrayList<>();
+            List<V3StagedRecord> stagedList = new ArrayList<>();
+
+            for (ParsedRow row : rows) {
+                List<V3StagedRecord.FieldIssue> issues = validatePurchaseRow(row);
+                if (issues.isEmpty()) {
+                    cleanList.add(toPurchaseTransaction(row, tenantId, filename));
+                } else {
+                    Map<String, Object> parsedMap = buildPurchaseParsedMap(row, tenantId, filename);
+                    stagedList.add(buildStagedRecord(row, "purchases", issues,
+                        null, parsedMap, tenantId, importId, null));
+                }
+            }
+
+            log.info("V3 purchases classified: {} clean, {} staged", cleanList.size(), stagedList.size());
+
+            if (cleanList.isEmpty() && stagedList.isEmpty()) {
+                return new ImportResult(0, 0, rows.size());
+            }
+
+            int total = cleanList.size();
+            statusSvc.update(importId, "deleting", total, 0, total);
+
+            if (!cleanList.isEmpty()) {
+                LocalDate minDate = cleanList.stream()
+                    .map(V3PurchaseTransaction::getPurchaseDate).filter(Objects::nonNull)
+                    .min(LocalDate::compareTo).orElseThrow();
+                LocalDate maxDate = cleanList.stream()
+                    .map(V3PurchaseTransaction::getPurchaseDate).filter(Objects::nonNull)
+                    .max(LocalDate::compareTo).orElseThrow();
+                double parsedSar = cleanList.stream().mapToDouble(V3PurchaseTransaction::getSarAmount).sum();
+
+                long existing = mongo.count(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("purchaseDate").gte(minDate).lte(maxDate)), V3PurchaseTransaction.class);
+                if (existing > 0) {
+                    double overlapPct = Math.abs((double)(cleanList.size() - existing) / existing * 100);
+                    if (overlapPct > 10)
+                        log.warn("OVERLAP GUARD [purchases]: existing={} new={} ({}% diff) range {} – {}",
+                            existing, cleanList.size(), Math.round(overlapPct), minDate, maxDate);
+                }
+                long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("purchaseDate").gte(minDate).lte(maxDate)),
+                    V3PurchaseTransaction.class).getDeletedCount();
+                log.info("V3 purchases deleted {} existing, range {} – {}", deleted, minDate, maxDate);
+
+                statusSvc.update(importId, "saving", total, 0, total);
+                int saved = bulkInsertSafe(cleanList, V3PurchaseTransaction.class, importId);
+                statusSvc.update(importId, "computing_rates", saved, saved, saved);
+                recomputePurchaseRates(tenantId);
+                verifyImport(tenantId, "purchaseDate", "sarAmount", "v3_purchase_transactions",
+                    minDate, maxDate, cleanList.size(), parsedSar);
+
+                mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("fileType").is("purchases")
+                    .and("status").is("pending")), "v3_staged_records");
+                if (!stagedList.isEmpty()) mongo.insertAll(stagedList);
+
+                cache.invalidate(tenantId);
+                log.info("V3 purchases DONE: {} saved, {} staged in {}ms",
+                    saved, stagedList.size(), System.currentTimeMillis() - t0);
+                return new ImportResult(saved, stagedList.size(), rows.size());
+            } else {
+                mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("fileType").is("purchases")
+                    .and("status").is("pending")), "v3_staged_records");
+                mongo.insertAll(stagedList);
+                log.info("V3 purchases DONE: 0 saved, {} staged in {}ms",
+                    stagedList.size(), System.currentTimeMillis() - t0);
+                return new ImportResult(0, stagedList.size(), rows.size());
+            }
+        }
+    }
+
+    // ─── Mothan ───────────────────────────────────────────────────────────────
+
+    public ImportResult importMothan(byte[] bytes, String filename,
+                                     String tenantId, String importId) throws Exception {
+        log.info("V3 mothan START: '{}' {} bytes", filename, bytes.length);
+        long t0 = System.currentTimeMillis();
+
+        try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
+            Sheet sheet = wb.getSheetAt(0);
+
+            // Phase 1: Parse
+            List<ParsedRow> rows = parseAllRowsForMothan(sheet);
+            log.info("V3 mothan PARSED: {} raw rows", rows.size());
+            if (rows.isEmpty()) {
+                log.warn("V3 mothan: 0 rows parsed — existing data NOT touched");
+                return new ImportResult(0, 0, 0);
+            }
+
+            // Phase 2: Classify
+            List<V3MothanTransaction> cleanList = new ArrayList<>();
+            List<V3StagedRecord> stagedList = new ArrayList<>();
+
+            for (ParsedRow row : rows) {
+                List<V3StagedRecord.FieldIssue> issues = validateMothanRow(row);
+                if (issues.isEmpty()) {
+                    cleanList.add(toMothanTransaction(row, tenantId, filename));
+                } else {
+                    Map<String, Object> parsedMap = buildMothanParsedMap(row, tenantId, filename);
+                    stagedList.add(buildStagedRecord(row, "mothan", issues,
+                        null, parsedMap, tenantId, importId, null));
+                }
+            }
+
+            log.info("V3 mothan classified: {} clean, {} staged", cleanList.size(), stagedList.size());
+
+            if (cleanList.isEmpty() && stagedList.isEmpty()) {
+                return new ImportResult(0, 0, rows.size());
+            }
+
+            int total = cleanList.size();
+            statusSvc.update(importId, "deleting", total, 0, total);
+
+            if (!cleanList.isEmpty()) {
+                LocalDate minDate = cleanList.stream()
+                    .map(V3MothanTransaction::getTransactionDate).filter(Objects::nonNull)
+                    .min(LocalDate::compareTo).orElse(null);
+                LocalDate maxDate = cleanList.stream()
+                    .map(V3MothanTransaction::getTransactionDate).filter(Objects::nonNull)
+                    .max(LocalDate::compareTo).orElse(null);
+                double parsedSar = cleanList.stream().mapToDouble(V3MothanTransaction::getAmountSar).sum();
+
+                if (minDate != null && maxDate != null) {
+                    long existing = mongo.count(Query.query(Criteria.where("tenantId").is(tenantId)
+                        .and("transactionDate").gte(minDate).lte(maxDate)), V3MothanTransaction.class);
+                    if (existing > 0) {
+                        double overlapPct = Math.abs((double)(cleanList.size() - existing) / existing * 100);
+                        if (overlapPct > 10)
+                            log.warn("OVERLAP GUARD [mothan]: existing={} new={} ({}% diff) range {} – {}",
+                                existing, cleanList.size(), Math.round(overlapPct), minDate, maxDate);
+                    }
+                    long deleted = mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                        .and("transactionDate").gte(minDate).lte(maxDate)),
+                        V3MothanTransaction.class).getDeletedCount();
+                    log.info("V3 mothan deleted {} existing for range {} to {}", deleted, minDate, maxDate);
+                }
+
+                statusSvc.update(importId, "saving", total, 0, total);
+                int saved = bulkInsertSafe(cleanList, V3MothanTransaction.class, importId);
+
+                statusSvc.update(importId, "computing_rates", saved, saved, saved);
+                recomputePurchaseRates(tenantId);
+
+                if (minDate != null && maxDate != null) {
+                    verifyImport(tenantId, "transactionDate", "amountSar", "v3_mothan_transactions",
+                        minDate, maxDate, cleanList.size(), parsedSar);
+                }
+
+                mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("fileType").is("mothan")
+                    .and("status").is("pending")), "v3_staged_records");
+                if (!stagedList.isEmpty()) mongo.insertAll(stagedList);
+
+                cache.invalidate(tenantId);
+                log.info("V3 mothan DONE: {} saved, {} staged in {}ms",
+                    saved, stagedList.size(), System.currentTimeMillis() - t0);
+                return new ImportResult(saved, stagedList.size(), rows.size());
+            } else {
+                mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                    .and("fileType").is("mothan")
+                    .and("status").is("pending")), "v3_staged_records");
+                mongo.insertAll(stagedList);
+                log.info("V3 mothan DONE: 0 saved, {} staged in {}ms",
+                    stagedList.size(), System.currentTimeMillis() - t0);
+                return new ImportResult(0, stagedList.size(), rows.size());
+            }
+        }
+    }
+
+    // ─── Phase 1: Parse methods ───────────────────────────────────────────────
+
+    /**
+     * Parse all data rows from a sales sheet (Format A or B) into raw ParsedRow objects.
+     * No sign convention applied. No piece cap. Branch code stored as-is.
+     */
+    List<ParsedRow> parseAllRowsForSales(Sheet sheet) {
+        Format fmt = detectFormat(sheet);
+        List<ParsedRow> result = new ArrayList<>();
+
+        if (fmt == Format.B) {
+            for (Row row : sheet) {
+                if (!isDataRowB(row)) continue;
+                String rawBranch = getStr(row, 1);
+                ParsedRow pr = new ParsedRow();
+                pr.excelRow      = row.getRowNum();
+                pr.rawBranchCode = rawBranch;
+                pr.branchCode    = rawBranch.matches("\\d{4}") ? rawBranch : null;
+                pr.totalSar      = getNumRaw(row, 15);
+                pr.date          = parseSerialDate(getNumRaw(row, 6));
+                pr.pureWeight    = getNumRaw(row, 12);
+                pr.grossWeight   = getNumRaw(row, 8);
+                pr.purity        = getNumRaw(row, 11);
+                pr.rawPieces     = getNumRaw(row, 7);
+                pr.metalValue    = getNumRaw(row, 13);
+                pr.makingCharge  = getNumRaw(row, 14);
+                result.add(pr);
+            }
+        } else {
+            // Format A: branch carry-forward from col12 header rows
+            String currentBranch = null;
+            LocalDate currentDate = extractDateFromHeader(sheet);
+            if (currentDate == null)
+                log.warn("parseAllRowsForSales: no date in header rows");
+            Set<String> loggedMisses = new LinkedHashSet<>();
+            int droppedNoBranch = 0;
+            int droppedNoDate = 0;
+
+            for (Row row : sheet) {
+                if (row == null) continue;
+                String col12 = getStr(row, 12);
+                java.util.regex.Matcher bm = BRANCH_HEADER_A.matcher(col12);
+                if (!bm.matches()) bm = BRANCH_HEADER_PLAIN.matcher(col12);
+                if (bm.matches()) { currentBranch = bm.group(1); continue; }
+
+                if (!col12.isBlank() && col12.length() > 2 && Character.isDigit(col12.charAt(0))
+                        && loggedMisses.size() < 20) {
+                    loggedMisses.add(col12);
+                }
+
+                LocalDate rowDate = extractDateFromRow(row, currentDate);
+                if (rowDate != null) currentDate = rowDate;
+
+                if (!isDataRowA(row)) continue;
+                if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
+
+                if (currentBranch == null) { droppedNoBranch++; continue; }
+                if (currentDate == null)   { droppedNoDate++;   continue; }
+
+                ParsedRow pr = new ParsedRow();
+                pr.excelRow      = row.getRowNum();
+                pr.rawBranchCode = currentBranch;
+                pr.branchCode    = currentBranch.matches("\\d{4}") ? currentBranch : null;
+                pr.date          = currentDate;
+                pr.totalSar      = getNumRaw(row, 3);
+                pr.pureWeight    = getNumRaw(row, 6);
+                pr.grossWeight   = getNumRaw(row, 10);
+                pr.purity        = getNumRaw(row, 7);
+                pr.rawPieces     = getNumRaw(row, 11);
+                pr.metalValue    = getNumRaw(row, 5);
+                pr.makingCharge  = getNumRaw(row, 4);
+                result.add(pr);
+            }
+            log.info("parseAllRowsForSales(A): {} rows, droppedNoBranch={}, droppedNoDate={}",
+                result.size(), droppedNoBranch, droppedNoDate);
+            if (!loggedMisses.isEmpty())
+                log.warn("parseAllRowsForSales: col12 digit-starting values that didn't match branch header regex: {}", loggedMisses);
         }
         return result;
     }
 
-    private List<V3EmployeeSaleTransaction> parseEmpSalesA(Sheet sheet, String tenantId, String src, ImportSession session) {
-        List<V3EmployeeSaleTransaction> result = new ArrayList<>();
-        String currentBranch = null;
-        // FIX 2: scan header rows for date
-        LocalDate currentDate = extractDateFromHeader(sheet);
-        if (currentDate == null) log.warn("parseEmpSalesA: no date in header rows — rows before first in-row date will be skipped");
-        int droppedNoBranch = 0, droppedNoDate = 0;
+    /**
+     * Parse all data rows from an employee-sales sheet (Format A or B) into raw ParsedRow objects.
+     * tenantId is used only for employee lookup (not stored in ParsedRow).
+     */
+    List<ParsedRow> parseAllRowsForEmpSales(Sheet sheet, String tenantId) {
+        Format fmt = detectFormat(sheet);
+        List<ParsedRow> result = new ArrayList<>();
 
-        for (Row row : sheet) {
-            if (row == null) continue;
-            String col12 = getStr(row, 12);
-            // FIX 3: try strict then permissive branch header
-            java.util.regex.Matcher bm = BRANCH_HEADER_A.matcher(col12);
-            if (!bm.matches()) bm = BRANCH_HEADER_PLAIN.matcher(col12);
-            if (bm.matches()) { currentBranch = bm.group(1); continue; }
+        if (fmt == Format.B) {
+            for (Row row : sheet) {
+                if (!isDataRowB(row)) continue;
+                String rawBranch = getStr(row, 1);
+                ParsedRow pr = new ParsedRow();
+                pr.excelRow      = row.getRowNum();
+                pr.rawBranchCode = rawBranch;
+                pr.branchCode    = rawBranch.matches("\\d{4}") ? rawBranch : null;
+                pr.totalSar      = getNumRaw(row, 15);
+                pr.date          = parseSerialDate(getNumRaw(row, 6));
+                pr.pureWeight    = getNumRaw(row, 12);
+                pr.grossWeight   = getNumRaw(row, 8);
+                pr.purity        = getNumRaw(row, 11);
+                pr.rawPieces     = getNumRaw(row, 7);
+                pr.metalValue    = getNumRaw(row, 13);
+                pr.makingCharge  = getNumRaw(row, 14);
 
-            LocalDate rowDate = extractDateFromRow(row, currentDate);
-            if (rowDate != null) currentDate = rowDate;
-
-            if (!isDataRowA(row)) continue;
-            if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
-            if (currentBranch == null) { droppedNoBranch++; continue; }
-            if (currentDate == null)   { droppedNoDate++;   continue; }
-
-            double rawTotal = getNumRaw(row, 3);
-            if (rawTotal == 0) continue;
-            double sar  = -rawTotal;
-            double sign = sar >= 0 ? 1.0 : -1.0;
-
-            String empId   = getStr(row, 13).trim();
-            String empName = col12.trim();
-
-            double pureWt    = sign * Math.abs(getNumRaw(row, 6));
-            double grossWt   = sign * Math.abs(getNumRaw(row, 10));
-            double purity    = Math.abs(getNumRaw(row, 7));
-            double rawPiecesD = Math.abs(getNumRaw(row, 11));
-            if (rawPiecesD > PIECE_CAP) {
-                session.pieceAnomalies.add(new PieceAnomaly(
-                    row.getRowNum(), currentBranch, rawPiecesD,
-                    sar, pureWt, purity, mapKarat(purity), currentDate, result.size()
-                ));
+                // Employee ID: prefer col3 (integer) else col2
+                String empId = "";
+                double c3v = getNumRaw(row, 3);
+                if (c3v >= 1 && c3v == Math.floor(c3v)) empId = String.valueOf((long) c3v);
+                if (empId.isBlank()) {
+                    String c2 = getStr(row, 2);
+                    if (c2.matches("\\d+")) empId = c2;
+                }
+                pr.empId   = empId.isBlank() ? "" : empId;
+                pr.empName = getStr(row, 5);
+                result.add(pr);
             }
-            int    pieces    = (int) Math.min(rawPiecesD, PIECE_CAP);
-            double metalVal  = sign * Math.abs(getNumRaw(row, 5));
-            double mkgCharge = sign * Math.abs(getNumRaw(row, 4));
+        } else {
+            // Format A: branch carry-forward from col12; empId from col13; empName from col12 data row
+            String currentBranch = null;
+            LocalDate currentDate = extractDateFromHeader(sheet);
+            if (currentDate == null)
+                log.warn("parseAllRowsForEmpSales: no date in header rows");
+            int droppedNoBranch = 0;
+            int droppedNoDate = 0;
 
-            if (empId.isEmpty()) {
-                session.empAnomalies.add(new EmpAnomaly(
-                    row.getRowNum(), currentBranch, getStr(row, 13),
-                    empName.isEmpty() ? "unknown" : empName,
-                    sar, pureWt, currentDate, result.size()
-                ));
+            for (Row row : sheet) {
+                if (row == null) continue;
+                String col12 = getStr(row, 12);
+                java.util.regex.Matcher bm = BRANCH_HEADER_A.matcher(col12);
+                if (!bm.matches()) bm = BRANCH_HEADER_PLAIN.matcher(col12);
+                if (bm.matches()) { currentBranch = bm.group(1); continue; }
+
+                LocalDate rowDate = extractDateFromRow(row, currentDate);
+                if (rowDate != null) currentDate = rowDate;
+
+                if (!isDataRowA(row)) continue;
+                if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
+
+                if (currentBranch == null) { droppedNoBranch++; continue; }
+                if (currentDate == null)   { droppedNoDate++;   continue; }
+
+                ParsedRow pr = new ParsedRow();
+                pr.excelRow      = row.getRowNum();
+                pr.rawBranchCode = currentBranch;
+                pr.branchCode    = currentBranch.matches("\\d{4}") ? currentBranch : null;
+                pr.date          = currentDate;
+                pr.totalSar      = getNumRaw(row, 3);
+                pr.pureWeight    = getNumRaw(row, 6);
+                pr.grossWeight   = getNumRaw(row, 10);
+                pr.purity        = getNumRaw(row, 7);
+                pr.rawPieces     = getNumRaw(row, 11);
+                pr.metalValue    = getNumRaw(row, 5);
+                pr.makingCharge  = getNumRaw(row, 4);
+                pr.empId         = getStr(row, 13).trim();
+                pr.empName       = col12.trim();
+                result.add(pr);
             }
-
-            V3EmployeeSaleTransaction t = new V3EmployeeSaleTransaction();
-            t.setTenantId(tenantId); t.setSourceFile(src);
-            t.setSaleDate(currentDate); t.setBranchCode(currentBranch);
-            t.setEmpId(empId.isEmpty() ? "BR_" + currentBranch : empId);
-            t.setEmpName(empName.isEmpty() ? empId : empName);
-            t.setSarAmount(sar); t.setPureWeightG(pureWt); t.setGrossWeightG(grossWt);
-            t.setPieces(pieces); t.setPurity(purity); t.setKarat(mapKarat(purity));
-            t.setMetalValue(metalVal); t.setMakingCharge(mkgCharge);
-            t.setReturn(sar < 0);
-            result.add(t);
+            log.info("parseAllRowsForEmpSales(A): {} rows, droppedNoBranch={}, droppedNoDate={}",
+                result.size(), droppedNoBranch, droppedNoDate);
         }
-        log.info("parseEmpSalesA: {} rows, droppedNoBranch={}, droppedNoDate={}", result.size(), droppedNoBranch, droppedNoDate);
         return result;
     }
 
-    private List<V3PurchaseTransaction> parsePurchasesA(Sheet sheet, String tenantId, String src, ImportSession session) {
-        List<V3PurchaseTransaction> result = new ArrayList<>();
-        String currentBranch = null;
-        // FIX 2: scan header rows for date
-        LocalDate currentDate = extractDateFromHeader(sheet);
-        if (currentDate == null) log.warn("parsePurchasesA: no date in header rows — rows before first in-row date will be skipped");
-        int droppedNoBranch = 0, droppedNoDate = 0;
+    /**
+     * Parse all data rows from a purchases sheet (Format A or B) into raw ParsedRow objects.
+     */
+    List<ParsedRow> parseAllRowsForPurchases(Sheet sheet) {
+        Format fmt = detectFormat(sheet);
+        List<ParsedRow> result = new ArrayList<>();
 
-        for (Row row : sheet) {
-            if (row == null) continue;
-            String col12 = getStr(row, 12);
-            // FIX 3: try strict then permissive branch header
-            java.util.regex.Matcher bm = BRANCH_HEADER_A.matcher(col12);
-            if (!bm.matches()) bm = BRANCH_HEADER_PLAIN.matcher(col12);
-            if (bm.matches()) { currentBranch = bm.group(1); continue; }
+        if (fmt == Format.B) {
+            for (Row row : sheet) {
+                if (!isDataRowB(row)) continue;
+                String rawBranch = getStr(row, 1);
+                ParsedRow pr = new ParsedRow();
+                pr.excelRow      = row.getRowNum();
+                pr.rawBranchCode = rawBranch;
+                pr.branchCode    = rawBranch.matches("\\d{4}") ? rawBranch : null;
+                pr.totalSar      = getNumRaw(row, 15);
+                pr.date          = parseSerialDate(getNumRaw(row, 6));
+                pr.pureWeight    = getNumRaw(row, 12);
+                pr.grossWeight   = getNumRaw(row, 8);
+                pr.purity        = getNumRaw(row, 11);
+                pr.rawPieces     = getNumRaw(row, 7);
+                result.add(pr);
+            }
+        } else {
+            String currentBranch = null;
+            LocalDate currentDate = extractDateFromHeader(sheet);
+            if (currentDate == null)
+                log.warn("parseAllRowsForPurchases: no date in header rows");
+            int droppedNoBranch = 0;
+            int droppedNoDate = 0;
 
-            LocalDate rowDate = extractDateFromRow(row, currentDate);
-            if (rowDate != null) currentDate = rowDate;
+            for (Row row : sheet) {
+                if (row == null) continue;
+                String col12 = getStr(row, 12);
+                java.util.regex.Matcher bm = BRANCH_HEADER_A.matcher(col12);
+                if (!bm.matches()) bm = BRANCH_HEADER_PLAIN.matcher(col12);
+                if (bm.matches()) { currentBranch = bm.group(1); continue; }
 
-            if (!isDataRowA(row)) continue;
-            if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
-            if (currentBranch == null) { droppedNoBranch++; continue; }
-            if (currentDate == null)   { droppedNoDate++;   continue; }
+                LocalDate rowDate = extractDateFromRow(row, currentDate);
+                if (rowDate != null) currentDate = rowDate;
 
-            double rawTotal = getNumRaw(row, 3);
-            if (rawTotal == 0) continue;
+                if (!isDataRowA(row)) continue;
+                if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
 
-            double sar    = Math.abs(rawTotal);
-            double pureWt = Math.abs(getNumRaw(row, 6));
-            double grossWt = Math.abs(getNumRaw(row, 10));
-            int    pieces  = Math.min((int) Math.abs(getNumRaw(row, 11)), PIECE_CAP);
-            double purity  = Math.abs(getNumRaw(row, 7));
+                if (currentBranch == null) { droppedNoBranch++; continue; }
+                if (currentDate == null)   { droppedNoDate++;   continue; }
 
-            V3PurchaseTransaction t = new V3PurchaseTransaction();
-            t.setTenantId(tenantId); t.setSourceFile(src);
-            t.setPurchaseDate(currentDate); t.setBranchCode(currentBranch);
-            t.setSarAmount(sar); t.setPureWeightG(pureWt); t.setGrossWeightG(grossWt);
-            t.setPieces(pieces); t.setPurity(purity); t.setKarat(mapKarat(purity));
-            result.add(t);
+                ParsedRow pr = new ParsedRow();
+                pr.excelRow      = row.getRowNum();
+                pr.rawBranchCode = currentBranch;
+                pr.branchCode    = currentBranch.matches("\\d{4}") ? currentBranch : null;
+                pr.date          = currentDate;
+                pr.totalSar      = getNumRaw(row, 3);
+                pr.pureWeight    = getNumRaw(row, 6);
+                pr.grossWeight   = getNumRaw(row, 10);
+                pr.purity        = getNumRaw(row, 7);
+                pr.rawPieces     = getNumRaw(row, 11);
+                result.add(pr);
+            }
+            log.info("parseAllRowsForPurchases(A): {} rows, droppedNoBranch={}, droppedNoDate={}",
+                result.size(), droppedNoBranch, droppedNoDate);
         }
-        log.info("parsePurchasesA: {} rows, droppedNoBranch={}, droppedNoDate={}", result.size(), droppedNoBranch, droppedNoDate);
         return result;
     }
 
-    // ─── Mothan parser ────────────────────────────────────────────────────────
-    // Structured columnar format:
-    // Col0=balanceGoldG, Col1=creditGold, Col2=debitGold★, Col3=balanceSar,
-    // Col4=creditSar★, Col5=debitSar, Col6=description, Col7=branchCode★,
-    // Col8=docReference★, Col9=date(DD/MM/YYYY)★
-
-    private List<V3MothanTransaction> parseMothan(Sheet sheet, String tenantId, String src, ImportSession session) {
-        List<V3MothanTransaction> result = new ArrayList<>();
+    /**
+     * Parse all data rows from a mothan sheet into raw ParsedRow objects.
+     * Mothan col layout:
+     *   Col0=balanceGoldG, Col1=weightCreditG, Col2=weightDebitG,
+     *   Col3=balanceSar, Col4=creditSar, Col5=debitSar,
+     *   Col6=description, Col7=branchCode, Col8=docRef, Col9=date
+     */
+    List<ParsedRow> parseAllRowsForMothan(Sheet sheet) {
+        List<ParsedRow> result = new ArrayList<>();
         int rejected = 0;
+
         for (Row row : sheet) {
             if (row == null) continue;
-            String branchCode = getStr(row, 7).trim();
-            double debitGold  = getNumRaw(row, 2);
-            double creditSar  = Math.abs(getNumRaw(row, 4));
 
-            // Skip rows without a valid 4-digit branch code (header/footer/summary rows).
-            // The grand-total row has a large creditSar but no valid branchCode — track it.
-            if (!branchCode.matches("\\d{4}")) {
-                if (creditSar > session.fileTotalSar) session.fileTotalSar = creditSar;
+            String rawBranch = getStr(row, 7).trim();
+            double creditSarRaw = Math.abs(getNumRaw(row, 4));
+
+            if (!rawBranch.matches("\\d{4}")) {
                 if (rejected++ < 10)
                     log.info("Mothan rejected row {}: invalid branchCode='{}' creditSar={}",
-                        row.getRowNum(), branchCode, creditSar);
+                        row.getRowNum(), rawBranch, creditSarRaw);
                 continue;
             }
 
-            double weightCredit = getNumRaw(row, 1);
-            double balanceGold  = getNumRaw(row, 0);
-            double balanceSar   = getNumRaw(row, 3);
-            double debitSar     = getNumRaw(row, 5);
-            String description  = getStr(row, 6);
-            String docRef       = getStr(row, 8);
-
-            // Detect multiline date anomaly before parsing
-            Cell dateCell9 = row.getCell(9);
-            if (dateCell9 != null && dateCell9.getCellType() == CellType.STRING) {
-                String rawDateStr = dateCell9.getStringCellValue();
-                if (rawDateStr.contains("\n")) {
-                    String firstLine = rawDateStr.split("\n")[0].trim();
-                    session.dateAnomalies.add(new DateAnomaly(
-                        row.getRowNum(), branchCode, rawDateStr, firstLine, creditSar, result.size()
-                    ));
-                }
+            // Capture raw date string for multiline detection before parsing
+            String rawDateStr = null;
+            Cell dateCell = row.getCell(9);
+            if (dateCell != null && dateCell.getCellType() == CellType.STRING) {
+                rawDateStr = dateCell.getStringCellValue();
             }
 
             LocalDate date = parseMothanDate(row, 9);
             if (date == null) {
                 if (rejected++ < 10)
-                    log.info("Mothan rejected row {}: null date, branchCode={} creditSar={}",
-                        row.getRowNum(), branchCode, creditSar);
+                    log.info("Mothan rejected row {}: null date, branchCode={}", row.getRowNum(), rawBranch);
                 continue;
             }
 
-            V3MothanTransaction t = new V3MothanTransaction();
-            t.setTenantId(tenantId); t.setSourceFile(src);
-            t.setTransactionDate(date); t.setBranchCode(branchCode);
-            t.setDocReference(docRef); t.setDescription(description);
-            t.setAmountSar(creditSar);
-            t.setWeightDebitG(debitGold);
-            t.setWeightCreditG(weightCredit);
-            t.setBalanceGoldG(balanceGold);
-            t.setBalanceSar(balanceSar);
-            result.add(t);
+            ParsedRow pr = new ParsedRow();
+            pr.excelRow      = row.getRowNum();
+            pr.rawBranchCode = rawBranch;
+            pr.branchCode    = rawBranch;
+            pr.date          = date;
+            pr.rawDate       = rawDateStr;
+            pr.creditSar     = creditSarRaw;
+            pr.debitGold     = getNumRaw(row, 2);
+            pr.weightCredit  = getNumRaw(row, 1);
+            pr.balanceGold   = getNumRaw(row, 0);
+            pr.balanceSar    = getNumRaw(row, 3);
+            pr.description   = getStr(row, 6);
+            pr.docRef        = getStr(row, 8);
+            result.add(pr);
         }
-        log.info("Mothan parse done: {} accepted, {} rejected", result.size(), rejected);
+        log.info("parseAllRowsForMothan: {} accepted, {} rejected", result.size(), rejected);
         return result;
     }
 
-    private static final java.time.format.DateTimeFormatter[] MOTHAN_DATE_FMTS = {
-        DD_MM_YYYY,                                                         // DD/MM/YYYY
-        java.time.format.DateTimeFormatter.ofPattern("d/M/yyyy"),           // D/M/YYYY (no zero-pad)
-        java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"),         // DD-MM-YYYY
-        java.time.format.DateTimeFormatter.ofPattern("d-M-yyyy"),           // D-M-YYYY
-        java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"),         // YYYY/MM/DD
-        java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd"),         // ISO
-        java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"),         // US MM/DD/YYYY
-    };
+    // ─── Phase 2: Validation methods ─────────────────────────────────────────
 
-    private LocalDate parseMothanDate(Row row, int col) {
-        Cell cell = row.getCell(col);
-        if (cell == null) return null;
+    /**
+     * Validate a sales row. Returns a list of issues; empty list means CLEAN.
+     */
+    List<V3StagedRecord.FieldIssue> validateSalesRow(ParsedRow row, Map<String, BranchStats> stats) {
+        List<V3StagedRecord.FieldIssue> issues = new ArrayList<>();
 
-        CellType type = cell.getCellType() == CellType.FORMULA
-            ? cell.getCachedFormulaResultType()
-            : cell.getCellType();
-
-        if (type == CellType.NUMERIC) {
-            double v = cell.getNumericCellValue();
-            if (v > 30000 && v < 70000) return parseSerialDate(v);
+        if (row.branchCode == null || !row.branchCode.matches("\\d{4}")) {
+            issues.add(issue("branchCode", "invalid", null, 0.0, null));
         }
-        if (type == CellType.STRING) {
-            String s = cell.getStringCellValue().trim();
-            if (s.contains("\n")) s = s.split("\n")[0].trim();
-            for (java.time.format.DateTimeFormatter fmt : MOTHAN_DATE_FMTS) {
-                try { return LocalDate.parse(s, fmt); } catch (Exception ignored) {}
+
+        if (row.date == null) {
+            issues.add(issue("date", "missing", null, 0.0, null));
+        }
+
+        if (row.totalSar == 0) {
+            issues.add(issue("sarAmount", "zero_value", null, 0.0, null));
+        }
+
+        if (Math.abs(row.rawPieces) > PIECE_CAP) {
+            BranchStats bs = row.branchCode != null ? stats.get(row.branchCode) : null;
+            double medianRatio = bs != null ? bs.medianSarPerPiece : 0;
+            String suggested = null;
+            double confidence = 0;
+            if (medianRatio > 0 && Math.abs(row.totalSar) > 0) {
+                long imp = Math.round(Math.abs(row.totalSar) / medianRatio);
+                imp = Math.max(1, Math.min(imp, PIECE_CAP));
+                suggested = String.valueOf(imp);
+                confidence = (bs != null && bs.cleanRowCount > 10) ? 0.85 : 0.5;
             }
+            issues.add(issue("pieces", "corrupt_value", suggested, confidence,
+                suggested != null ? "branch_median_sar_per_piece" : null));
         }
-        return null;
+
+        return issues;
     }
 
-    // ─── Post-import: compute purchase rates ─────────────────────────────────
+    /**
+     * Validate an employee-sales row. Returns a list of issues; empty list means CLEAN.
+     */
+    List<V3StagedRecord.FieldIssue> validateEmpRow(ParsedRow row, Map<String, BranchStats> stats) {
+        List<V3StagedRecord.FieldIssue> issues = new ArrayList<>();
+
+        if (row.branchCode == null || !row.branchCode.matches("\\d{4}")) {
+            issues.add(issue("branchCode", "invalid", null, 0.0, null));
+        }
+
+        if (row.date == null) {
+            issues.add(issue("date", "missing", null, 0.0, null));
+        }
+
+        if (row.totalSar == 0) {
+            issues.add(issue("sarAmount", "zero_value", null, 0.0, null));
+        }
+
+        if (Math.abs(row.rawPieces) > PIECE_CAP) {
+            BranchStats bs = row.branchCode != null ? stats.get(row.branchCode) : null;
+            double medianRatio = bs != null ? bs.medianSarPerPiece : 0;
+            String suggested = null;
+            double confidence = 0;
+            if (medianRatio > 0 && Math.abs(row.totalSar) > 0) {
+                long imp = Math.round(Math.abs(row.totalSar) / medianRatio);
+                imp = Math.max(1, Math.min(imp, PIECE_CAP));
+                suggested = String.valueOf(imp);
+                confidence = (bs != null && bs.cleanRowCount > 10) ? 0.85 : 0.5;
+            }
+            issues.add(issue("pieces", "corrupt_value", suggested, confidence,
+                suggested != null ? "branch_median_sar_per_piece" : null));
+        }
+
+        if (row.empId == null || row.empId.isBlank() || !row.empId.matches("\\d+")) {
+            issues.add(issue("empId", "invalid", null, 0.0, "needs_manual"));
+        }
+
+        return issues;
+    }
+
+    /**
+     * Validate a purchase row. Returns a list of issues; empty list means CLEAN.
+     */
+    List<V3StagedRecord.FieldIssue> validatePurchaseRow(ParsedRow row) {
+        List<V3StagedRecord.FieldIssue> issues = new ArrayList<>();
+
+        if (row.branchCode == null || !row.branchCode.matches("\\d{4}")) {
+            issues.add(issue("branchCode", "invalid", null, 0.0, null));
+        }
+
+        if (row.date == null) {
+            issues.add(issue("date", "missing", null, 0.0, null));
+        }
+
+        if (row.totalSar == 0) {
+            issues.add(issue("sarAmount", "zero_value", null, 0.0, null));
+        }
+
+        return issues;
+    }
+
+    /**
+     * Validate a mothan row. Returns a list of issues; empty list means CLEAN.
+     */
+    List<V3StagedRecord.FieldIssue> validateMothanRow(ParsedRow row) {
+        List<V3StagedRecord.FieldIssue> issues = new ArrayList<>();
+
+        if (row.branchCode == null || !row.branchCode.matches("\\d{4}")) {
+            issues.add(issue("branchCode", "invalid", null, 0.0, null));
+        }
+
+        if (row.date == null) {
+            issues.add(issue("date", "missing", null, 0.0, null));
+        }
+
+        if (row.creditSar == 0) {
+            issues.add(issue("sarAmount", "zero_value", null, 0.0, null));
+        }
+
+        if (row.rawDate != null && row.rawDate.contains("\n")) {
+            String firstLine = row.rawDate.split("\n")[0].trim();
+            issues.add(issue("transactionDate", "multiline", firstLine, 0.9, "first_line_extraction"));
+        }
+
+        return issues;
+    }
+
+    /** Build a FieldIssue value object. */
+    private V3StagedRecord.FieldIssue issue(String field, String type,
+                                             String suggestedValue, double confidence, String method) {
+        V3StagedRecord.FieldIssue fi = new V3StagedRecord.FieldIssue();
+        fi.setField(field);
+        fi.setType(type);
+        fi.setSuggestedValue(suggestedValue);
+        fi.setConfidence(confidence);
+        fi.setMethod(method);
+        return fi;
+    }
+
+    // ─── buildBranchStats ────────────────────────────────────────────────────
+
+    /**
+     * Compute per-branch median SAR-per-piece from rows that are clean enough to be
+     * representative: rawPieces <= 500, abs(totalSar) > 0, abs(rawPieces) > 0.
+     * For mothan rows the totalSar field is zero; those are excluded naturally.
+     */
+    Map<String, BranchStats> buildBranchStats(List<ParsedRow> rows) {
+        Map<String, List<Double>> ratiosByBranch = new HashMap<>();
+        Map<String, Integer> countsByBranch = new HashMap<>();
+
+        for (ParsedRow row : rows) {
+            if (row.branchCode == null) continue;
+            double absSar    = Math.abs(row.totalSar);
+            double absPieces = Math.abs(row.rawPieces);
+            if (absPieces <= 0 || absPieces > PIECE_CAP || absSar <= 0) continue;
+            ratiosByBranch.computeIfAbsent(row.branchCode, k -> new ArrayList<>())
+                          .add(absSar / absPieces);
+            countsByBranch.merge(row.branchCode, 1, Integer::sum);
+        }
+
+        Map<String, BranchStats> result = new HashMap<>();
+        for (Map.Entry<String, List<Double>> entry : ratiosByBranch.entrySet()) {
+            BranchStats bs = new BranchStats();
+            bs.medianSarPerPiece = computeMedian(entry.getValue());
+            bs.cleanRowCount     = countsByBranch.getOrDefault(entry.getKey(), 0);
+            result.put(entry.getKey(), bs);
+        }
+        return result;
+    }
+
+    private double computeMedian(List<Double> vals) {
+        if (vals.isEmpty()) return 0;
+        List<Double> sorted = new ArrayList<>(vals);
+        Collections.sort(sorted);
+        int mid = sorted.size() / 2;
+        return sorted.size() % 2 == 1
+            ? sorted.get(mid)
+            : (sorted.get(mid - 1) + sorted.get(mid)) / 2.0;
+    }
+
+    // ─── Transform methods ────────────────────────────────────────────────────
+
+    /** Convert a clean sales ParsedRow to a V3SaleTransaction with sign convention applied. */
+    private V3SaleTransaction toSaleTransaction(ParsedRow row, String tenantId, String src) {
+        double sar  = -row.totalSar;
+        double sign = sar >= 0 ? 1.0 : -1.0;
+
+        V3SaleTransaction t = new V3SaleTransaction();
+        t.setTenantId(tenantId);
+        t.setSourceFile(src);
+        t.setSaleDate(row.date);
+        t.setBranchCode(row.branchCode);
+        t.setSarAmount(sar);
+        t.setPureWeightG(sign * Math.abs(row.pureWeight));
+        t.setGrossWeightG(sign * Math.abs(row.grossWeight));
+        t.setPieces((int) Math.min(Math.abs(row.rawPieces), PIECE_CAP));
+        t.setPurity(Math.abs(row.purity));
+        t.setKarat(mapKarat(Math.abs(row.purity)));
+        t.setMetalValue(sign * Math.abs(row.metalValue));
+        t.setMakingCharge(sign * Math.abs(row.makingCharge));
+        t.setReturn(sar < 0);
+        return t;
+    }
+
+    /** Convert a clean employee-sales ParsedRow to a V3EmployeeSaleTransaction. */
+    private V3EmployeeSaleTransaction toEmpSaleTransaction(ParsedRow row, String tenantId, String src) {
+        double sar  = -row.totalSar;
+        double sign = sar >= 0 ? 1.0 : -1.0;
+
+        V3EmployeeSaleTransaction t = new V3EmployeeSaleTransaction();
+        t.setTenantId(tenantId);
+        t.setSourceFile(src);
+        t.setSaleDate(row.date);
+        t.setBranchCode(row.branchCode);
+        t.setEmpId(row.empId != null && !row.empId.isBlank() ? row.empId : "BR_" + row.branchCode);
+        t.setEmpName(row.empName != null && !row.empName.isBlank()
+            ? row.empName : (row.empId != null ? row.empId : "BR_" + row.branchCode));
+        t.setSarAmount(sar);
+        t.setPureWeightG(sign * Math.abs(row.pureWeight));
+        t.setGrossWeightG(sign * Math.abs(row.grossWeight));
+        t.setPieces((int) Math.min(Math.abs(row.rawPieces), PIECE_CAP));
+        t.setPurity(Math.abs(row.purity));
+        t.setKarat(mapKarat(Math.abs(row.purity)));
+        t.setMetalValue(sign * Math.abs(row.metalValue));
+        t.setMakingCharge(sign * Math.abs(row.makingCharge));
+        t.setReturn(sar < 0);
+        return t;
+    }
+
+    /** Convert a clean purchases ParsedRow to a V3PurchaseTransaction (always positive). */
+    private V3PurchaseTransaction toPurchaseTransaction(ParsedRow row, String tenantId, String src) {
+        V3PurchaseTransaction t = new V3PurchaseTransaction();
+        t.setTenantId(tenantId);
+        t.setSourceFile(src);
+        t.setPurchaseDate(row.date);
+        t.setBranchCode(row.branchCode);
+        t.setSarAmount(Math.abs(row.totalSar));
+        t.setPureWeightG(Math.abs(row.pureWeight));
+        t.setGrossWeightG(Math.abs(row.grossWeight));
+        t.setPieces((int) Math.min(Math.abs(row.rawPieces), PIECE_CAP));
+        t.setPurity(Math.abs(row.purity));
+        t.setKarat(mapKarat(Math.abs(row.purity)));
+        return t;
+    }
+
+    /** Convert a clean mothan ParsedRow to a V3MothanTransaction. */
+    private V3MothanTransaction toMothanTransaction(ParsedRow row, String tenantId, String src) {
+        V3MothanTransaction t = new V3MothanTransaction();
+        t.setTenantId(tenantId);
+        t.setSourceFile(src);
+        t.setTransactionDate(row.date);
+        t.setBranchCode(row.branchCode);
+        t.setDocReference(row.docRef);
+        t.setDescription(row.description);
+        t.setAmountSar(row.creditSar);
+        t.setWeightDebitG(row.debitGold);
+        t.setWeightCreditG(row.weightCredit);
+        t.setBalanceGoldG(row.balanceGold);
+        t.setBalanceSar(row.balanceSar);
+        return t;
+    }
+
+    // ─── parsedRecord map builders ────────────────────────────────────────────
+
+    private Map<String, Object> buildSalesParsedMap(ParsedRow row, String tenantId, String src) {
+        double sar  = -row.totalSar;
+        double sign = Math.signum(sar);
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("tenantId",     tenantId);
+        map.put("sourceFile",   src);
+        map.put("saleDate",     row.date);
+        map.put("branchCode",   row.branchCode);
+        map.put("sarAmount",    sar);
+        map.put("pureWeightG",  sign * Math.abs(row.pureWeight));
+        map.put("grossWeightG", sign * Math.abs(row.grossWeight));
+        map.put("pieces",       (int) Math.min(Math.abs(row.rawPieces), PIECE_CAP));
+        map.put("purity",       Math.abs(row.purity));
+        map.put("karat",        mapKarat(Math.abs(row.purity)));
+        map.put("metalValue",   sign * Math.abs(row.metalValue));
+        map.put("makingCharge", sign * Math.abs(row.makingCharge));
+        map.put("isReturn",     sar < 0);
+        return map;
+    }
+
+    private Map<String, Object> buildEmpParsedMap(ParsedRow row, String tenantId, String src) {
+        double sar  = -row.totalSar;
+        double sign = Math.signum(sar);
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("tenantId",     tenantId);
+        map.put("sourceFile",   src);
+        map.put("saleDate",     row.date);
+        map.put("branchCode",   row.branchCode);
+        map.put("empId",        row.empId);
+        map.put("empName",      row.empName);
+        map.put("sarAmount",    sar);
+        map.put("pureWeightG",  sign * Math.abs(row.pureWeight));
+        map.put("grossWeightG", sign * Math.abs(row.grossWeight));
+        map.put("pieces",       (int) Math.min(Math.abs(row.rawPieces), PIECE_CAP));
+        map.put("purity",       Math.abs(row.purity));
+        map.put("karat",        mapKarat(Math.abs(row.purity)));
+        map.put("metalValue",   sign * Math.abs(row.metalValue));
+        map.put("makingCharge", sign * Math.abs(row.makingCharge));
+        map.put("isReturn",     sar < 0);
+        return map;
+    }
+
+    private Map<String, Object> buildPurchaseParsedMap(ParsedRow row, String tenantId, String src) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("tenantId",     tenantId);
+        map.put("sourceFile",   src);
+        map.put("purchaseDate", row.date);
+        map.put("branchCode",   row.branchCode);
+        map.put("sarAmount",    Math.abs(row.totalSar));
+        map.put("pureWeightG",  Math.abs(row.pureWeight));
+        map.put("grossWeightG", Math.abs(row.grossWeight));
+        map.put("pieces",       (int) Math.min(Math.abs(row.rawPieces), PIECE_CAP));
+        map.put("purity",       Math.abs(row.purity));
+        map.put("karat",        mapKarat(Math.abs(row.purity)));
+        return map;
+    }
+
+    private Map<String, Object> buildMothanParsedMap(ParsedRow row, String tenantId, String src) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("tenantId",         tenantId);
+        map.put("sourceFile",       src);
+        map.put("transactionDate",  row.date);
+        map.put("branchCode",       row.branchCode);
+        map.put("amountSar",        row.creditSar);
+        map.put("weightDebitG",     row.debitGold);
+        map.put("weightCreditG",    row.weightCredit);
+        map.put("balanceGoldG",     row.balanceGold);
+        map.put("balanceSar",       row.balanceSar);
+        map.put("docReference",     row.docRef);
+        map.put("description",      row.description);
+        return map;
+    }
+
+    // ─── buildStagedRecord ────────────────────────────────────────────────────
+
+    private V3StagedRecord buildStagedRecord(
+            ParsedRow row,
+            String fileType,
+            List<V3StagedRecord.FieldIssue> issues,
+            BranchStats stats,
+            Map<String, Object> parsedMap,
+            String tenantId,
+            String importId,
+            List<Map<String, Object>> availableEmployees) {
+
+        Map<String, Object> branchStatsMap = null;
+        if (stats != null) {
+            branchStatsMap = new LinkedHashMap<>();
+            branchStatsMap.put("medianSarPerPiece", round4(stats.medianSarPerPiece));
+            branchStatsMap.put("cleanRowCount",     stats.cleanRowCount);
+        }
+
+        V3StagedRecord sr = new V3StagedRecord();
+        sr.setTenantId(tenantId);
+        sr.setImportId(importId);
+        sr.setFileType(fileType);
+        sr.setSourceRow(row.excelRow);
+        sr.setBranchCode(row.branchCode);
+        sr.setStatus("pending");
+        sr.setParsedRecord(parsedMap);
+        sr.setIssues(issues);
+        sr.setBranchStats(branchStatsMap);
+        sr.setAvailableEmployees(availableEmployees);
+        sr.setCreatedAt(LocalDateTime.now());
+        return sr;
+    }
+
+    // ─── Employees-by-branch helper ───────────────────────────────────────────
+
+    private Map<String, List<Map<String, Object>>> buildEmployeesByBranch(String tenantId) {
+        List<V3Employee> employees = empRepo.findByTenantId(tenantId);
+        Map<String, List<Map<String, Object>>> result = new HashMap<>();
+        for (V3Employee emp : employees) {
+            String branch = emp.getCurrentBranchCode();
+            if (branch == null) continue;
+            Map<String, Object> e = new LinkedHashMap<>();
+            e.put("empId",   emp.getEmpId());
+            e.put("empName", emp.getEmpName());
+            result.computeIfAbsent(branch, k -> new ArrayList<>()).add(e);
+        }
+        return result;
+    }
+
+    // ─── Post-import: compute purchase rates ──────────────────────────────────
 
     public void recomputePurchaseRates(String tenantId) {
-        // Aggregate per branch in MongoDB — returns ~29 documents instead of loading all records.
         Aggregation purchAgg = Aggregation.newAggregation(
             Aggregation.match(Criteria.where("tenantId").is(tenantId)),
             Aggregation.group("branchCode")
@@ -793,7 +1243,7 @@ public class V3ExcelImportService {
         List<Document> mothanByBranch = mongo.aggregate(
             mothanAgg, "v3_mothan_transactions", Document.class).getMappedResults();
 
-        Map<String, double[]> purch    = new LinkedHashMap<>(); // [sar, wt]
+        Map<String, double[]> purch     = new LinkedHashMap<>();
         Map<String, double[]> mothanMap = new LinkedHashMap<>();
 
         for (Document d : purchByBranch) {
@@ -808,7 +1258,8 @@ public class V3ExcelImportService {
         }
 
         Set<String> allBranches = new LinkedHashSet<>();
-        allBranches.addAll(purch.keySet()); allBranches.addAll(mothanMap.keySet());
+        allBranches.addAll(purch.keySet());
+        allBranches.addAll(mothanMap.keySet());
 
         mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)), V3BranchPurchaseRate.class);
 
@@ -819,10 +1270,11 @@ public class V3ExcelImportService {
             double combSar = p[0] + m[0];
             double combWt  = p[1] + m[1];
             V3BranchPurchaseRate r = new V3BranchPurchaseRate();
-            r.setTenantId(tenantId); r.setBranchCode(code);
-            r.setTotalPurchSar(p[0]); r.setTotalPurchWeightG(p[1]);
-            r.setTotalMothanSar(m[0]); r.setTotalMothanWeightG(m[1]);
-            r.setCombinedSar(combSar); r.setCombinedWeightG(combWt);
+            r.setTenantId(tenantId);
+            r.setBranchCode(code);
+            r.setTotalPurchSar(p[0]);       r.setTotalPurchWeightG(p[1]);
+            r.setTotalMothanSar(m[0]);      r.setTotalMothanWeightG(m[1]);
+            r.setCombinedSar(combSar);      r.setCombinedWeightG(combWt);
             r.setPurchaseRate(combWt > 0 ? round4(combSar / combWt) : 0);
             r.setComputedAt(LocalDateTime.now());
             rates.add(r);
@@ -832,12 +1284,6 @@ public class V3ExcelImportService {
             rates.size(), purchByBranch.size(), mothanByBranch.size());
     }
 
-    private static double toDouble(Document doc, String key) {
-        Object v = doc.get(key);
-        if (v instanceof Number n) return n.doubleValue();
-        return 0.0;
-    }
-
     // ─── Dimension upserts ────────────────────────────────────────────────────
 
     private void upsertBranches(List<String> codes, String tenantId) {
@@ -845,7 +1291,8 @@ public class V3ExcelImportService {
             Query q = Query.query(Criteria.where("tenantId").is(tenantId).and("branchCode").is(code));
             if (mongo.exists(q, V3Branch.class)) continue;
             V3Branch b = new V3Branch();
-            b.setTenantId(tenantId); b.setBranchCode(code);
+            b.setTenantId(tenantId);
+            b.setBranchCode(code);
             b.setBranchName(BranchMaps.getName(code));
             b.setRegionId(regionIdFromName(BranchMaps.getRegion(code)));
             mongo.insert(b);
@@ -856,15 +1303,18 @@ public class V3ExcelImportService {
         Map<String, V3EmployeeSaleTransaction> latest = new LinkedHashMap<>();
         for (V3EmployeeSaleTransaction t : txns) {
             latest.merge(t.getEmpId(), t, (a, b) ->
-                b.getSaleDate().isAfter(a.getSaleDate()) ? b : a);
+                b.getSaleDate() != null && a.getSaleDate() != null && b.getSaleDate().isAfter(a.getSaleDate())
+                    ? b : a);
         }
         for (Map.Entry<String, V3EmployeeSaleTransaction> e : latest.entrySet()) {
             V3EmployeeSaleTransaction t = e.getValue();
             Query q = Query.query(Criteria.where("tenantId").is(tenantId).and("empId").is(e.getKey()));
             mongo.remove(q, V3Employee.class);
             V3Employee emp = new V3Employee();
-            emp.setTenantId(tenantId); emp.setEmpId(t.getEmpId());
-            emp.setEmpName(t.getEmpName()); emp.setCurrentBranchCode(t.getBranchCode());
+            emp.setTenantId(tenantId);
+            emp.setEmpId(t.getEmpId());
+            emp.setEmpName(t.getEmpName());
+            emp.setCurrentBranchCode(t.getBranchCode());
             mongo.insert(emp);
         }
         upsertBranches(txns.stream().map(V3EmployeeSaleTransaction::getBranchCode).distinct().toList(), tenantId);
@@ -882,7 +1332,7 @@ public class V3ExcelImportService {
         };
     }
 
-    // ─── Helpers ──────────────────────────────────────────────────────────────
+    // ─── Row classification helpers ───────────────────────────────────────────
 
     private boolean isDataRowA(Row row) {
         Cell c = row.getCell(15);
@@ -894,6 +1344,8 @@ public class V3ExcelImportService {
         Cell c = row.getCell(0);
         return c != null && c.getCellType() == CellType.NUMERIC && c.getNumericCellValue() >= 1;
     }
+
+    // ─── Cell value extractors ────────────────────────────────────────────────
 
     private double getNumRaw(Row row, int col) {
         Cell c = row.getCell(col);
@@ -924,13 +1376,17 @@ public class V3ExcelImportService {
         return "";
     }
 
+    // ─── Date parsing ─────────────────────────────────────────────────────────
+
     private LocalDate parseSerialDate(double serial) {
         if (serial <= 0) return LocalDate.now();
         try {
-            long days = (long) serial - 25569; // Excel epoch → Unix epoch
-            return java.time.Instant.ofEpochSecond(days * 86400)
+            long days = (long) serial - 25569;
+            return java.time.Instant.ofEpochSecond(days * 86400L)
                 .atZone(java.time.ZoneOffset.UTC).toLocalDate();
-        } catch (Exception e) { return LocalDate.now(); }
+        } catch (Exception e) {
+            return LocalDate.now();
+        }
     }
 
     private LocalDate extractDateFromRow(Row row, LocalDate fallback) {
@@ -939,13 +1395,13 @@ public class V3ExcelImportService {
             if (cell.getCellType() == CellType.STRING) {
                 String s = cell.getStringCellValue().trim();
                 try { return LocalDate.parse(s, DD_MM_YYYY); } catch (Exception ignored) {}
-                try { return LocalDate.parse(s); } catch (Exception ignored) {}
+                try { return LocalDate.parse(s); }            catch (Exception ignored) {}
             }
         }
         return null;
     }
 
-    /** FIX 2: Scan the first 15 rows for an embedded date to use as the carry-forward starting value. */
+    /** Scan the first 15 rows for an embedded date to use as the carry-forward starting value. */
     private LocalDate extractDateFromHeader(Sheet sheet) {
         int maxRows = Math.min(15, sheet.getLastRowNum() + 1);
         for (int i = 0; i < maxRows; i++) {
@@ -956,14 +1412,20 @@ public class V3ExcelImportService {
                 if (cell.getCellType() == CellType.STRING) {
                     String s = cell.getStringCellValue().trim();
                     try { return LocalDate.parse(s, DD_MM_YYYY); } catch (Exception ignored) {}
-                    try { return LocalDate.parse(s); } catch (Exception ignored) {}
+                    try { return LocalDate.parse(s); }            catch (Exception ignored) {}
                     java.util.regex.Matcher m = DATE_HEADER_A.matcher(s);
                     if (m.find()) {
                         try {
                             if (m.group(1) != null)
-                                return LocalDate.of(Integer.parseInt(m.group(3)), Integer.parseInt(m.group(2)), Integer.parseInt(m.group(1)));
+                                return LocalDate.of(
+                                    Integer.parseInt(m.group(3)),
+                                    Integer.parseInt(m.group(2)),
+                                    Integer.parseInt(m.group(1)));
                             if (m.group(4) != null)
-                                return LocalDate.of(Integer.parseInt(m.group(4)), Integer.parseInt(m.group(5)), Integer.parseInt(m.group(6)));
+                                return LocalDate.of(
+                                    Integer.parseInt(m.group(4)),
+                                    Integer.parseInt(m.group(5)),
+                                    Integer.parseInt(m.group(6)));
                         } catch (Exception ignored) {}
                     }
                 }
@@ -981,7 +1443,30 @@ public class V3ExcelImportService {
         return null;
     }
 
-    /** FIX 4: Verify that what was saved to DB matches what was parsed. Logs WARN on mismatch. */
+    private LocalDate parseMothanDate(Row row, int col) {
+        Cell cell = row.getCell(col);
+        if (cell == null) return null;
+
+        CellType type = cell.getCellType() == CellType.FORMULA
+            ? cell.getCachedFormulaResultType()
+            : cell.getCellType();
+
+        if (type == CellType.NUMERIC) {
+            double v = cell.getNumericCellValue();
+            if (v > 30000 && v < 70000) return parseSerialDate(v);
+        }
+        if (type == CellType.STRING) {
+            String s = cell.getStringCellValue().trim();
+            if (s.contains("\n")) s = s.split("\n")[0].trim();
+            for (java.time.format.DateTimeFormatter fmt : MOTHAN_DATE_FMTS) {
+                try { return LocalDate.parse(s, fmt); } catch (Exception ignored) {}
+            }
+        }
+        return null;
+    }
+
+    // ─── Verification ─────────────────────────────────────────────────────────
+
     private void verifyImport(String tenantId, String dateField, String sarField,
                                String collectionName, LocalDate minDate, LocalDate maxDate,
                                long parsedCount, double parsedSar) {
@@ -995,11 +1480,12 @@ public class V3ExcelImportService {
                 Aggregation.group().sum(sarField).as("total")
             );
             List<Document> r = mongo.aggregate(agg, collectionName, Document.class).getMappedResults();
-            double dbSar = r.isEmpty() ? 0 : toDouble(r.get(0), "total");
+            double dbSar  = r.isEmpty() ? 0 : toDouble(r.get(0), "total");
             double sarPct = parsedSar > 0 ? Math.abs(dbSar - parsedSar) / parsedSar * 100 : 0;
             if (dbCount != parsedCount || sarPct > 0.1) {
                 log.warn("VERIFY [{}] MISMATCH: parsed={} db={} | parsedSar={} dbSar={} ({}%)",
-                    collectionName, parsedCount, dbCount, Math.round(parsedSar), Math.round(dbSar),
+                    collectionName, parsedCount, dbCount,
+                    Math.round(parsedSar), Math.round(dbSar),
                     Math.round(sarPct * 10) / 10.0);
             } else {
                 log.info("VERIFY [{}] OK: {} records, SAR={}", collectionName, dbCount, Math.round(dbSar));
@@ -1009,6 +1495,8 @@ public class V3ExcelImportService {
         }
     }
 
+    // ─── Utility methods ──────────────────────────────────────────────────────
+
     private static String mapKarat(double purity) {
         if (purity >= 0.74 && purity <= 0.76) return "18";
         if (purity >= 0.86 && purity <= 0.89) return "21";
@@ -1017,19 +1505,22 @@ public class V3ExcelImportService {
         return null;
     }
 
-    private static double round4(double v) { return Math.round(v * 10000.0) / 10000.0; }
+    private static double round4(double v) {
+        return Math.round(v * 10000.0) / 10000.0;
+    }
 
     private <T> int bulkInsertSafe(List<T> items, Class<T> clazz, String importId) {
-        int saved = 0;
+        int saved  = 0;
         int batchSz = 200;
-        int total = items.size();
+        int total  = items.size();
         for (int i = 0; i < total; i += batchSz) {
             List<T> batch = items.subList(i, Math.min(i + batchSz, total));
             try {
                 mongo.insertAll(batch);
                 saved += batch.size();
             } catch (Exception batchEx) {
-                log.warn("Batch {}-{} failed ({}), falling back to individual inserts", i, i + batch.size(), batchEx.getMessage());
+                log.warn("Batch {}-{} failed ({}), falling back to individual inserts",
+                    i, i + batch.size(), batchEx.getMessage());
                 for (T item : batch) {
                     try { mongo.insert(item); saved++; }
                     catch (Exception e) { log.error("Individual insert failed: {}", e.getMessage()); }
@@ -1045,184 +1536,13 @@ public class V3ExcelImportService {
         return saved;
     }
 
-    // ─── Imputation helpers ───────────────────────────────────────────────────
-
-    private static double median(List<Double> vals) {
-        if (vals.isEmpty()) return 0;
-        List<Double> sorted = new ArrayList<>(vals);
-        Collections.sort(sorted);
-        int mid = sorted.size() / 2;
-        return sorted.size() % 2 == 1 ? sorted.get(mid) : (sorted.get(mid - 1) + sorted.get(mid)) / 2.0;
+    private static double toDouble(Document doc, String key) {
+        Object v = doc.get(key);
+        if (v instanceof Number n) return n.doubleValue();
+        return 0.0;
     }
 
-    private List<V3ImputedRecord> buildPieceImputed(List<PieceAnomaly> anomalies, List<?> txns, String fileType) {
-        if (anomalies.isEmpty()) return Collections.emptyList();
-
-        // Build per-branch SAR-per-piece distribution from non-anomalous (capped) rows
-        Map<String, List<Double>> sarPerPiece = new HashMap<>();
-        for (Object txn : txns) {
-            String bc; double sar; int pieces;
-            if (txn instanceof V3SaleTransaction s) {
-                bc = s.getBranchCode(); sar = s.getSarAmount(); pieces = s.getPieces();
-            } else if (txn instanceof V3EmployeeSaleTransaction e) {
-                bc = e.getBranchCode(); sar = e.getSarAmount(); pieces = e.getPieces();
-            } else continue;
-            if (pieces > 0 && sar > 0) {
-                sarPerPiece.computeIfAbsent(bc, k -> new ArrayList<>()).add(sar / pieces);
-            }
-        }
-
-        List<V3ImputedRecord> records = new ArrayList<>();
-        for (PieceAnomaly a : anomalies) {
-            List<Double> branchRatios = sarPerPiece.getOrDefault(a.branchCode(), new ArrayList<>());
-            double medianRatio = median(branchRatios);
-            int imputedPieces;
-            double confidence;
-            if (medianRatio > 0 && a.sar() > 0) {
-                imputedPieces = (int) Math.round(a.sar() / medianRatio);
-                imputedPieces = Math.max(1, Math.min(imputedPieces, PIECE_CAP));
-                confidence = branchRatios.size() >= 10 ? 0.85 : branchRatios.size() >= 3 ? 0.65 : 0.40;
-            } else {
-                imputedPieces = 1;
-                confidence = 0.20;
-            }
-
-            Map<String, Object> snapshot = new LinkedHashMap<>();
-            snapshot.put("rowNum", a.rowNum());
-            snapshot.put("rawPieces", a.rawPieces());
-            snapshot.put("sar", a.sar());
-            snapshot.put("weight", a.weight());
-            snapshot.put("purity", a.purity());
-            snapshot.put("karat", a.karat());
-
-            Map<String, Object> stats = new LinkedHashMap<>();
-            stats.put("branchSampleSize", branchRatios.size());
-            stats.put("medianSarPerPiece", round4(medianRatio));
-            stats.put("imputedPieces", imputedPieces);
-
-            V3ImputedRecord rec = new V3ImputedRecord();
-            rec.setAnomalyType("corrupt_pieces");
-            rec.setFieldName("pieces");
-            rec.setSourceRow(a.rowNum());
-            rec.setBranchCode(a.branchCode());
-            rec.setRecordDate(a.date());
-            rec.setOriginalValue(String.valueOf((int) a.rawPieces()));
-            rec.setImputedValue(String.valueOf(imputedPieces));
-            rec.setImputationMethod("branch_median_sar_per_piece");
-            rec.setConfidence(confidence);
-            rec.setRecordSnapshot(snapshot);
-            rec.setBranchStats(stats);
-            rec.setStatus("pending_review");
-            rec.setCreatedAt(LocalDateTime.now());
-            records.add(rec);
-        }
-        return records;
-    }
-
-    private List<V3ImputedRecord> buildEmpImputed(List<EmpAnomaly> anomalies, String tenantId) {
-        if (anomalies.isEmpty()) return Collections.emptyList();
-
-        List<V3ImputedRecord> records = new ArrayList<>();
-        for (EmpAnomaly a : anomalies) {
-            List<V3Employee> candidates = empRepo.findByTenantIdAndCurrentBranchCode(tenantId, a.branchCode());
-            List<String> options = candidates.stream()
-                .map(e -> e.getEmpId() + " - " + e.getEmpName())
-                .collect(Collectors.toList());
-
-            Map<String, Object> snapshot = new LinkedHashMap<>();
-            snapshot.put("rowNum", a.rowNum());
-            snapshot.put("originalEmpId", a.origEmpId());
-            snapshot.put("empName", a.empName());
-            snapshot.put("sar", a.sar());
-            snapshot.put("weight", a.weight());
-
-            Map<String, Object> stats = new LinkedHashMap<>();
-            stats.put("candidatesInBranch", candidates.size());
-
-            V3ImputedRecord rec = new V3ImputedRecord();
-            rec.setAnomalyType("missing_employee");
-            rec.setFieldName("empId");
-            rec.setSourceRow(a.rowNum());
-            rec.setBranchCode(a.branchCode());
-            rec.setRecordDate(a.date());
-            rec.setOriginalValue(a.origEmpId());
-            rec.setImputedValue(candidates.isEmpty() ? "UNKNOWN" : candidates.get(0).getEmpId());
-            rec.setImputationMethod("branch_employee_lookup");
-            rec.setConfidence(candidates.size() == 1 ? 0.75 : candidates.size() > 1 ? 0.50 : 0.10);
-            rec.setRecordSnapshot(snapshot);
-            rec.setBranchStats(stats);
-            rec.setAvailableOptions(options);
-            rec.setStatus("pending_review");
-            rec.setCreatedAt(LocalDateTime.now());
-            records.add(rec);
-        }
-        return records;
-    }
-
-    private List<V3ImputedRecord> buildDateImputed(List<DateAnomaly> anomalies) {
-        if (anomalies.isEmpty()) return Collections.emptyList();
-
-        List<V3ImputedRecord> records = new ArrayList<>();
-        for (DateAnomaly a : anomalies) {
-            List<String> options = Arrays.stream(a.origDateStr().split("\n"))
-                .map(String::trim).filter(s -> !s.isBlank()).collect(Collectors.toList());
-
-            Map<String, Object> snapshot = new LinkedHashMap<>();
-            snapshot.put("rowNum", a.rowNum());
-            snapshot.put("rawDateCell", a.origDateStr());
-            snapshot.put("amountSar", a.amountSar());
-
-            V3ImputedRecord rec = new V3ImputedRecord();
-            rec.setAnomalyType("multiline_date");
-            rec.setFieldName("transactionDate");
-            rec.setSourceRow(a.rowNum());
-            rec.setBranchCode(a.branchCode());
-            rec.setOriginalValue(a.origDateStr());
-            rec.setImputedValue(a.firstLine());
-            rec.setImputationMethod("first_line_of_cell");
-            rec.setConfidence(0.90);
-            rec.setRecordSnapshot(snapshot);
-            rec.setAvailableOptions(options);
-            rec.setStatus("pending_review");
-            rec.setCreatedAt(LocalDateTime.now());
-            records.add(rec);
-        }
-        return records;
-    }
-
-    private V3ImputedRecord buildSumMismatchRecord(double fileTotal, double importedSum) {
-        double diff    = importedSum - fileTotal;
-        double pctDiff = diff / fileTotal * 100.0;
-
-        Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("fileGrandTotal",   Math.round(fileTotal));
-        snapshot.put("importedSum",      Math.round(importedSum));
-        snapshot.put("difference",       Math.round(diff));
-        snapshot.put("percentDiff",      Math.round(pctDiff * 100.0) / 100.0);
-
-        V3ImputedRecord rec = new V3ImputedRecord();
-        rec.setAnomalyType("sum_mismatch");
-        rec.setFieldName("amountSar");
-        rec.setOriginalValue(String.valueOf(Math.round(fileTotal)));
-        rec.setImputedValue(String.valueOf(Math.round(importedSum)));
-        rec.setImputationMethod("file_grand_total_row");
-        rec.setConfidence(0.99);
-        rec.setRecordSnapshot(snapshot);
-        rec.setStatus("pending_review");
-        rec.setCreatedAt(LocalDateTime.now());
-        return rec;
-    }
-
-    private void saveImputedRecords(List<V3ImputedRecord> records, String tenantId, String importId, String fileType) {
-        if (records.isEmpty()) return;
-        for (V3ImputedRecord r : records) {
-            r.setTenantId(tenantId);
-            r.setImportId(importId);
-            r.setFileType(fileType);
-        }
-        imputedRepo.saveAll(records);
-        log.info("Saved {} imputed records for tenant={} importId={} type={}", records.size(), tenantId, importId, fileType);
-    }
+    // ─── Data wipe ────────────────────────────────────────────────────────────
 
     public void wipeV3Data(String tenantId) {
         mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)), V3SaleTransaction.class);
@@ -1232,6 +1552,7 @@ public class V3ExcelImportService {
         mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)), V3BranchPurchaseRate.class);
         mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)), V3Branch.class);
         mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)), V3Employee.class);
-        log.info("Wiped all V3 data for tenant {}", tenantId);
+        mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)), "v3_staged_records");
+        log.info("Wiped all V3 data (including staged records) for tenant {}", tenantId);
     }
 }
