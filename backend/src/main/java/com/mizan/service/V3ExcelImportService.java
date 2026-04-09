@@ -605,13 +605,11 @@ public class V3ExcelImportService {
                 if (!isDataRowA(row)) continue;
                 if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
 
-                if (currentBranch == null) { droppedNoBranch++; continue; }
-                if (currentDate == null)   { droppedNoDate++;   continue; }
-
+                // Include ALL data rows — let the validator decide clean vs staged
                 ParsedRow pr = new ParsedRow();
                 pr.excelRow      = row.getRowNum();
                 pr.rawBranchCode = currentBranch;
-                pr.branchCode    = currentBranch.matches("\\d{4}") ? currentBranch : null;
+                pr.branchCode    = currentBranch != null && currentBranch.matches("\\d{4}") ? currentBranch : null;
                 pr.date          = currentDate;
                 pr.totalSar      = getNumRaw(row, 3);
                 pr.pureWeight    = getNumRaw(row, 6);
@@ -622,8 +620,7 @@ public class V3ExcelImportService {
                 pr.makingCharge  = getNumRaw(row, 4);
                 result.add(pr);
             }
-            log.info("parseAllRowsForSales(A): {} rows, droppedNoBranch={}, droppedNoDate={}",
-                result.size(), droppedNoBranch, droppedNoDate);
+            log.info("parseAllRowsForSales(A): {} rows", result.size());
             if (!loggedMisses.isEmpty())
                 log.warn("parseAllRowsForSales: col12 digit-starting values that didn't match branch header regex: {}", loggedMisses);
         }
@@ -689,13 +686,11 @@ public class V3ExcelImportService {
                 if (!isDataRowA(row)) continue;
                 if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
 
-                if (currentBranch == null) { droppedNoBranch++; continue; }
-                if (currentDate == null)   { droppedNoDate++;   continue; }
-
+                // Include ALL data rows — validator decides clean vs staged
                 ParsedRow pr = new ParsedRow();
                 pr.excelRow      = row.getRowNum();
                 pr.rawBranchCode = currentBranch;
-                pr.branchCode    = currentBranch.matches("\\d{4}") ? currentBranch : null;
+                pr.branchCode    = currentBranch != null && currentBranch.matches("\\d{4}") ? currentBranch : null;
                 pr.date          = currentDate;
                 pr.totalSar      = getNumRaw(row, 3);
                 pr.pureWeight    = getNumRaw(row, 6);
@@ -708,8 +703,7 @@ public class V3ExcelImportService {
                 pr.empName       = col12.trim();
                 result.add(pr);
             }
-            log.info("parseAllRowsForEmpSales(A): {} rows, droppedNoBranch={}, droppedNoDate={}",
-                result.size(), droppedNoBranch, droppedNoDate);
+            log.info("parseAllRowsForEmpSales(A): {} rows", result.size());
         }
         return result;
     }
@@ -758,13 +752,11 @@ public class V3ExcelImportService {
                 if (!isDataRowA(row)) continue;
                 if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
 
-                if (currentBranch == null) { droppedNoBranch++; continue; }
-                if (currentDate == null)   { droppedNoDate++;   continue; }
-
+                // Include ALL data rows — validator decides clean vs staged
                 ParsedRow pr = new ParsedRow();
                 pr.excelRow      = row.getRowNum();
                 pr.rawBranchCode = currentBranch;
-                pr.branchCode    = currentBranch.matches("\\d{4}") ? currentBranch : null;
+                pr.branchCode    = currentBranch != null && currentBranch.matches("\\d{4}") ? currentBranch : null;
                 pr.date          = currentDate;
                 pr.totalSar      = getNumRaw(row, 3);
                 pr.pureWeight    = getNumRaw(row, 6);
@@ -788,7 +780,7 @@ public class V3ExcelImportService {
      */
     List<ParsedRow> parseAllRowsForMothan(Sheet sheet) {
         List<ParsedRow> result = new ArrayList<>();
-        int rejected = 0;
+        int headerFooter = 0;
 
         for (Row row : sheet) {
             if (row == null) continue;
@@ -796,10 +788,10 @@ public class V3ExcelImportService {
             String rawBranch = getStr(row, 7).trim();
             double creditSarRaw = Math.abs(getNumRaw(row, 4));
 
-            if (!rawBranch.matches("\\d{4}")) {
-                if (rejected++ < 10)
-                    log.info("Mothan rejected row {}: invalid branchCode='{}' creditSar={}",
-                        row.getRowNum(), rawBranch, creditSarRaw);
+            // Skip rows that are clearly header/footer (no branch code AND no SAR amount)
+            // But if it HAS a SAR amount or any branch-like value, include it for review
+            if (rawBranch.isBlank() && creditSarRaw == 0) {
+                headerFooter++;
                 continue;
             }
 
@@ -811,16 +803,11 @@ public class V3ExcelImportService {
             }
 
             LocalDate date = parseMothanDate(row, 9);
-            if (date == null) {
-                if (rejected++ < 10)
-                    log.info("Mothan rejected row {}: null date, branchCode={}", row.getRowNum(), rawBranch);
-                continue;
-            }
 
             ParsedRow pr = new ParsedRow();
             pr.excelRow      = row.getRowNum();
             pr.rawBranchCode = rawBranch;
-            pr.branchCode    = rawBranch;
+            pr.branchCode    = rawBranch.matches("\\d{4}") ? rawBranch : null;
             pr.date          = date;
             pr.rawDate       = rawDateStr;
             pr.creditSar     = creditSarRaw;
@@ -832,7 +819,7 @@ public class V3ExcelImportService {
             pr.docRef        = getStr(row, 8);
             result.add(pr);
         }
-        log.info("parseAllRowsForMothan: {} accepted, {} rejected", result.size(), rejected);
+        log.info("parseAllRowsForMothan: {} rows included, {} header/footer skipped", result.size(), headerFooter);
         return result;
     }
 
