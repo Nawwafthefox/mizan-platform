@@ -283,12 +283,16 @@ public class V3UnifiedImportService {
             String purchFile = fileNames.getOrDefault("purchases", "purchases.xls");
             String mothanFile = fileNames.getOrDefault("mothan", "mothan.xls");
 
+            int discarded = 0;
+
             List<V3SaleTransaction> cleanSales = new ArrayList<>(salesRows.size());
             List<V3StagedRecord> stagedSales = new ArrayList<>(32);
             for (ParsedRow row : salesRows) {
                 List<V3StagedRecord.FieldIssue> issues = validateSalesRow(row, salesStats, tenantId);
                 if (issues.isEmpty()) {
                     cleanSales.add(toSaleTransaction(row, tenantId, salesFile));
+                } else if (isHopelessRow(issues)) {
+                    discarded++;
                 } else {
                     stagedSales.add(buildStagedRecord(row, "branch-sales", issues,
                         salesStats.get(row.branchCode), buildSalesParsedMap(row, tenantId, salesFile),
@@ -302,6 +306,8 @@ public class V3UnifiedImportService {
                 List<V3StagedRecord.FieldIssue> issues = validateEmpRow(row, empStats, tenantId);
                 if (issues.isEmpty()) {
                     cleanEmpSales.add(toEmpSaleTransaction(row, tenantId, empFile));
+                } else if (isHopelessRow(issues)) {
+                    discarded++;
                 } else {
                     List<Map<String, Object>> availEmps = empsByBranch.getOrDefault(
                         row.branchCode != null ? row.branchCode : "", Collections.emptyList());
@@ -317,6 +323,8 @@ public class V3UnifiedImportService {
                 List<V3StagedRecord.FieldIssue> issues = validatePurchaseRow(row, tenantId);
                 if (issues.isEmpty()) {
                     cleanPurch.add(toPurchaseTransaction(row, tenantId, purchFile));
+                } else if (isHopelessRow(issues)) {
+                    discarded++;
                 } else {
                     stagedPurch.add(buildStagedRecord(row, "purchases", issues,
                         null, buildPurchaseParsedMap(row, tenantId, purchFile),
@@ -330,6 +338,8 @@ public class V3UnifiedImportService {
                 List<V3StagedRecord.FieldIssue> issues = validateMothanRow(row, tenantId);
                 if (issues.isEmpty()) {
                     cleanMothan.add(toMothanTransaction(row, tenantId, mothanFile));
+                } else if (isHopelessRow(issues)) {
+                    discarded++;
                 } else {
                     stagedMothan.add(buildStagedRecord(row, "mothan", issues,
                         null, buildMothanParsedMap(row, tenantId, mothanFile),
@@ -339,7 +349,7 @@ public class V3UnifiedImportService {
 
             int totalClean = cleanSales.size() + cleanEmpSales.size() + cleanPurch.size() + cleanMothan.size();
             int totalStaged = stagedSales.size() + stagedEmpSales.size() + stagedPurch.size() + stagedMothan.size();
-            log.info("STEP 5 [validate]: {}ms — {} clean, {} staged", System.currentTimeMillis() - ts, totalClean, totalStaged);
+            log.info("STEP 5 [validate]: {}ms — {} clean, {} staged, {} discarded (hopeless)", System.currentTimeMillis() - ts, totalClean, totalStaged, discarded);
 
             // ════════════════════════════════════════════
             // STEP 6: SAVE CLEAN RECORDS (BCNF ORDER)
@@ -572,25 +582,49 @@ public class V3UnifiedImportService {
 
     /** A row is "empty" if it has no meaningful data — no amount, no weight, no branch code. */
     private boolean isEmptyRow(ParsedRow r, String type) {
-        // No branch code at all
-        if (r.branchCode == null && (r.rawBranchCode == null || r.rawBranchCode.isBlank())) {
-            // For mothan, also check if there's any monetary value
-            if ("mothan".equals(type)) {
-                return r.creditSar == 0 && r.debitGold == 0 && r.weightCredit == 0
-                    && r.balanceGold == 0 && r.balanceSar == 0;
-            }
-            // For sales/purchases, no branch + no amounts = empty
-            return r.totalSar == 0 && r.grossWeight == 0 && r.pureWeight == 0;
+        boolean noBranch = r.branchCode == null && (r.rawBranchCode == null || r.rawBranchCode.isBlank());
+        boolean noDate = r.date == null && (r.rawDate == null || r.rawDate.isBlank());
+
+        if ("mothan".equals(type)) {
+            boolean noMothanValues = r.creditSar == 0 && r.debitGold == 0 && r.weightCredit == 0
+                && r.balanceGold == 0 && r.balanceSar == 0;
+            // No branch or no values = empty; no branch + no date = empty
+            if (noMothanValues) return true;
+            if (noBranch && noDate) return true;
+            return noBranch && (r.description == null || r.description.isBlank());
         }
 
-        // Has a branch code but every numeric field is zero
-        if ("mothan".equals(type)) {
-            return r.creditSar == 0 && r.debitGold == 0 && r.weightCredit == 0
-                && r.balanceGold == 0 && r.balanceSar == 0
-                && (r.description == null || r.description.isBlank());
+        boolean noAmounts = r.totalSar == 0 && r.grossWeight == 0 && r.pureWeight == 0;
+
+        // No amounts at all = empty regardless of branch
+        if (noAmounts && r.rawPieces == 0) return true;
+        // No branch + no date = garbage row
+        if (noBranch && noDate) return true;
+        // No branch + no amounts = empty
+        if (noBranch && noAmounts) return true;
+
+        return false;
+    }
+
+    /**
+     * A row is "hopeless" if it has so many fatal issues that staging it for review is pointless.
+     * These rows are silently discarded instead of being sent to data review.
+     */
+    private boolean isHopelessRow(List<V3StagedRecord.FieldIssue> issues) {
+        if (issues.size() < 2) return false;
+        boolean badBranch = false, noDate = false, noAmount = false;
+        for (V3StagedRecord.FieldIssue fi : issues) {
+            if ("branchCode".equals(fi.getField()) && ("invalid".equals(fi.getIssueType()) || "unknown_branch".equals(fi.getIssueType()))) badBranch = true;
+            if ("date".equals(fi.getField()) && "missing".equals(fi.getIssueType())) noDate = true;
+            if ("sarAmount".equals(fi.getField()) && "zero_value".equals(fi.getIssueType())) noAmount = true;
         }
-        // Sales, employee-sales, purchases: zero SAR + zero weight + zero pieces = empty
-        return r.totalSar == 0 && r.grossWeight == 0 && r.pureWeight == 0 && r.rawPieces == 0;
+        // Invalid/unknown branch + missing date = hopeless
+        if (badBranch && noDate) return true;
+        // Invalid branch + zero amount = hopeless
+        if (badBranch && noAmount) return true;
+        // All three = definitely hopeless
+        if (noDate && noAmount) return true;
+        return false;
     }
 
     private Format detectFormat(Sheet sheet) {
