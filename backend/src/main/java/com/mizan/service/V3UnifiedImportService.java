@@ -1214,6 +1214,28 @@ public class V3UnifiedImportService {
             context.put("bothDates", dates);
         }
 
+        // Raw Excel values — exactly as parsed, before any transformation
+        Map<String, Object> rawExcel = new LinkedHashMap<>();
+        rawExcel.put("rawBranchCode", row.rawBranchCode);
+        rawExcel.put("rawDate", row.rawDate);
+        rawExcel.put("totalSar", row.totalSar);
+        rawExcel.put("pureWeight", row.pureWeight);
+        rawExcel.put("grossWeight", row.grossWeight);
+        rawExcel.put("rawPieces", row.rawPieces);
+        rawExcel.put("purity", row.purity);
+        rawExcel.put("metalValue", row.metalValue);
+        rawExcel.put("makingCharge", row.makingCharge);
+        if (row.empId != null) rawExcel.put("empId", row.empId);
+        if (row.empName != null) rawExcel.put("empName", row.empName);
+        if (row.creditSar != 0) rawExcel.put("creditSar", row.creditSar);
+        if (row.debitGold != 0) rawExcel.put("debitGold", row.debitGold);
+        if (row.weightCredit != 0) rawExcel.put("weightCredit", row.weightCredit);
+        if (row.balanceGold != 0) rawExcel.put("balanceGold", row.balanceGold);
+        if (row.balanceSar != 0) rawExcel.put("balanceSar", row.balanceSar);
+        if (row.docRef != null) rawExcel.put("docRef", row.docRef);
+        if (row.description != null) rawExcel.put("description", row.description);
+        context.put("rawExcel", rawExcel);
+
         V3StagedRecord sr = new V3StagedRecord();
         sr.setTenantId(tenantId);
         sr.setImportId(importId);

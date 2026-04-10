@@ -416,6 +416,7 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                 <th>الفرع</th>
                 <th>التاريخ</th>
                 <th>المبلغ</th>
+                <th>بيانات Excel</th>
                 <th>المشكلة</th>
                 <th>الأصلي</th>
                 <th>المقترح</th>
@@ -435,9 +436,20 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                   </span>
                 </td>
                 <td>{{ rec.sourceRow }}</td>
-                <td>{{ rec.branchCode }}</td>
-                <td>{{ rec.parsedRecord?.['date'] || rec.parsedRecord?.['hijriDate'] || '-' }}</td>
-                <td>{{ rec.parsedRecord?.['totalSar'] || rec.parsedRecord?.['amount'] || '-' }}</td>
+                <td>{{ rec.context?.['rawExcel']?.['rawBranchCode'] || rec.branchCode || '-' }}</td>
+                <td>{{ rec.context?.['rawExcel']?.['rawDate'] || rec.parsedRecord?.['date'] || rec.parsedRecord?.['hijriDate'] || '-' }}</td>
+                <td>{{ rec.context?.['rawExcel']?.['totalSar'] ?? rec.parsedRecord?.['totalSar'] ?? rec.parsedRecord?.['amount'] ?? '-' }}</td>
+                <td class="raw-excel-cell">
+                  <button class="btn-raw-toggle" (click)="toggleRawExcel(rec.id)">
+                    {{ expandedRawRows[rec.id] ? 'إخفاء' : 'عرض' }}
+                  </button>
+                  <div *ngIf="expandedRawRows[rec.id]" class="raw-excel-details">
+                    <div *ngFor="let entry of rawExcelEntries(rec)" class="raw-entry">
+                      <span class="raw-label">{{ rawFieldLabel(entry[0]) }}:</span>
+                      <span class="raw-value">{{ entry[1] }}</span>
+                    </div>
+                  </div>
+                </td>
                 <td>
                   <span *ngFor="let issue of rec.issues" class="issue-tag">
                     {{ issueLabel(issue) }}
@@ -1594,6 +1606,37 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
       font-style: italic;
     }
 
+    .raw-excel-cell { min-width: 140px; }
+    .btn-raw-toggle {
+      background: #2a2a3e;
+      color: #8ab4f8;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 2px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .btn-raw-toggle:hover { background: #3a3a5e; }
+    .raw-excel-details {
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 6px;
+      font-size: 11px;
+      direction: rtl;
+    }
+    .raw-entry {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 2px 0;
+      border-bottom: 1px solid #222;
+    }
+    .raw-entry:last-child { border-bottom: none; }
+    .raw-label { color: #999; white-space: nowrap; }
+    .raw-value { color: #e0e0e0; font-family: monospace; text-align: left; direction: ltr; }
+
     /* ── Inline inputs ───────────────────────────────────────── */
     .edit-input-group {
       display: flex;
@@ -1960,6 +2003,7 @@ export class V3ImportComponent implements OnInit, OnDestroy {
   bulkLoading = signal(false);
   bulkFileType = '';
   editValues: Record<string, any> = {};
+  expandedRawRows: Record<string, boolean> = {};
 
   totalPending = computed(() => {
     const counts = this.stagedCounts();
@@ -2095,6 +2139,40 @@ export class V3ImportComponent implements OnInit, OnDestroy {
       'multiline': 'التاريخ يحتوي على أكثر من سطر',
     };
     return typeMap[issue.issueType] || null;
+  }
+
+  toggleRawExcel(id: string): void {
+    this.expandedRawRows[id] = !this.expandedRawRows[id];
+  }
+
+  rawExcelEntries(rec: any): [string, any][] {
+    const raw = rec.context?.rawExcel;
+    if (!raw) return [];
+    return Object.entries(raw).filter(([_, v]) => v !== null && v !== 0 && v !== '' && v !== 0.0);
+  }
+
+  rawFieldLabel(field: string): string {
+    const map: Record<string, string> = {
+      'rawBranchCode': 'رمز الفرع',
+      'rawDate': 'التاريخ',
+      'totalSar': 'المبلغ (ريال)',
+      'pureWeight': 'الوزن الصافي',
+      'grossWeight': 'الوزن الإجمالي',
+      'rawPieces': 'عدد القطع',
+      'purity': 'العيار',
+      'metalValue': 'قيمة المعدن',
+      'makingCharge': 'أجور التصنيع',
+      'empId': 'رقم الموظف',
+      'empName': 'اسم الموظف',
+      'creditSar': 'دائن (ريال)',
+      'debitGold': 'مدين ذهب',
+      'weightCredit': 'وزن دائن',
+      'balanceGold': 'رصيد ذهب',
+      'balanceSar': 'رصيد ريال',
+      'docRef': 'مرجع المستند',
+      'description': 'الوصف',
+    };
+    return map[field] || field;
   }
 
   regionName(id: number): string {
