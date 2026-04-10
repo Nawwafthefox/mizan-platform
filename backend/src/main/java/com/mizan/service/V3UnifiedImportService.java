@@ -652,7 +652,7 @@ public class V3UnifiedImportService {
                 if (!isDataRowB(row)) continue;
                 String rawBranch = getStr(row, 1);
                 ParsedRow pr = new ParsedRow();
-                pr.excelRow = row.getRowNum();
+                pr.excelRow = row.getRowNum() + 1; // 1-based to match Excel UI
                 pr.rawBranchCode = rawBranch;
                 pr.branchCode = rawBranch.matches("\\d{4}") ? rawBranch : null;
                 pr.totalSar = getNumRaw(row, 15);
@@ -689,7 +689,7 @@ public class V3UnifiedImportService {
                 if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
 
                 ParsedRow pr = new ParsedRow();
-                pr.excelRow = row.getRowNum();
+                pr.excelRow = row.getRowNum() + 1; // 1-based to match Excel UI
                 pr.rawBranchCode = currentBranch;
                 pr.branchCode = currentBranch != null && currentBranch.matches("\\d{4}") ? currentBranch : null;
                 pr.date = currentDate;
@@ -718,7 +718,7 @@ public class V3UnifiedImportService {
                 if (!isDataRowB(row)) continue;
                 String rawBranch = getStr(row, 1);
                 ParsedRow pr = new ParsedRow();
-                pr.excelRow = row.getRowNum();
+                pr.excelRow = row.getRowNum() + 1; // 1-based to match Excel UI
                 pr.rawBranchCode = rawBranch;
                 pr.branchCode = rawBranch.matches("\\d{4}") ? rawBranch : null;
                 pr.totalSar = getNumRaw(row, 15);
@@ -758,7 +758,7 @@ public class V3UnifiedImportService {
                 if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
 
                 ParsedRow pr = new ParsedRow();
-                pr.excelRow = row.getRowNum();
+                pr.excelRow = row.getRowNum() + 1; // 1-based to match Excel UI
                 pr.rawBranchCode = currentBranch;
                 pr.branchCode = currentBranch != null && currentBranch.matches("\\d{4}") ? currentBranch : null;
                 pr.date = currentDate;
@@ -787,7 +787,7 @@ public class V3UnifiedImportService {
                 if (!isDataRowB(row)) continue;
                 String rawBranch = getStr(row, 1);
                 ParsedRow pr = new ParsedRow();
-                pr.excelRow = row.getRowNum();
+                pr.excelRow = row.getRowNum() + 1; // 1-based to match Excel UI
                 pr.rawBranchCode = rawBranch;
                 pr.branchCode = rawBranch.matches("\\d{4}") ? rawBranch : null;
                 pr.totalSar = getNumRaw(row, 15);
@@ -816,7 +816,7 @@ public class V3UnifiedImportService {
                 if (col12.contains("Sub Total") || col12.contains("Grand Total") || col12.contains("إجمالي")) continue;
 
                 ParsedRow pr = new ParsedRow();
-                pr.excelRow = row.getRowNum();
+                pr.excelRow = row.getRowNum() + 1; // 1-based to match Excel UI
                 pr.rawBranchCode = currentBranch;
                 pr.branchCode = currentBranch != null && currentBranch.matches("\\d{4}") ? currentBranch : null;
                 pr.date = currentDate;
@@ -855,7 +855,7 @@ public class V3UnifiedImportService {
             LocalDate date = parseMothanDate(row, 9);
 
             ParsedRow pr = new ParsedRow();
-            pr.excelRow = row.getRowNum();
+            pr.excelRow = row.getRowNum() + 1; // 1-based to match Excel UI
             pr.rawBranchCode = rawBranch;
             pr.branchCode = rawBranch.matches("\\d{4}") ? rawBranch : null;
             pr.date = date;

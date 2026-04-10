@@ -412,7 +412,7 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
             <thead>
               <tr>
                 <th>الملف</th>
-                <th>الصف</th>
+                <th>صف Excel</th>
                 <th>الفرع</th>
                 <th>التاريخ</th>
                 <th>المبلغ</th>
