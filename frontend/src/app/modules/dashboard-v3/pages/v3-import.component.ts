@@ -444,22 +444,22 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                     {{ expandedRawRows[rec.id] ? 'إخفاء' : 'عرض' }}
                   </button>
                   <div *ngIf="expandedRawRows[rec.id]" class="raw-excel-details">
-                    <div class="raw-sheet-info" *ngIf="rec.context?.rawExcel?.sheetName">
-                      ورقة: <strong>{{ rec.context.rawExcel.sheetName }}</strong>
-                      &nbsp;|&nbsp; صف: <strong>{{ rec.context.rawExcel.excelRow }}</strong>
-                      &nbsp;|&nbsp; نسق: <strong>{{ rec.context.rawExcel.format }}</strong>
+                    <div class="raw-sheet-info" *ngIf="rec.context?.['rawExcel']?.['sheetName']">
+                      ورقة: <strong>{{ rec.context['rawExcel']['sheetName'] }}</strong>
+                      &nbsp;|&nbsp; صف: <strong>{{ rec.context['rawExcel']['excelRow'] }}</strong>
+                      &nbsp;|&nbsp; نسق: <strong>{{ rec.context['rawExcel']['format'] }}</strong>
                     </div>
                     <div class="raw-section-title">القيم الخام من Excel</div>
                     <div *ngFor="let entry of rawExcelEntries(rec)" class="raw-entry">
                       <span class="raw-label">{{ rawFieldLabel(entry[0]) }}:</span>
                       <span class="raw-value">{{ entry[1] }}</span>
                     </div>
-                    <div *ngIf="rec.context?.rawExcel?._columnMap" class="raw-section-title" style="margin-top:8px">مواقع الأعمدة في Excel</div>
+                    <div *ngIf="rec.context?.['rawExcel']?.['_columnMap']" class="raw-section-title" style="margin-top:8px">مواقع الأعمدة في Excel</div>
                     <div *ngFor="let c of columnMapEntries(rec)" class="raw-entry">
                       <span class="raw-label">{{ rawFieldLabel(c[0]) }}:</span>
                       <span class="formula-value">{{ c[1] }}</span>
                     </div>
-                    <div *ngIf="rec.context?.formulas" class="raw-section-title" style="margin-top:8px">طريقة الحساب</div>
+                    <div *ngIf="rec.context?.['formulas']" class="raw-section-title" style="margin-top:8px">طريقة الحساب</div>
                     <div *ngFor="let f of formulaEntries(rec)" class="raw-entry formula-entry">
                       <span class="raw-label">{{ f[0] }}:</span>
                       <span class="formula-value">{{ f[1] }}</span>
