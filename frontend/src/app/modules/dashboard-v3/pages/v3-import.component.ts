@@ -461,6 +461,7 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                       <span class="hint" *ngIf="rec.context?.['branchMedianSarPerPiece']">
                         متوسط: {{ rec.context['branchMedianSarPerPiece'] }}
                       </span>
+                      <span class="method-hint" *ngIf="methodExplanation(issue)">{{ methodExplanation(issue) }}</span>
                     </div>
                     <!-- Employee: dropdown -->
                     <div *ngIf="issue.issueType === 'unknown_employee' || issue.issueType === 'employee'" class="edit-input-group">
@@ -473,6 +474,7 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                           *ngFor="let emp of rec.context?.['availableEmployees'] || []"
                           [value]="emp">{{ emp }}</option>
                       </select>
+                      <span class="method-hint" *ngIf="methodExplanation(issue)">{{ methodExplanation(issue) }}</span>
                     </div>
                     <!-- Date: radio buttons -->
                     <div *ngIf="issue.issueType === 'multiline_date' || issue.issueType === 'date'" class="edit-input-group">
@@ -487,10 +489,12 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                           (change)="setEditValueDirect(rec.id, issue.field, d)" />
                         {{ d }}
                       </label>
+                      <span class="method-hint" *ngIf="methodExplanation(issue)">{{ methodExplanation(issue) }}</span>
                     </div>
                     <!-- Default: text -->
                     <div *ngIf="issue.issueType !== 'pieces_outlier' && issue.issueType !== 'pieces' && issue.issueType !== 'unknown_employee' && issue.issueType !== 'employee' && issue.issueType !== 'multiline_date' && issue.issueType !== 'date'" class="suggested-val">
                       {{ issue.suggestedValue }}
+                      <span class="method-hint" *ngIf="methodExplanation(issue)">{{ methodExplanation(issue) }}</span>
                     </div>
                   </ng-container>
                 </td>
@@ -1582,6 +1586,14 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
       font-family: monospace;
     }
 
+    .method-hint {
+      display: block;
+      font-size: 10px;
+      color: #999;
+      margin-top: 2px;
+      font-style: italic;
+    }
+
     /* ── Inline inputs ───────────────────────────────────────── */
     .edit-input-group {
       display: flex;
@@ -2065,6 +2077,24 @@ export class V3ImportComponent implements OnInit, OnDestroy {
       'branch': 'فرع',
     };
     return map[issue.issueType] || issue.issueType;
+  }
+
+  methodExplanation(issue: ImportIssue): string | null {
+    if (!issue.suggestedValue) return null;
+    const map: Record<string, string> = {
+      'branch_median_sar_per_piece': 'محسوب من متوسط سعر القطعة للفرع',
+      'first_line_extraction': 'تم أخذ السطر الأول من التاريخ',
+      'needs_manual_assignment': 'يحتاج تعيين يدوي',
+    };
+    if (issue.method && map[issue.method]) return map[issue.method];
+    // Fallback explanations by issue type
+    const typeMap: Record<string, string> = {
+      'corrupt_value': 'القيمة الأصلية غير صالحة — المقترح مبني على بيانات الفرع',
+      'pieces_outlier': 'عدد القطع شاذ — المقترح من متوسط الفرع',
+      'unknown_branch': 'رمز الفرع غير موجود في النظام',
+      'multiline': 'التاريخ يحتوي على أكثر من سطر',
+    };
+    return typeMap[issue.issueType] || null;
   }
 
   regionName(id: number): string {
