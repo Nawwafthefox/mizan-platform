@@ -498,14 +498,46 @@ public class V3UnifiedImportService {
     List<ParsedRow> parseFile(byte[] bytes, String type) throws Exception {
         try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
             Sheet sheet = wb.getSheetAt(0);
-            return switch (type) {
+            List<ParsedRow> rows = switch (type) {
                 case "sales" -> parseAllRowsForSales(sheet);
                 case "employee-sales" -> parseAllRowsForEmpSales(sheet);
                 case "purchases" -> parseAllRowsForPurchases(sheet);
                 case "mothan" -> parseAllRowsForMothan(sheet);
                 default -> throw new IllegalArgumentException("Unknown type: " + type);
             };
+
+            // Filter out empty/no-data rows
+            int before = rows.size();
+            rows.removeIf(r -> isEmptyRow(r, type));
+            int removed = before - rows.size();
+            if (removed > 0) {
+                log.info("parseFile({}): removed {} empty rows, {} remaining", type, removed, rows.size());
+            }
+            return rows;
         }
+    }
+
+    /** A row is "empty" if it has no meaningful data — no amount, no weight, no branch code. */
+    private boolean isEmptyRow(ParsedRow r, String type) {
+        // No branch code at all
+        if (r.branchCode == null && (r.rawBranchCode == null || r.rawBranchCode.isBlank())) {
+            // For mothan, also check if there's any monetary value
+            if ("mothan".equals(type)) {
+                return r.creditSar == 0 && r.debitGold == 0 && r.weightCredit == 0
+                    && r.balanceGold == 0 && r.balanceSar == 0;
+            }
+            // For sales/purchases, no branch + no amounts = empty
+            return r.totalSar == 0 && r.grossWeight == 0 && r.pureWeight == 0;
+        }
+
+        // Has a branch code but every numeric field is zero
+        if ("mothan".equals(type)) {
+            return r.creditSar == 0 && r.debitGold == 0 && r.weightCredit == 0
+                && r.balanceGold == 0 && r.balanceSar == 0
+                && (r.description == null || r.description.isBlank());
+        }
+        // Sales, employee-sales, purchases: zero SAR + zero weight + zero pieces = empty
+        return r.totalSar == 0 && r.grossWeight == 0 && r.pureWeight == 0 && r.rawPieces == 0;
     }
 
     private Format detectFormat(Sheet sheet) {

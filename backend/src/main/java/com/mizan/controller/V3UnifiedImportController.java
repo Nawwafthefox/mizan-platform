@@ -344,6 +344,149 @@ public class V3UnifiedImportController {
         return ResponseEntity.ok(Map.of("success", true, "data", Map.of("seeded", seeded)));
     }
 
+    @PostMapping("/branches/csv")
+    public ResponseEntity<?> importBranchesCsv(@RequestParam("file") MultipartFile file) {
+        String tenantId = TenantContext.getTenantId();
+        if (file == null || file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "success", false, "message", "يجب رفع ملف CSV"));
+        }
+
+        try {
+            String content = new String(file.getBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            // Remove BOM if present
+            if (content.startsWith("\uFEFF")) content = content.substring(1);
+
+            String[] lines = content.split("\\r?\\n");
+            if (lines.length < 2) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false, "message", "الملف فارغ أو لا يحتوي على بيانات"));
+            }
+
+            // Parse header to find column indices
+            String[] header = lines[0].split(",");
+            int colCode = -1, colName = -1, colRegion = -1, colCity = -1;
+            for (int i = 0; i < header.length; i++) {
+                String h = header[i].trim().toLowerCase().replace("\"", "");
+                if (h.equals("code") || h.equals("رمز")) colCode = i;
+                else if (h.equals("name") || h.equals("اسم") || h.equals("الاسم")) colName = i;
+                else if (h.equals("region") || h.equals("المنطقة") || h.equals("منطقة")) colRegion = i;
+                else if (h.equals("city") || h.equals("المدينة") || h.equals("مدينة")) colCity = i;
+            }
+            if (colCode == -1 || colName == -1) {
+                return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "الملف يجب أن يحتوي على أعمدة code و name على الأقل"));
+            }
+
+            int created = 0, updated = 0, skipped = 0;
+            List<String> errors = new ArrayList<>();
+
+            for (int row = 1; row < lines.length; row++) {
+                String line = lines[row].trim();
+                if (line.isEmpty()) continue;
+
+                String[] cols = parseCsvLine(line);
+                if (cols.length <= colCode) {
+                    errors.add("صف " + (row + 1) + ": عدد الأعمدة غير كافٍ");
+                    skipped++;
+                    continue;
+                }
+
+                String code = cols[colCode].trim().replace("\"", "");
+                String name = colName < cols.length ? cols[colName].trim().replace("\"", "") : "";
+                String regionStr = colRegion >= 0 && colRegion < cols.length
+                    ? cols[colRegion].trim().replace("\"", "") : "";
+                String city = colCity >= 0 && colCity < cols.length
+                    ? cols[colCity].trim().replace("\"", "") : "";
+
+                if (code.isEmpty()) {
+                    skipped++;
+                    continue;
+                }
+
+                int regionId = regionNameToId(regionStr);
+                if (regionId == 0) regionId = BranchLookupService.guessRegionId(code);
+
+                Optional<V3Branch> existing = branchRepo.findByTenantIdAndBranchCode(tenantId, code);
+                if (existing.isPresent()) {
+                    V3Branch b = existing.get();
+                    if (!name.isEmpty()) b.setBranchName(name);
+                    if (regionId > 0) {
+                        b.setRegionId(regionId);
+                        b.setRegionName(BranchLookupService.guessRegionName(regionId));
+                    }
+                    if (!city.isEmpty()) b.setCity(city);
+                    if ("pending_name".equals(b.getStatus()) && !name.isEmpty() && !name.equals(code)) {
+                        b.setStatus("active");
+                    }
+                    b.setUpdatedAt(LocalDateTime.now());
+                    b.setUpdatedBy(tenantId);
+                    branchRepo.save(b);
+                    updated++;
+                } else {
+                    V3Branch b = new V3Branch();
+                    b.setTenantId(tenantId);
+                    b.setBranchCode(code);
+                    b.setBranchName(name.isEmpty() ? code : name);
+                    b.setRegionId(regionId);
+                    b.setRegionName(BranchLookupService.guessRegionName(regionId));
+                    b.setCity(city);
+                    b.setStatus("active");
+                    b.setAutoDiscovered(false);
+                    b.setCreatedAt(LocalDateTime.now());
+                    branchRepo.save(b);
+                    created++;
+                }
+            }
+
+            branchLookup.invalidateCache(tenantId);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("created", created);
+            result.put("updated", updated);
+            result.put("skipped", skipped);
+            if (!errors.isEmpty()) result.put("errors", errors.subList(0, Math.min(errors.size(), 10)));
+            return ResponseEntity.ok(Map.of("success", true, "data", result));
+
+        } catch (Exception e) {
+            log.error("CSV branch import failed: {}", e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of(
+                "success", false, "message", "فشل في قراءة ملف CSV: " + e.getMessage()));
+        }
+    }
+
+    private static String[] parseCsvLine(String line) {
+        List<String> fields = new ArrayList<>();
+        StringBuilder sb = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                inQuotes = !inQuotes;
+            } else if (c == ',' && !inQuotes) {
+                fields.add(sb.toString());
+                sb.setLength(0);
+            } else {
+                sb.append(c);
+            }
+        }
+        fields.add(sb.toString());
+        return fields.toArray(new String[0]);
+    }
+
+    private static int regionNameToId(String name) {
+        if (name == null || name.isBlank()) return 0;
+        return switch (name.trim()) {
+            case "الرياض" -> 1;
+            case "الغربية" -> 2;
+            case "المدينة المنورة" -> 3;
+            case "حائل" -> 4;
+            case "حفر الباطن" -> 5;
+            case "عسير/جيزان", "عسير", "جيزان" -> 6;
+            default -> 0;
+        };
+    }
+
     @GetMapping("/branches/pending-count")
     public ResponseEntity<?> pendingBranchCount() {
         String tenantId = TenantContext.getTenantId();
