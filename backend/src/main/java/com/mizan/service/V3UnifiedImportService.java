@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -35,6 +36,7 @@ public class V3UnifiedImportService {
 
     private static final DateTimeFormatter DD_MM_YYYY = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final int PIECE_CAP = 500;
+    private static final int BATCH_SIZE = 2000;
 
     // ─── Inner types ──────────────────────────────────────────────────────────
 
@@ -120,88 +122,104 @@ public class V3UnifiedImportService {
             long t0 = System.currentTimeMillis();
 
             // ════════════════════════════════════════════
-            // STEP 1: PARSE ALL FILES (no DB writes)
+            // STEP 1: PARSE ALL FILES IN PARALLEL
             // ════════════════════════════════════════════
-            progress.updateStep(importId, 1, "تحليل الملفات...", 10);
+            progress.updateStep(importId, 1, "تحليل الملفات...", 5);
+            long ts = System.currentTimeMillis();
 
-            List<ParsedRow> salesRows = new ArrayList<>();
-            List<ParsedRow> empSalesRows = new ArrayList<>();
-            List<ParsedRow> purchaseRows = new ArrayList<>();
-            List<ParsedRow> mothanRows = new ArrayList<>();
+            List<ParsedRow> salesRows;
+            List<ParsedRow> empSalesRows;
+            List<ParsedRow> purchaseRows;
+            List<ParsedRow> mothanRows;
 
-            if (files.containsKey("branchSales")) {
-                salesRows = parseFile(files.get("branchSales"), "sales");
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                Future<List<ParsedRow>> salesF = files.containsKey("branchSales")
+                    ? executor.submit(() -> parseFile(files.get("branchSales"), "sales")) : null;
+                Future<List<ParsedRow>> empF = files.containsKey("employeeSales")
+                    ? executor.submit(() -> parseFile(files.get("employeeSales"), "employee-sales")) : null;
+                Future<List<ParsedRow>> purchF = files.containsKey("purchases")
+                    ? executor.submit(() -> parseFile(files.get("purchases"), "purchases")) : null;
+                Future<List<ParsedRow>> mothanF = files.containsKey("mothan")
+                    ? executor.submit(() -> parseFile(files.get("mothan"), "mothan")) : null;
+
+                salesRows = salesF != null ? salesF.get() : new ArrayList<>();
+                empSalesRows = empF != null ? empF.get() : new ArrayList<>();
+                purchaseRows = purchF != null ? purchF.get() : new ArrayList<>();
+                mothanRows = mothanF != null ? mothanF.get() : new ArrayList<>();
+            }
+
+            if (!salesRows.isEmpty())
                 progress.updateParseResult(importId, "branch-sales", salesRows.size(),
                     fileNames.getOrDefault("branchSales", "branch-sales.xls"));
-            }
-            if (files.containsKey("employeeSales")) {
-                empSalesRows = parseFile(files.get("employeeSales"), "employee-sales");
+            if (!empSalesRows.isEmpty())
                 progress.updateParseResult(importId, "employee-sales", empSalesRows.size(),
                     fileNames.getOrDefault("employeeSales", "employee-sales.xls"));
-            }
-            if (files.containsKey("purchases")) {
-                purchaseRows = parseFile(files.get("purchases"), "purchases");
+            if (!purchaseRows.isEmpty())
                 progress.updateParseResult(importId, "purchases", purchaseRows.size(),
                     fileNames.getOrDefault("purchases", "purchases.xls"));
-            }
-            if (files.containsKey("mothan")) {
-                mothanRows = parseFile(files.get("mothan"), "mothan");
+            if (!mothanRows.isEmpty())
                 progress.updateParseResult(importId, "mothan", mothanRows.size(),
                     fileNames.getOrDefault("mothan", "mothan.xls"));
-            }
 
             int totalParsed = salesRows.size() + empSalesRows.size() + purchaseRows.size() + mothanRows.size();
             if (totalParsed == 0) {
                 progress.error(importId, "لم يتم العثور على بيانات في الملفات المرفوعة");
                 return;
             }
-            log.info("STEP 1 DONE: {} total parsed (sales={}, emp={}, purch={}, mothan={})",
-                totalParsed, salesRows.size(), empSalesRows.size(), purchaseRows.size(), mothanRows.size());
+            log.info("STEP 1 [parse]: {}ms — {} total (sales={}, emp={}, purch={}, mothan={})",
+                System.currentTimeMillis() - ts, totalParsed,
+                salesRows.size(), empSalesRows.size(), purchaseRows.size(), mothanRows.size());
 
             // ════════════════════════════════════════════
             // STEP 2: SEED REGIONS (one-time, idempotent)
             // ════════════════════════════════════════════
-            progress.updateStep(importId, 2, "تهيئة المناطق...", 20);
+            progress.updateStep(importId, 2, "تهيئة المناطق...", 15);
+            ts = System.currentTimeMillis();
             seedRegionsIfEmpty(tenantId);
+            log.info("STEP 2 [regions]: {}ms", System.currentTimeMillis() - ts);
 
             // ════════════════════════════════════════════
-            // STEP 3: DISCOVER BRANCHES
+            // STEP 3: DISCOVER BRANCHES (BULK)
             // ════════════════════════════════════════════
-            progress.updateStep(importId, 3, "اكتشاف الفروع...", 30);
+            progress.updateStep(importId, 3, "اكتشاف الفروع...", 20);
+            ts = System.currentTimeMillis();
             Set<String> allBranchCodes = new LinkedHashSet<>();
             for (ParsedRow r : salesRows) if (r.branchCode != null) allBranchCodes.add(r.branchCode);
             for (ParsedRow r : empSalesRows) if (r.branchCode != null) allBranchCodes.add(r.branchCode);
             for (ParsedRow r : purchaseRows) if (r.branchCode != null) allBranchCodes.add(r.branchCode);
             for (ParsedRow r : mothanRows) if (r.branchCode != null) allBranchCodes.add(r.branchCode);
 
-            int knownBranches = 0, newBranches = 0;
+            // Single bulk query instead of N+1
+            Set<String> existingBranchCodes = branchRepo.findByTenantIdAndBranchCodeIn(tenantId, allBranchCodes)
+                .stream().map(V3Branch::getBranchCode).collect(Collectors.toSet());
+            int knownBranches = existingBranchCodes.size();
+
+            List<V3Branch> newBranchList = new ArrayList<>();
             for (String code : allBranchCodes) {
-                Optional<V3Branch> existing = branchRepo.findByTenantIdAndBranchCode(tenantId, code);
-                if (existing.isPresent()) {
-                    knownBranches++;
-                } else {
+                if (!existingBranchCodes.contains(code)) {
                     V3Branch b = new V3Branch();
                     b.setTenantId(tenantId);
                     b.setBranchCode(code);
-                    b.setBranchName(code); // placeholder
+                    b.setBranchName(code);
                     int regionId = BranchLookupService.guessRegionId(code);
                     b.setRegionId(regionId);
                     b.setRegionName(BranchLookupService.guessRegionName(regionId));
                     b.setStatus("pending_name");
                     b.setAutoDiscovered(true);
                     b.setCreatedAt(LocalDateTime.now());
-                    mongo.insert(b);
-                    newBranches++;
+                    newBranchList.add(b);
                 }
             }
+            if (!newBranchList.isEmpty()) mongo.insertAll(newBranchList);
+            int newBranches = newBranchList.size();
             branchLookup.invalidateCache(tenantId);
-            log.info("STEP 3 DONE: {} known branches, {} new branches", knownBranches, newBranches);
+            log.info("STEP 3 [branches]: {}ms — {} known, {} new", System.currentTimeMillis() - ts, knownBranches, newBranches);
 
             // ════════════════════════════════════════════
-            // STEP 4: DISCOVER EMPLOYEES
+            // STEP 4: DISCOVER EMPLOYEES (BULK)
             // ════════════════════════════════════════════
-            progress.updateStep(importId, 4, "اكتشاف الموظفين...", 35);
-            int knownEmps = 0, newEmps = 0;
+            progress.updateStep(importId, 4, "اكتشاف الموظفين...", 25);
+            ts = System.currentTimeMillis();
             Map<String, ParsedRow> latestEmpRows = new LinkedHashMap<>();
             for (ParsedRow r : empSalesRows) {
                 if (r.empId != null && !r.empId.isBlank()) {
@@ -209,32 +227,52 @@ public class V3UnifiedImportService {
                         b.date != null && a.date != null && b.date.isAfter(a.date) ? b : a);
                 }
             }
-            for (Map.Entry<String, ParsedRow> e : latestEmpRows.entrySet()) {
-                ParsedRow r = e.getValue();
-                Optional<V3Employee> existing = empRepo.findByTenantIdAndEmpId(tenantId, e.getKey());
-                if (existing.isPresent()) {
-                    V3Employee emp = existing.get();
-                    emp.setCurrentBranchCode(r.branchCode);
-                    if (r.empName != null && !r.empName.isBlank()) emp.setEmpName(r.empName);
-                    mongo.save(emp);
-                    knownEmps++;
-                } else {
-                    V3Employee emp = new V3Employee();
-                    emp.setTenantId(tenantId);
-                    emp.setEmpId(e.getKey());
-                    emp.setEmpName(r.empName != null ? r.empName : e.getKey());
-                    emp.setCurrentBranchCode(r.branchCode);
-                    mongo.insert(emp);
-                    newEmps++;
+
+            int knownEmps = 0, newEmps = 0;
+            if (!latestEmpRows.isEmpty()) {
+                // Single bulk query instead of N+1
+                Map<String, V3Employee> existingEmps = empRepo.findByTenantIdAndEmpIdIn(tenantId, latestEmpRows.keySet())
+                    .stream().collect(Collectors.toMap(V3Employee::getEmpId, e -> e));
+
+                List<V3Employee> toInsert = new ArrayList<>();
+                List<V3Employee> toUpdate = new ArrayList<>();
+
+                for (Map.Entry<String, ParsedRow> e : latestEmpRows.entrySet()) {
+                    ParsedRow r = e.getValue();
+                    V3Employee existing = existingEmps.get(e.getKey());
+                    if (existing != null) {
+                        boolean changed = false;
+                        if (r.branchCode != null && !r.branchCode.equals(existing.getCurrentBranchCode())) {
+                            existing.setCurrentBranchCode(r.branchCode);
+                            changed = true;
+                        }
+                        if (r.empName != null && !r.empName.isBlank() && !r.empName.equals(existing.getEmpName())) {
+                            existing.setEmpName(r.empName);
+                            changed = true;
+                        }
+                        if (changed) toUpdate.add(existing);
+                        knownEmps++;
+                    } else {
+                        V3Employee emp = new V3Employee();
+                        emp.setTenantId(tenantId);
+                        emp.setEmpId(e.getKey());
+                        emp.setEmpName(r.empName != null ? r.empName : e.getKey());
+                        emp.setCurrentBranchCode(r.branchCode);
+                        toInsert.add(emp);
+                        newEmps++;
+                    }
                 }
+                if (!toInsert.isEmpty()) mongo.insertAll(toInsert);
+                for (V3Employee emp : toUpdate) mongo.save(emp); // save updated ones
             }
             progress.updateDiscovery(importId, knownBranches, newBranches, knownEmps, newEmps);
-            log.info("STEP 4 DONE: {} known employees, {} new employees", knownEmps, newEmps);
+            log.info("STEP 4 [employees]: {}ms — {} known, {} new", System.currentTimeMillis() - ts, knownEmps, newEmps);
 
             // ════════════════════════════════════════════
             // STEP 5: VALIDATE + CLASSIFY EVERY ROW
             // ════════════════════════════════════════════
-            progress.updateStep(importId, 5, "التحقق من البيانات...", 40);
+            progress.updateStep(importId, 5, "التحقق من البيانات...", 35);
+            ts = System.currentTimeMillis();
 
             Map<String, BranchStats> salesStats = buildBranchStats(salesRows);
             Map<String, BranchStats> empStats = buildBranchStats(empSalesRows);
@@ -245,8 +283,8 @@ public class V3UnifiedImportService {
             String purchFile = fileNames.getOrDefault("purchases", "purchases.xls");
             String mothanFile = fileNames.getOrDefault("mothan", "mothan.xls");
 
-            List<V3SaleTransaction> cleanSales = new ArrayList<>();
-            List<V3StagedRecord> stagedSales = new ArrayList<>();
+            List<V3SaleTransaction> cleanSales = new ArrayList<>(salesRows.size());
+            List<V3StagedRecord> stagedSales = new ArrayList<>(32);
             for (ParsedRow row : salesRows) {
                 List<V3StagedRecord.FieldIssue> issues = validateSalesRow(row, salesStats, tenantId);
                 if (issues.isEmpty()) {
@@ -258,8 +296,8 @@ public class V3UnifiedImportService {
                 }
             }
 
-            List<V3EmployeeSaleTransaction> cleanEmpSales = new ArrayList<>();
-            List<V3StagedRecord> stagedEmpSales = new ArrayList<>();
+            List<V3EmployeeSaleTransaction> cleanEmpSales = new ArrayList<>(empSalesRows.size());
+            List<V3StagedRecord> stagedEmpSales = new ArrayList<>(32);
             for (ParsedRow row : empSalesRows) {
                 List<V3StagedRecord.FieldIssue> issues = validateEmpRow(row, empStats, tenantId);
                 if (issues.isEmpty()) {
@@ -273,8 +311,8 @@ public class V3UnifiedImportService {
                 }
             }
 
-            List<V3PurchaseTransaction> cleanPurch = new ArrayList<>();
-            List<V3StagedRecord> stagedPurch = new ArrayList<>();
+            List<V3PurchaseTransaction> cleanPurch = new ArrayList<>(purchaseRows.size());
+            List<V3StagedRecord> stagedPurch = new ArrayList<>(32);
             for (ParsedRow row : purchaseRows) {
                 List<V3StagedRecord.FieldIssue> issues = validatePurchaseRow(row, tenantId);
                 if (issues.isEmpty()) {
@@ -286,8 +324,8 @@ public class V3UnifiedImportService {
                 }
             }
 
-            List<V3MothanTransaction> cleanMothan = new ArrayList<>();
-            List<V3StagedRecord> stagedMothan = new ArrayList<>();
+            List<V3MothanTransaction> cleanMothan = new ArrayList<>(mothanRows.size());
+            List<V3StagedRecord> stagedMothan = new ArrayList<>(32);
             for (ParsedRow row : mothanRows) {
                 List<V3StagedRecord.FieldIssue> issues = validateMothanRow(row, tenantId);
                 if (issues.isEmpty()) {
@@ -301,15 +339,16 @@ public class V3UnifiedImportService {
 
             int totalClean = cleanSales.size() + cleanEmpSales.size() + cleanPurch.size() + cleanMothan.size();
             int totalStaged = stagedSales.size() + stagedEmpSales.size() + stagedPurch.size() + stagedMothan.size();
-            log.info("STEP 5 DONE: {} clean, {} staged", totalClean, totalStaged);
+            log.info("STEP 5 [validate]: {}ms — {} clean, {} staged", System.currentTimeMillis() - ts, totalClean, totalStaged);
 
             // ════════════════════════════════════════════
             // STEP 6: SAVE CLEAN RECORDS (BCNF ORDER)
             // ════════════════════════════════════════════
-            progress.updateStep(importId, 6, "حفظ البيانات...", 50);
+            progress.updateStep(importId, 6, "حفظ البيانات...", 45);
+            ts = System.currentTimeMillis();
             int totalAutoSaved = 0;
 
-            // 6a. PURCHASES
+            // 6a. PURCHASES (sequential — needed for rates)
             if (!cleanPurch.isEmpty()) {
                 LocalDate minDate = cleanPurch.stream().map(V3PurchaseTransaction::getPurchaseDate)
                     .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
@@ -319,13 +358,13 @@ public class V3UnifiedImportService {
                     mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
                         .and("purchaseDate").gte(minDate).lte(maxDate)), V3PurchaseTransaction.class);
                 }
-                int saved = bulkInsertSafe(cleanPurch, V3PurchaseTransaction.class, importId, "purchases");
+                int saved = bulkInsertFast(cleanPurch, importId, "purchases");
                 totalAutoSaved += saved;
                 progress.updateSaveProgress(importId, "purchases", saved, cleanPurch.size(), stagedPurch.size());
                 log.info("6a. Purchases: {} saved", saved);
             }
 
-            // 6b. MOTHAN
+            // 6b. MOTHAN (sequential — needed for rates)
             if (!cleanMothan.isEmpty()) {
                 LocalDate minDate = cleanMothan.stream().map(V3MothanTransaction::getTransactionDate)
                     .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
@@ -335,64 +374,78 @@ public class V3UnifiedImportService {
                     mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
                         .and("transactionDate").gte(minDate).lte(maxDate)), V3MothanTransaction.class);
                 }
-                int saved = bulkInsertSafe(cleanMothan, V3MothanTransaction.class, importId, "mothan");
+                int saved = bulkInsertFast(cleanMothan, importId, "mothan");
                 totalAutoSaved += saved;
                 progress.updateSaveProgress(importId, "mothan", saved, cleanMothan.size(), stagedMothan.size());
                 log.info("6b. Mothan: {} saved", saved);
             }
 
             // 6c. COMPUTE PURCHASE RATES
-            progress.updateStep(importId, 6, "حساب معدلات الشراء...", 65);
+            progress.updateStep(importId, 6, "حساب معدلات الشراء...", 55);
             recomputePurchaseRates(tenantId);
             log.info("6c. Purchase rates recomputed");
 
-            // 6d. BRANCH SALES
-            if (!cleanSales.isEmpty()) {
-                LocalDate minDate = cleanSales.stream().map(V3SaleTransaction::getSaleDate)
-                    .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
-                LocalDate maxDate = cleanSales.stream().map(V3SaleTransaction::getSaleDate)
-                    .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
-                if (minDate != null && maxDate != null) {
-                    mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                        .and("saleDate").gte(minDate).lte(maxDate)), V3SaleTransaction.class);
-                }
-                int saved = bulkInsertSafe(cleanSales, V3SaleTransaction.class, importId, "branch-sales");
-                totalAutoSaved += saved;
-                progress.updateSaveProgress(importId, "branch-sales", saved, cleanSales.size(), stagedSales.size());
-                log.info("6d. Branch sales: {} saved", saved);
-            }
+            // 6d + 6e. BRANCH SALES + EMPLOYEE SALES (PARALLEL)
+            progress.updateStep(importId, 6, "حفظ المبيعات...", 65);
+            int salesSaved = 0, empSalesSaved = 0;
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                Future<Integer> salesF = executor.submit(() -> {
+                    if (cleanSales.isEmpty()) return 0;
+                    LocalDate min = cleanSales.stream().map(V3SaleTransaction::getSaleDate)
+                        .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
+                    LocalDate max = cleanSales.stream().map(V3SaleTransaction::getSaleDate)
+                        .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
+                    if (min != null && max != null) {
+                        mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                            .and("saleDate").gte(min).lte(max)), V3SaleTransaction.class);
+                    }
+                    int s = bulkInsertFast(cleanSales, importId, "branch-sales");
+                    progress.updateSaveProgress(importId, "branch-sales", s, cleanSales.size(), stagedSales.size());
+                    return s;
+                });
 
-            // 6e. EMPLOYEE SALES (LAST)
-            if (!cleanEmpSales.isEmpty()) {
-                LocalDate minDate = cleanEmpSales.stream().map(V3EmployeeSaleTransaction::getSaleDate)
-                    .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
-                LocalDate maxDate = cleanEmpSales.stream().map(V3EmployeeSaleTransaction::getSaleDate)
-                    .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
-                if (minDate != null && maxDate != null) {
-                    mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
-                        .and("saleDate").gte(minDate).lte(maxDate)), V3EmployeeSaleTransaction.class);
-                }
-                int saved = bulkInsertSafe(cleanEmpSales, V3EmployeeSaleTransaction.class, importId, "employee-sales");
-                totalAutoSaved += saved;
-                progress.updateSaveProgress(importId, "employee-sales", saved, cleanEmpSales.size(), stagedEmpSales.size());
-                log.info("6e. Employee sales: {} saved", saved);
+                Future<Integer> empSalesF = executor.submit(() -> {
+                    if (cleanEmpSales.isEmpty()) return 0;
+                    LocalDate min = cleanEmpSales.stream().map(V3EmployeeSaleTransaction::getSaleDate)
+                        .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(null);
+                    LocalDate max = cleanEmpSales.stream().map(V3EmployeeSaleTransaction::getSaleDate)
+                        .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(null);
+                    if (min != null && max != null) {
+                        mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
+                            .and("saleDate").gte(min).lte(max)), V3EmployeeSaleTransaction.class);
+                    }
+                    int s = bulkInsertFast(cleanEmpSales, importId, "employee-sales");
+                    progress.updateSaveProgress(importId, "employee-sales", s, cleanEmpSales.size(), stagedEmpSales.size());
+                    return s;
+                });
+
+                salesSaved = salesF.get();
+                empSalesSaved = empSalesF.get();
             }
+            totalAutoSaved += salesSaved + empSalesSaved;
+            log.info("6d+e. Sales: {} branch + {} employee saved (parallel)", salesSaved, empSalesSaved);
+            log.info("STEP 6 [save]: {}ms total", System.currentTimeMillis() - ts);
 
             // ════════════════════════════════════════════
             // STEP 7: SAVE STAGED RECORDS
             // ════════════════════════════════════════════
             progress.updateStep(importId, 7, "حفظ السجلات المعلقة...", 90);
+            ts = System.currentTimeMillis();
             mongo.remove(Query.query(Criteria.where("tenantId").is(tenantId)
                 .and("status").is("pending")), "v3_staged_records");
-            List<V3StagedRecord> allStaged = new ArrayList<>();
+            List<V3StagedRecord> allStaged = new ArrayList<>(totalStaged);
             allStaged.addAll(stagedSales);
             allStaged.addAll(stagedEmpSales);
             allStaged.addAll(stagedPurch);
             allStaged.addAll(stagedMothan);
             if (!allStaged.isEmpty()) {
-                mongo.insertAll(allStaged);
+                if (allStaged.size() <= BATCH_SIZE) {
+                    mongo.insertAll(allStaged);
+                } else {
+                    bulkInsertFast(allStaged, importId, null);
+                }
             }
-            log.info("STEP 7 DONE: {} staged records saved", allStaged.size());
+            log.info("STEP 7 [staged]: {}ms — {} records", System.currentTimeMillis() - ts, allStaged.size());
 
             // ════════════════════════════════════════════
             // STEP 8: COMPUTE CONFIDENCE + FINALIZE
@@ -750,7 +803,7 @@ public class V3UnifiedImportService {
         int headerFooter = 0;
 
         for (Row row : sheet) {
-            if (row == null) continue;
+            if (row == null || row.getZeroHeight()) continue;
             String rawBranch = getStr(row, 7).trim();
             double creditSarRaw = Math.abs(getNumRaw(row, 4));
 
@@ -1212,7 +1265,7 @@ public class V3UnifiedImportService {
             r.setComputedAt(LocalDateTime.now());
             rates.add(r);
         }
-        if (!rates.isEmpty()) bulkInsertSafe(rates, V3BranchPurchaseRate.class, null, null);
+        if (!rates.isEmpty()) bulkInsertFast(rates, null, null);
         log.info("Purchase rates recomputed for {} branches", rates.size());
     }
 
@@ -1238,12 +1291,13 @@ public class V3UnifiedImportService {
     // ═══════════════════════════════════════════════════════════════════════════
 
     private boolean isDataRowA(Row row) {
+        if (row == null || row.getZeroHeight()) return false;
         Cell c = row.getCell(15);
         return c != null && c.getCellType() == CellType.NUMERIC && c.getNumericCellValue() >= 1;
     }
 
     private boolean isDataRowB(Row row) {
-        if (row == null) return false;
+        if (row == null || row.getZeroHeight()) return false;
         Cell c = row.getCell(0);
         return c != null && c.getCellType() == CellType.NUMERIC && c.getNumericCellValue() >= 1;
     }
@@ -1363,21 +1417,25 @@ public class V3UnifiedImportService {
         return Math.round(v * 10000.0) / 10000.0;
     }
 
-    private <T> int bulkInsertSafe(List<T> items, Class<T> clazz, String importId, String fileType) {
+    private <T> int bulkInsertFast(List<T> items, String importId, String fileType) {
         int saved = 0;
-        int batchSz = 200;
         int total = items.size();
-        for (int i = 0; i < total; i += batchSz) {
-            List<T> batch = items.subList(i, Math.min(i + batchSz, total));
+        for (int i = 0; i < total; i += BATCH_SIZE) {
+            int end = Math.min(i + BATCH_SIZE, total);
+            List<T> batch = items.subList(i, end);
             try {
                 mongo.insertAll(batch);
                 saved += batch.size();
-            } catch (Exception batchEx) {
-                log.warn("Batch {}-{} failed ({}), falling back", i, i + batch.size(), batchEx.getMessage());
-                for (T item : batch) {
-                    try { mongo.insert(item); saved++; }
-                    catch (Exception e) { log.error("Insert failed: {}", e.getMessage()); }
+            } catch (Exception e) {
+                // Count partial successes from bulk write exception
+                if (e.getCause() instanceof com.mongodb.MongoBulkWriteException bwe) {
+                    int failures = bwe.getWriteErrors().size();
+                    saved += (batch.size() - failures);
+                    log.warn("Batch {}-{}: {} of {} failed", i, end, failures, batch.size());
+                } else {
+                    log.error("Batch {}-{} failed: {}", i, end, e.getMessage());
                 }
+                // NEVER fall back to individual inserts
             }
             if (importId != null && fileType != null) {
                 progress.updateSaveProgress(importId, fileType, saved, total, 0);
