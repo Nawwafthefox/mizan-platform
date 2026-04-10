@@ -1236,6 +1236,38 @@ public class V3UnifiedImportService {
         if (row.description != null) rawExcel.put("description", row.description);
         context.put("rawExcel", rawExcel);
 
+        // Transformation formulas so users understand how raw → final
+        Map<String, String> formulas = new LinkedHashMap<>();
+        switch (fileType) {
+            case "branch-sales", "employee-sales" -> {
+                formulas.put("sarAmount", "−(totalSar)  ← البيع يُخزن بالموجب");
+                formulas.put("isReturn", "إذا sarAmount < 0 → مرتجع");
+                formulas.put("pureWeightG", "sign × |pureWeight|  ← sign = اتجاه المبلغ");
+                formulas.put("grossWeightG", "sign × |grossWeight|");
+                formulas.put("pieces", "min(|rawPieces|, 10000)  ← حد أقصى 10,000");
+                formulas.put("purity", "|purity|");
+                formulas.put("karat", "purity → أقرب عيار (24/22/21/18/14/9)");
+                formulas.put("metalValue", "sign × |metalValue|");
+                formulas.put("makingCharge", "sign × |makingCharge|");
+            }
+            case "purchases" -> {
+                formulas.put("sarAmount", "|totalSar|  ← المشتريات دائماً موجبة");
+                formulas.put("pureWeightG", "|pureWeight|");
+                formulas.put("grossWeightG", "|grossWeight|");
+                formulas.put("pieces", "min(|rawPieces|, 10000)");
+                formulas.put("purity", "|purity|");
+                formulas.put("karat", "purity → أقرب عيار");
+            }
+            case "mothan" -> {
+                formulas.put("amountSar", "creditSar  ← كما هو");
+                formulas.put("weightDebitG", "debitGold  ← كما هو");
+                formulas.put("weightCreditG", "weightCredit  ← كما هو");
+                formulas.put("balanceGoldG", "balanceGold  ← كما هو");
+                formulas.put("balanceSar", "balanceSar  ← كما هو");
+            }
+        }
+        context.put("formulas", formulas);
+
         V3StagedRecord sr = new V3StagedRecord();
         sr.setTenantId(tenantId);
         sr.setImportId(importId);

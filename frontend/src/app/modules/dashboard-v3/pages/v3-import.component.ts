@@ -444,9 +444,15 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                     {{ expandedRawRows[rec.id] ? 'إخفاء' : 'عرض' }}
                   </button>
                   <div *ngIf="expandedRawRows[rec.id]" class="raw-excel-details">
+                    <div class="raw-section-title">القيم الخام من Excel</div>
                     <div *ngFor="let entry of rawExcelEntries(rec)" class="raw-entry">
                       <span class="raw-label">{{ rawFieldLabel(entry[0]) }}:</span>
                       <span class="raw-value">{{ entry[1] }}</span>
+                    </div>
+                    <div *ngIf="rec.context?.formulas" class="raw-section-title" style="margin-top:8px">طريقة الحساب</div>
+                    <div *ngFor="let f of formulaEntries(rec)" class="raw-entry formula-entry">
+                      <span class="raw-label">{{ f[0] }}:</span>
+                      <span class="formula-value">{{ f[1] }}</span>
                     </div>
                   </div>
                 </td>
@@ -1636,6 +1642,16 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
     .raw-entry:last-child { border-bottom: none; }
     .raw-label { color: #999; white-space: nowrap; }
     .raw-value { color: #e0e0e0; font-family: monospace; text-align: left; direction: ltr; }
+    .raw-section-title {
+      font-size: 10px;
+      font-weight: 600;
+      color: #8ab4f8;
+      margin-bottom: 4px;
+      padding-bottom: 2px;
+      border-bottom: 1px solid #333;
+    }
+    .formula-entry { background: #111122; border-radius: 3px; padding: 2px 4px; }
+    .formula-value { color: #c9a0dc; font-family: monospace; font-size: 10px; text-align: left; direction: ltr; }
 
     /* ── Inline inputs ───────────────────────────────────────── */
     .edit-input-group {
@@ -2149,6 +2165,12 @@ export class V3ImportComponent implements OnInit, OnDestroy {
     const raw = rec.context?.rawExcel;
     if (!raw) return [];
     return Object.entries(raw).filter(([_, v]) => v !== null && v !== 0 && v !== '' && v !== 0.0);
+  }
+
+  formulaEntries(rec: any): [string, string][] {
+    const formulas = rec.context?.formulas;
+    if (!formulas) return [];
+    return Object.entries(formulas) as [string, string][];
   }
 
   rawFieldLabel(field: string): string {
