@@ -444,10 +444,20 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                     {{ expandedRawRows[rec.id] ? 'إخفاء' : 'عرض' }}
                   </button>
                   <div *ngIf="expandedRawRows[rec.id]" class="raw-excel-details">
+                    <div class="raw-sheet-info" *ngIf="rec.context?.rawExcel?.sheetName">
+                      ورقة: <strong>{{ rec.context.rawExcel.sheetName }}</strong>
+                      &nbsp;|&nbsp; صف: <strong>{{ rec.context.rawExcel.excelRow }}</strong>
+                      &nbsp;|&nbsp; نسق: <strong>{{ rec.context.rawExcel.format }}</strong>
+                    </div>
                     <div class="raw-section-title">القيم الخام من Excel</div>
                     <div *ngFor="let entry of rawExcelEntries(rec)" class="raw-entry">
                       <span class="raw-label">{{ rawFieldLabel(entry[0]) }}:</span>
                       <span class="raw-value">{{ entry[1] }}</span>
+                    </div>
+                    <div *ngIf="rec.context?.rawExcel?._columnMap" class="raw-section-title" style="margin-top:8px">مواقع الأعمدة في Excel</div>
+                    <div *ngFor="let c of columnMapEntries(rec)" class="raw-entry">
+                      <span class="raw-label">{{ rawFieldLabel(c[0]) }}:</span>
+                      <span class="formula-value">{{ c[1] }}</span>
                     </div>
                     <div *ngIf="rec.context?.formulas" class="raw-section-title" style="margin-top:8px">طريقة الحساب</div>
                     <div *ngFor="let f of formulaEntries(rec)" class="raw-entry formula-entry">
@@ -1642,6 +1652,15 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
     .raw-entry:last-child { border-bottom: none; }
     .raw-label { color: #999; white-space: nowrap; }
     .raw-value { color: #e0e0e0; font-family: monospace; text-align: left; direction: ltr; }
+    .raw-sheet-info {
+      font-size: 11px;
+      color: #ffb74d;
+      background: #1e1e30;
+      padding: 4px 8px;
+      border-radius: 4px;
+      margin-bottom: 6px;
+      font-family: monospace;
+    }
     .raw-section-title {
       font-size: 10px;
       font-weight: 600;
@@ -2164,7 +2183,14 @@ export class V3ImportComponent implements OnInit, OnDestroy {
   rawExcelEntries(rec: any): [string, any][] {
     const raw = rec.context?.rawExcel;
     if (!raw) return [];
-    return Object.entries(raw).filter(([_, v]) => v !== null && v !== 0 && v !== '' && v !== 0.0);
+    const skip = new Set(['sheetName', 'excelRow', 'format', '_columnMap']);
+    return Object.entries(raw).filter(([k, v]) => !skip.has(k) && v !== null && v !== 0 && v !== '' && v !== 0.0);
+  }
+
+  columnMapEntries(rec: any): [string, string][] {
+    const colMap = rec.context?.rawExcel?._columnMap;
+    if (!colMap) return [];
+    return Object.entries(colMap) as [string, string][];
   }
 
   formulaEntries(rec: any): [string, string][] {
@@ -2175,6 +2201,9 @@ export class V3ImportComponent implements OnInit, OnDestroy {
 
   rawFieldLabel(field: string): string {
     const map: Record<string, string> = {
+      'sheetName': 'اسم الورقة',
+      'excelRow': 'رقم الصف',
+      'format': 'نسق الملف',
       'rawBranchCode': 'رمز الفرع',
       'rawDate': 'التاريخ',
       'totalSar': 'المبلغ (ريال)',

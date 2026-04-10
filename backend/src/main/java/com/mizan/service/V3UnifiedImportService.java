@@ -42,6 +42,8 @@ public class V3UnifiedImportService {
 
     static class ParsedRow {
         int excelRow;
+        String sheetName;
+        boolean formatB;
         String rawBranchCode;
         String branchCode;
         LocalDate date;
@@ -561,6 +563,17 @@ public class V3UnifiedImportService {
     List<ParsedRow> parseFile(byte[] bytes, String type) throws Exception {
         try (Workbook wb = new HSSFWorkbook(new ByteArrayInputStream(bytes))) {
             Sheet sheet = wb.getSheetAt(0);
+            log.info("parseFile({}): sheet='{}', numberOfSheets={}, firstRow={}, lastRow={}, physicalRows={}",
+                type, sheet.getSheetName(), wb.getNumberOfSheets(),
+                sheet.getFirstRowNum() + 1, sheet.getLastRowNum() + 1, sheet.getPhysicalNumberOfRows());
+            if (wb.getNumberOfSheets() > 1) {
+                for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+                    Sheet s = wb.getSheetAt(i);
+                    log.info("  sheet[{}]: name='{}', firstRow={}, lastRow={}, physicalRows={}",
+                        i, s.getSheetName(), s.getFirstRowNum() + 1, s.getLastRowNum() + 1, s.getPhysicalNumberOfRows());
+                }
+            }
+            Format fmt = !"mothan".equals(type) ? detectFormat(sheet) : null;
             List<ParsedRow> rows = switch (type) {
                 case "sales" -> parseAllRowsForSales(sheet);
                 case "employee-sales" -> parseAllRowsForEmpSales(sheet);
@@ -568,6 +581,14 @@ public class V3UnifiedImportService {
                 case "mothan" -> parseAllRowsForMothan(sheet);
                 default -> throw new IllegalArgumentException("Unknown type: " + type);
             };
+
+            // Stamp sheet name and format on every row
+            String shName = sheet.getSheetName();
+            boolean isFmtB = fmt == Format.B;
+            for (ParsedRow r : rows) {
+                r.sheetName = shName;
+                r.formatB = isFmtB;
+            }
 
             // Filter out empty/no-data rows
             int before = rows.size();
@@ -1216,6 +1237,9 @@ public class V3UnifiedImportService {
 
         // Raw Excel values — exactly as parsed, before any transformation
         Map<String, Object> rawExcel = new LinkedHashMap<>();
+        rawExcel.put("sheetName", row.sheetName);
+        rawExcel.put("excelRow", row.excelRow);
+        rawExcel.put("format", row.formatB ? "B" : "A");
         rawExcel.put("rawBranchCode", row.rawBranchCode);
         rawExcel.put("rawDate", row.rawDate != null ? row.rawDate : (row.date != null ? row.date.toString() : null));
         rawExcel.put("totalSar", row.totalSar);
@@ -1234,6 +1258,53 @@ public class V3UnifiedImportService {
         if (row.balanceSar != 0) rawExcel.put("balanceSar", row.balanceSar);
         if (row.docRef != null) rawExcel.put("docRef", row.docRef);
         if (row.description != null) rawExcel.put("description", row.description);
+        // Column mapping so user knows which Excel cells we read
+        Map<String, String> colMap = new LinkedHashMap<>();
+        switch (fileType) {
+            case "branch-sales", "employee-sales" -> {
+                if (row.formatB) {
+                    colMap.put("branchCode", "B (عمود 2)");
+                    colMap.put("date", "G (عمود 7)");
+                    colMap.put("totalSar", "P (عمود 16)");
+                    colMap.put("grossWeight", "I (عمود 9)");
+                    colMap.put("purity", "L (عمود 12)");
+                    colMap.put("pureWeight", "M (عمود 13)");
+                    colMap.put("pieces", "H (عمود 8)");
+                    colMap.put("metalValue", "N (عمود 14)");
+                    colMap.put("makingCharge", "O (عمود 15)");
+                } else {
+                    colMap.put("branchCode", "من عنوان الفرع — M (عمود 13)");
+                    colMap.put("date", "من عنوان الورقة أو الصف");
+                    colMap.put("totalSar", "D (عمود 4)");
+                    colMap.put("grossWeight", "K (عمود 11)");
+                    colMap.put("purity", "H (عمود 8)");
+                    colMap.put("pureWeight", "G (عمود 7)");
+                    colMap.put("pieces", "L (عمود 12)");
+                    colMap.put("metalValue", "F (عمود 6)");
+                    colMap.put("makingCharge", "E (عمود 5)");
+                }
+            }
+            case "purchases" -> {
+                colMap.put("branchCode", "من عنوان الفرع أو B");
+                colMap.put("date", "G أو من العنوان");
+                colMap.put("totalSar", "D أو P");
+                colMap.put("grossWeight", "I أو K");
+                colMap.put("pureWeight", "G أو M");
+            }
+            case "mothan" -> {
+                colMap.put("branchCode", "H (عمود 8)");
+                colMap.put("date", "J (عمود 10)");
+                colMap.put("creditSar", "E (عمود 5)");
+                colMap.put("debitGold", "C (عمود 3)");
+                colMap.put("weightCredit", "B (عمود 2)");
+                colMap.put("balanceGold", "A (عمود 1)");
+                colMap.put("balanceSar", "D (عمود 4)");
+                colMap.put("description", "G (عمود 7)");
+                colMap.put("docRef", "I (عمود 9)");
+            }
+        }
+        rawExcel.put("_columnMap", colMap);
+
         context.put("rawExcel", rawExcel);
 
         // Transformation formulas so users understand how raw → final
