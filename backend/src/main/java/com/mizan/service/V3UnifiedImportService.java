@@ -1217,7 +1217,7 @@ public class V3UnifiedImportService {
         // Raw Excel values — exactly as parsed, before any transformation
         Map<String, Object> rawExcel = new LinkedHashMap<>();
         rawExcel.put("rawBranchCode", row.rawBranchCode);
-        rawExcel.put("rawDate", row.rawDate);
+        rawExcel.put("rawDate", row.rawDate != null ? row.rawDate : (row.date != null ? row.date.toString() : null));
         rawExcel.put("totalSar", row.totalSar);
         rawExcel.put("pureWeight", row.pureWeight);
         rawExcel.put("grossWeight", row.grossWeight);
