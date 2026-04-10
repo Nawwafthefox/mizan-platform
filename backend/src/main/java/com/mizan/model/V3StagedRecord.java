@@ -8,10 +8,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
-/**
- * A row from an Excel import that failed one or more validation checks.
- * Held in staging for human review before being promoted to the live collection.
- */
 @Data
 @Document("v3_staged_records")
 public class V3StagedRecord {
@@ -28,7 +24,7 @@ public class V3StagedRecord {
     private int sourceRow;
     private String branchCode;
 
-    /** "pending" | "approved" | "rejected" */
+    /** "pending" | "saved" | "saved_with_suggestion" | "omitted" */
     private String status;
 
     /** The parsed field values as they would be stored (sign-applied) */
@@ -37,11 +33,11 @@ public class V3StagedRecord {
     /** One entry per field that triggered a dirty classification */
     private List<FieldIssue> issues;
 
-    /** Branch-level statistics used to compute suggestions */
-    private Map<String, Object> branchStats;
+    /** System's best guess fixes per bad field */
+    private Map<String, Object> suggestedFixes;
 
-    /** Employees available for manual assignment (employee-sales only) */
-    private List<Map<String, Object>> availableEmployees;
+    /** Context for the review UI: branch stats, employee list, etc. */
+    private Map<String, Object> context;
 
     private LocalDateTime createdAt;
     private String reviewedBy;
@@ -49,22 +45,11 @@ public class V3StagedRecord {
 
     @Data
     public static class FieldIssue {
-        /** The document field name the issue relates to */
         private String field;
-
-        /**
-         * Issue type:
-         * "invalid" | "missing" | "zero_value" | "corrupt_value" | "multiline"
-         */
-        private String type;
-
-        /** Machine-suggested corrected value (may be null) */
+        private String issueType;
+        private String originalValue;
         private String suggestedValue;
-
-        /** 0.0 – 1.0 confidence in the suggestion */
         private double confidence;
-
-        /** How the suggestion was derived, e.g. "branch_median_sar_per_piece" */
         private String method;
     }
 }

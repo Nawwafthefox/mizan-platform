@@ -18,7 +18,7 @@ public class BranchMaps {
         Map.entry("4409","المدينة 9"), Map.entry("4420","العلا"),
         Map.entry("5401","خميس مشيط 1"), Map.entry("5402","خميس مشيط 2"),
         Map.entry("5405","خميس مشيط 5"), Map.entry("7403","أبو عريش 2"),
-        Map.entry("7405","صبيا"), Map.entry("7410","أبو عريش 3")
+        Map.entry("7405","أبو عريش 3"), Map.entry("7410","صبيا")
     );
 
     public static final Map<String,String> BRANCH_REGION = Map.ofEntries(

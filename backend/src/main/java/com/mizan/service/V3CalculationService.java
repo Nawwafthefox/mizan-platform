@@ -1,6 +1,6 @@
 package com.mizan.service;
 
-import com.mizan.config.BranchMaps;
+import com.mizan.service.BranchLookupService;
 import com.mizan.model.*;
 import lombok.extern.slf4j.Slf4j;
 import org.bson.Document;
@@ -25,9 +25,11 @@ import java.util.stream.Collectors;
 public class V3CalculationService {
 
     private final MongoTemplate mongo;
+    private final BranchLookupService branchLookup;
 
-    public V3CalculationService(MongoTemplate mongo) {
+    public V3CalculationService(MongoTemplate mongo, BranchLookupService branchLookup) {
         this.mongo = mongo;
+        this.branchLookup = branchLookup;
     }
 
     // ─── Branch summaries ─────────────────────────────────────────────────────
@@ -74,8 +76,8 @@ public class V3CalculationService {
 
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("branchCode",    code);
-            row.put("branchName",    BranchMaps.getName(code));
-            row.put("region",        BranchMaps.getRegion(code));
+            row.put("branchName",    branchLookup.getName(tenantId, code));
+            row.put("region",        branchLookup.getRegion(tenantId, code));
             row.put("totalSar",      totalSar);
             row.put("totalWeight",   totalWeight);
             row.put("totalPieces",   totalPieces);
@@ -211,8 +213,8 @@ public class V3CalculationService {
 
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("empId", empId); row.put("empName", d.getString("empName"));
-            row.put("branchCode", branchCode); row.put("branchName", BranchMaps.getName(branchCode));
-            row.put("region", BranchMaps.getRegion(branchCode));
+            row.put("branchCode", branchCode); row.put("branchName", branchLookup.getName(tenantId, branchCode));
+            row.put("region", branchLookup.getRegion(tenantId, branchCode));
             row.put("totalSar", totalSar); row.put("totalWeight", totalWeight);
             row.put("totalPieces", totalPieces); row.put("returns", returns);
             row.put("returnDays", returnDays); row.put("saleRate", saleRate);
@@ -231,8 +233,8 @@ public class V3CalculationService {
         for (Map.Entry<String, List<Map<String, Object>>> e : byBranch.entrySet()) {
             List<Map<String, Object>> emps = e.getValue();
             Map<String, Object> br = new LinkedHashMap<>();
-            br.put("branchCode", e.getKey()); br.put("branchName", BranchMaps.getName(e.getKey()));
-            br.put("region", BranchMaps.getRegion(e.getKey()));
+            br.put("branchCode", e.getKey()); br.put("branchName", branchLookup.getName(tenantId, e.getKey()));
+            br.put("region", branchLookup.getRegion(tenantId, e.getKey()));
             br.put("employeeCount", emps.size());
             br.put("totalSar", emps.stream().mapToDouble(x -> mapDbl(x, "totalSar")).sum());
             br.put("employees", emps);
@@ -454,8 +456,8 @@ public class V3CalculationService {
             t[0] += m.getAmountSar(); t[1] += m.getWeightDebitG(); t[2]++;
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("date",        m.getTransactionDate() != null ? m.getTransactionDate().toString() : "");
-            row.put("branchCode",  bc); row.put("branchName", BranchMaps.getName(bc));
-            row.put("region",      BranchMaps.getRegion(bc));
+            row.put("branchCode",  bc); row.put("branchName", branchLookup.getName(tenantId, bc));
+            row.put("region",      branchLookup.getRegion(tenantId, bc));
             row.put("docRef",      m.getDocReference()); row.put("description", m.getDescription());
             row.put("amountSar",   m.getAmountSar()); row.put("weightDebitG", m.getWeightDebitG());
             row.put("rate",        m.getWeightDebitG() > 0 ? r2(m.getAmountSar() / m.getWeightDebitG()) : 0);
@@ -464,8 +466,8 @@ public class V3CalculationService {
         List<Map<String, Object>> byBranch = bbMap.entrySet().stream().map(e -> {
             double[] t = e.getValue(); String bc = e.getKey();
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("branchCode", bc); row.put("branchName", BranchMaps.getName(bc));
-            row.put("region", BranchMaps.getRegion(bc));
+            row.put("branchCode", bc); row.put("branchName", branchLookup.getName(tenantId, bc));
+            row.put("region", branchLookup.getRegion(tenantId, bc));
             row.put("totalSar", t[0]); row.put("totalWt", t[1]);
             row.put("avgRate", t[1] > 0 ? r2(t[0] / t[1]) : 0); row.put("txnCount", (long) t[2]);
             return row;
@@ -521,8 +523,8 @@ public class V3CalculationService {
             double bw1=bb1!=null?(double)bb1.get("totalWeight"):0, bw2=bb2!=null?(double)bb2.get("totalWeight"):0;
             double bp1=bb1!=null?(double)bb1.get("purchCombined"):0, bp2=bb2!=null?(double)bb2.get("purchCombined"):0;
             Map<String,Object> row = new LinkedHashMap<>();
-            row.put("branchCode",  code); row.put("branchName", BranchMaps.getName(code));
-            row.put("region",      BranchMaps.getRegion(code));
+            row.put("branchCode",  code); row.put("branchName", branchLookup.getName(tenantId, code));
+            row.put("region",      branchLookup.getRegion(tenantId, code));
             row.put("sar1",bs1); row.put("sar2",bs2); row.put("sarDelta",r2(bs2-bs1));
             row.put("sarDeltaPct", bs1!=0 ? r1((bs2-bs1)/Math.abs(bs1)*100) : 0);
             row.put("wt1",bw1); row.put("wt2",bw2); row.put("wtDelta",r2(bw2-bw1));
@@ -1037,8 +1039,8 @@ public class V3CalculationService {
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("date",        toDateString(d.get("transactionDate")));
                 row.put("branchCode",  bc);
-                row.put("branchName",  BranchMaps.getName(bc));
-                row.put("region",      BranchMaps.getRegion(bc));
+                row.put("branchName",  branchLookup.getName(tenantId, bc));
+                row.put("region",      branchLookup.getRegion(tenantId, bc));
                 row.put("docRef",      d.getString("docReference"));
                 row.put("description", d.getString("description"));
                 row.put("amountSar",   sar);
@@ -1057,8 +1059,8 @@ public class V3CalculationService {
                 double bSar = dbl(d, "totalSar"), bWt = dbl(d, "totalWt");
                 Map<String, Object> row = new LinkedHashMap<>();
                 row.put("branchCode", bc);
-                row.put("branchName", BranchMaps.getName(bc));
-                row.put("region",     BranchMaps.getRegion(bc));
+                row.put("branchName", branchLookup.getName(tenantId, bc));
+                row.put("region",     branchLookup.getRegion(tenantId, bc));
                 row.put("totalSar",   bSar);
                 row.put("totalWt",    bWt);
                 row.put("avgRate",    bWt > 0 ? r2(bSar / bWt) : 0);
@@ -1558,7 +1560,7 @@ public class V3CalculationService {
             }
         }
 
-        Map<String, Object> toMap(Map<String, Double> branchPurchRates) {
+        Map<String, Object> toMap(Map<String, Double> branchPurchRates, BranchLookupService branchLookup, String tenantId) {
             double saleRate     = totalWeight != 0 ? r4(totalSar / totalWeight) : 0;
             double purchRate    = branchPurchRates.getOrDefault(branchCode, 0.0);
             double diffRate     = Math.round((saleRate - purchRate) * 10) / 10.0;
@@ -1571,8 +1573,8 @@ public class V3CalculationService {
             m.put("empId",        empId);
             m.put("empName",      empName);
             m.put("branchCode",   branchCode);
-            m.put("branchName",   BranchMaps.getName(branchCode));
-            m.put("region",       BranchMaps.getRegion(branchCode));
+            m.put("branchName",   branchLookup.getName(tenantId, branchCode));
+            m.put("region",       branchLookup.getRegion(tenantId, branchCode));
             m.put("totalSar",     totalSar);
             m.put("totalWeight",  totalWeight);
             m.put("totalPieces",  totalPieces);

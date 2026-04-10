@@ -3,6 +3,7 @@ import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/rou
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { V3DateRangeService } from './services/v3-date-range.service';
+import { environment } from '../../../environments/environment';
 import { TopnavComponent } from '../../shared/components/shell/topnav.component';
 
 interface V3Tab {
@@ -459,8 +460,7 @@ export class DashboardV3ShellComponent implements OnInit, OnDestroy {
 
   tabs: V3Tab[] = [
     { label: 'نظرة عامة',    path: '/v3/overview' },
-    { label: 'رفع الملفات',  path: '/v3/upload', upload: true },
-    { label: 'مراجعة البيانات', path: '/v3/review', review: true },
+    { label: 'الاستيراد',    path: '/v3/import', upload: true, review: true },
     { label: 'التنبيهات',    path: '/v3/alerts' },
     { label: 'الفروع',       path: '/v3/branches' },
     { label: 'المناطق',      path: '/v3/regions' },
@@ -484,7 +484,7 @@ export class DashboardV3ShellComponent implements OnInit, OnDestroy {
   }
 
   private fetchPendingCount(): void {
-    this.http.get<any>('/api/v3/staged/counts').subscribe({
+    this.http.get<any>(`${environment.apiUrl}/v3/import/staged/counts`).subscribe({
       next: res => this.pendingCount.set(res?.data?.total ?? 0),
       error: () => {}
     });
