@@ -519,9 +519,14 @@ const STEP_DEFS: { step: number; nameAr: string; icon: string }[] = [
                       </label>
                       <span class="method-hint" *ngIf="methodExplanation(issue)">{{ methodExplanation(issue) }}</span>
                     </div>
-                    <!-- Default: text -->
-                    <div *ngIf="issue.issueType !== 'pieces_outlier' && issue.issueType !== 'pieces' && issue.issueType !== 'unknown_employee' && issue.issueType !== 'employee' && issue.issueType !== 'multiline_date' && issue.issueType !== 'date'" class="suggested-val">
-                      {{ issue.suggestedValue }}
+                    <!-- Default: editable text input -->
+                    <div *ngIf="issue.issueType !== 'pieces_outlier' && issue.issueType !== 'pieces' && issue.issueType !== 'unknown_employee' && issue.issueType !== 'employee' && issue.issueType !== 'multiline_date' && issue.issueType !== 'date'" class="edit-input-group">
+                      <input
+                        [type]="isNumericField(issue.field) ? 'number' : 'text'"
+                        class="inline-input"
+                        [placeholder]="fieldPlaceholder(issue)"
+                        [value]="editValues[rec.id + '_' + issue.field] ?? issue.suggestedValue ?? ''"
+                        (input)="setEditValue(rec.id, issue.field, $event)" />
                       <span class="method-hint" *ngIf="methodExplanation(issue)">{{ methodExplanation(issue) }}</span>
                     </div>
                   </ng-container>
@@ -2174,6 +2179,23 @@ export class V3ImportComponent implements OnInit, OnDestroy {
       'multiline': 'التاريخ يحتوي على أكثر من سطر',
     };
     return typeMap[issue.issueType] || null;
+  }
+
+  isNumericField(field: string): boolean {
+    return ['sarAmount', 'pieces', 'pureWeightG', 'grossWeightG', 'amountSar',
+            'metalValue', 'makingCharge', 'purity'].includes(field);
+  }
+
+  fieldPlaceholder(issue: any): string {
+    const map: Record<string, string> = {
+      'branchCode': 'أدخل رمز الفرع',
+      'date': 'أدخل التاريخ (yyyy-MM-dd)',
+      'sarAmount': 'أدخل المبلغ',
+      'pieces': 'أدخل عدد القطع',
+      'empId': 'أدخل رقم الموظف',
+      'transactionDate': 'أدخل التاريخ',
+    };
+    return map[issue.field] || 'أدخل القيمة';
   }
 
   toggleRawExcel(id: string): void {
